@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+dotenvy.workspace = true
 lighting-service = { path = "../../crates/lighting-service" }
 lighting-store-surreal = { path = "../../crates/lighting-store-surreal" }
 tokio.workspace = true

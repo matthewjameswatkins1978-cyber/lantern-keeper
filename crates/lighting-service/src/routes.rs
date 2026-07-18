@@ -27,13 +27,13 @@ pub struct VersionResponse {
 pub async fn health(
     State(state): State<AppState>,
 ) -> Result<Json<HealthResponse>, (StatusCode, Json<ErrorResponse>)> {
-    state.store.health_check().await.map_err(|error| {
+    state.database_health().await.map_err(|error| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(ErrorResponse {
                 service: "Lighting",
                 status: "error",
-                error: error.to_string(),
+                error,
             }),
         )
     })?;

@@ -12,6 +12,7 @@ const DEFAULT_PORT: u16 = 4317;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
     init_tracing();
 
     let store_config = StoreConfig::from_env();
@@ -27,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
     let listener = TcpListener::bind(address)
         .await
         .with_context(|| format!("failed to bind Lighting to {address}"))?;
-    let app = build_router(AppState::new(store));
+    let app = build_router(AppState::new(store_config));
 
     info!(%address, "Starting Lighting");
 

@@ -1,9 +1,12 @@
 /target/
 /.env
 /.surrealdb/
+/.lighting-data/
+/.lighting-runtime/
 /surreal-data/
 /tmp/
 /temp/
+history.txt
 /*.log
 /logs/
 

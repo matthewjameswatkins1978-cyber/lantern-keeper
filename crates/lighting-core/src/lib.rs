@@ -72,4 +72,13 @@ mod tests {
         assert_eq!(id.as_str(), "conversation-1");
         assert_eq!(id.to_string(), "conversation-1");
     }
+
+    #[test]
+    fn identifiers_serialize_as_strings() {
+        let id = TopicId::new("topic-1").unwrap();
+
+        let json = serde_json::to_string(&id).unwrap();
+
+        assert_eq!(json, "\"topic-1\"");
+    }
 }

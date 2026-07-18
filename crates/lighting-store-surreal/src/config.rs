@@ -1,6 +1,7 @@
 use std::env;
 
 use serde::Serialize;
+use thiserror::Error;
 
 const DEFAULT_ENDPOINT: &str = "ws://127.0.0.1:8000";
 const DEFAULT_NAMESPACE: &str = "lantern_keeper";
@@ -24,6 +25,18 @@ pub struct RedactedStoreConfig {
     pub password: String,
 }
 
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ConfigError {
+    #[error("LIGHTING_SURREAL_ENDPOINT cannot be empty")]
+    EmptyEndpoint,
+    #[error("LIGHTING_SURREAL_NAMESPACE cannot be empty")]
+    EmptyNamespace,
+    #[error("LIGHTING_SURREAL_DATABASE cannot be empty")]
+    EmptyDatabase,
+    #[error("LIGHTING_SURREAL_USERNAME and LIGHTING_SURREAL_PASSWORD must be set together")]
+    IncompleteCredentials,
+}
+
 impl StoreConfig {
     pub fn from_env() -> Self {
         Self {
@@ -44,6 +57,33 @@ impl StoreConfig {
             password: "[redacted]".to_owned(),
         }
     }
+
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.endpoint.trim().is_empty() {
+            return Err(ConfigError::EmptyEndpoint);
+        }
+
+        if self.namespace.trim().is_empty() {
+            return Err(ConfigError::EmptyNamespace);
+        }
+
+        if self.database.trim().is_empty() {
+            return Err(ConfigError::EmptyDatabase);
+        }
+
+        if self.username.is_empty() != self.password.is_empty() {
+            return Err(ConfigError::IncompleteCredentials);
+        }
+
+        Ok(())
+    }
+
+    pub fn websocket_address(&self) -> &str {
+        self.endpoint
+            .strip_prefix("ws://")
+            .or_else(|| self.endpoint.strip_prefix("wss://"))
+            .unwrap_or(&self.endpoint)
+    }
 }
 
 fn env_or_default(name: &str, default: &str) -> String {
@@ -58,7 +98,9 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn env_lock() -> MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn clear_env() {
@@ -96,5 +138,30 @@ mod tests {
         let redacted = config.redacted();
 
         assert_eq!(redacted.password, "[redacted]");
+    }
+
+    #[test]
+    fn validates_required_fields() {
+        let mut config = StoreConfig::from_env();
+
+        config.endpoint = " ".to_owned();
+        assert_eq!(config.validate(), Err(ConfigError::EmptyEndpoint));
+
+        config.endpoint = "ws://127.0.0.1:8000".to_owned();
+        config.namespace.clear();
+        assert_eq!(config.validate(), Err(ConfigError::EmptyNamespace));
+
+        config.namespace = "lantern_keeper".to_owned();
+        config.database.clear();
+        assert_eq!(config.validate(), Err(ConfigError::EmptyDatabase));
+    }
+
+    #[test]
+    fn validates_credentials_are_complete() {
+        let mut config = StoreConfig::from_env();
+        config.username = "root".to_owned();
+        config.password.clear();
+
+        assert_eq!(config.validate(), Err(ConfigError::IncompleteCredentials));
     }
 }

@@ -7,6 +7,8 @@ async fn connects_initialises_schema_and_runs_health_check() {
         return;
     }
 
+    dotenvy::dotenv().ok();
+
     let mut config = StoreConfig::from_env();
     config.database = format!("lighting_test_{}", Uuid::new_v4().simple());
 
