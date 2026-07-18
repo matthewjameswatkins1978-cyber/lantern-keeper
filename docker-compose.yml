@@ -1,0 +1,22 @@
+services:
+  surrealdb:
+    image: surrealdb/surrealdb:latest
+    command:
+      - start
+      - --user
+      - ${LIGHTING_SURREAL_USERNAME:-root}
+      - --pass
+      - ${LIGHTING_SURREAL_PASSWORD:-root}
+      - surrealkv:/data/lighting.db
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./surreal-data:/data
+    environment:
+      SURREAL_LOG: info
+    healthcheck:
+      test: ["CMD", "surreal", "isready", "--conn", "http://127.0.0.1:8000"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s

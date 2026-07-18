@@ -1,0 +1,18 @@
+[package]
+name = "lighting-service"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+axum.workspace = true
+lighting-store-surreal = { path = "../lighting-store-surreal" }
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }
+serde_json.workspace = true
+uuid.workspace = true

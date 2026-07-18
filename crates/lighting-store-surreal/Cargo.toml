@@ -1,0 +1,15 @@
+[package]
+name = "lighting-store-surreal"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+surrealdb.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+uuid.workspace = true

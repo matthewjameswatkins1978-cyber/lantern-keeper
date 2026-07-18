@@ -1,0 +1,17 @@
+/target/
+/.env
+/.surrealdb/
+/surreal-data/
+/tmp/
+/temp/
+/*.log
+/logs/
+
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+.idea/
+.vscode/
+*.swp
+*.swo
