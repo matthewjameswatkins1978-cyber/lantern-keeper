@@ -338,6 +338,24 @@ cargo run -p lighting -- source show <source_id>
 cargo run -p lighting -- source show <source_id> --json
 ```
 
+## First Proof Demonstration
+
+Run the complete first-proof demonstration after starting SurrealDB and Lighting:
+
+```powershell
+.\scripts\start-surreal.ps1
+cargo run -p lighting -- serve
+.\scripts\demo-first-proof.ps1
+```
+
+The script seeds a harmless local development demonstration that walks through:
+
+```
+fixtures/first-proof.md → Source → Episode → Project + Marker → retrieve
+```
+
+It is safe to rerun; objects are reused via stored IDs in `.local/first-proof-demo.json`. No data is uploaded or deleted.
+
 ## Full Validation
 
 ```powershell
