@@ -83,4 +83,12 @@ impl SurrealStore {
             .map(|_| ())
             .map_err(StoreError::Schema)
     }
+
+    /// Executes a raw SurrealQL query against the underlying connection.
+    pub fn query<'a>(
+        &'a self,
+        query: impl Into<std::borrow::Cow<'a, str>>,
+    ) -> surrealdb::method::Query<'a, Client> {
+        self.db.query(query)
+    }
 }

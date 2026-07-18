@@ -3,162 +3,141 @@
 Lantern Keeper is a local-first shared memory project for future ChatGPT and
 Codex workflows.
 
-Lighting is the local service inside Lantern Keeper. This repository is only the
-foundation: workspace structure, configuration, a localhost HTTP service, a
-SurrealDB connection, and first build/test gates.
+Lighting is the local service inside Lantern Keeper. This repository contains
+the smallest runnable skeleton for the first vertical slice:
+
+`Markdown Source → Episodes → Marker + Project → retrieval with an explanation → exact source return → compact Cline handoff`
+
+This task (LK-004) wires a real SurrealDB Source repository into the local
+Lighting service and exposes the first Source HTTP API.
 
 ## Current Status
 
 Implemented now:
 
-- Rust Cargo workspace
-- Strongly typed placeholder identifiers in `lighting-core`
-- SurrealDB configuration, connection, schema bootstrap, and health check
-- Axum app with `GET /health` and `GET /version`
-- `lighting-cli` development commands
-- Native Windows SurrealDB helper scripts
-- Optional Docker Compose setup
-- Unit and integration test structure
+- Rust Cargo workspace with the intended inward dependency direction.
+- `lighting` binary with `version` and `serve` subcommands.
+- Localhost-only HTTP service with:
+  - `GET /health/live` — returns `{ "alive": true }`
+  - `GET /health/ready` — returns 200 only after SurrealDB connection and schema migration
+  - `GET /api/v1/version` — returns service name, project, and version
+  - `POST /api/v1/sources` — stores a Source; returns 201 (stored) or 200 (duplicate)
+  - `GET /api/v1/sources/{source_id}` — returns exact Source by ID
+- `lighting-core` with the `Source` domain, `SourceRepository` trait, and no
+  SurrealDB or HTTP dependency.
+- `lighting-store-surreal` with `SurrealSourceRepository`, schema migration V1,
+  and isolated integration tests against a real SurrealDB engine.
+- `lighting-service` with application-layer Source operations, HTTP routes,
+  request validation, request-size limiting, and honest readiness.
+- Automated tests for service routes that do not need SurrealDB (stub-based).
+- Live SurrealDB API integration tests with strict DB isolation.
+- `scripts/validate.ps1` to run formatting, Clippy, tests, and `lighting version`.
+- Configuration example in `config/example.toml`.
 
 Not implemented yet:
 
-- memory records or graph relations
-- conversations, episodes, markers, projects, topics, decisions, tasks, handoffs
-- search, vector search, embeddings, ingestion
-- ChatGPT, Codex, MCP, authentication, cloud services, or a GUI
+- `lighting source add` or `lighting source show` CLI commands
+- Filesystem or Markdown-file import
+- Episodes, markers, projects, retrieval, context packages, or graph relationships
+- Embeddings, AI processing, MCP, cloud services, GUI, task automation, or
+  importer work
 
 ## Prerequisites
 
-- Rust stable toolchain with Cargo, rustfmt, and Clippy
-- Visual Studio Build Tools with the MSVC C++ toolchain
-- Native SurrealDB executable for Windows
+- Rust stable toolchain with Cargo, rustfmt, and Clippy.
+- Visual Studio Build Tools with the MSVC C++ toolchain (Windows).
+- SurrealDB 3.2.1 or later.
 
-Docker is not required for normal Windows development.
+Detected local options (on the original workstation):
 
-## Install Rust
+- `surreal` 3.2.1 for Windows on x86_64 is installed.
+- Docker/Podman were not detected.
 
-Install Rust with the official rustup installer:
-
-```powershell
-winget install --id Rustlang.Rustup --source winget
-```
-
-Open a new PowerShell session or add Cargo to the current PATH:
+## Build And Check
 
 ```powershell
-$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Verify:
+## Test
+
+Run all tests with a live SurrealDB 3.2.1 instance on `ws://127.0.0.1:8000`:
 
 ```powershell
-rustup show
-rustc --version
-cargo --version
-rustfmt --version
-cargo clippy --version
+cargo test --workspace
 ```
 
-## Install SurrealDB
-
-Install the native Windows executable with SurrealDB's official installer:
+Start SurrealDB locally before running the integration tests:
 
 ```powershell
-iwr https://windows.surrealdb.com -useb | iex
+.\scripts\start-surreal.ps1
 ```
 
-If needed, add the user-local SurrealDB install directory to the current PATH:
+Run tests without a live database:
 
 ```powershell
-$env:Path = "$env:LOCALAPPDATA\SurrealDB;$env:Path"
+cmd /v /c "set LIGHTING_SKIP_INTEGRATION_TESTS=1&& cargo test --workspace"
 ```
 
-Verify:
+The `cmd /v /c` form is required on Windows so the environment variable is
+set in the same process that runs Cargo.
+
+Run only the source repository integration tests:
 
 ```powershell
-surreal version
+cargo test --package lighting-store-surreal --test source_repository -- --test-threads=1
 ```
 
-## Configure Environment
+Run only the live API integration tests:
 
-Copy the example environment file:
+```powershell
+cargo test --package lighting-service --test source_api_integration -- --test-threads=1
+```
+
+The integration tests create a fresh database in a `lighting_test` namespace
+for each test run and are executed single-threaded so they do not collide.
+
+## Configuration
+
+Copy `config/example.toml` to `config/local.toml` and edit values for your
+workstation. Do not commit files containing secrets.
+
+Create a `.env` file from `.env.example`:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-The local development credentials are `root` / `root` and are intended only for
-local development on `127.0.0.1`.
+The `.env` file contains SurrealDB credentials and Lighting bind settings.
+Defaults in `.env.example` work out of the box with `scripts/start-surreal.ps1`.
 
-## Start Project-Local SurrealDB
-
-The native helper scripts use project-local storage under
-`.lighting-data\surreal` and runtime PID/log files under `.lighting-runtime`.
-Both are ignored by Git.
+## Start SurrealDB
 
 ```powershell
 .\scripts\start-surreal.ps1
 ```
 
-Check status:
+SurrealDB starts on `ws://127.0.0.1:8000` with credentials root/root.
+
+Check SurrealDB status:
 
 ```powershell
 .\scripts\check-surreal.ps1
 ```
 
-Stop the project-local server:
+## Start Lighting
+
+Print the version:
 
 ```powershell
-.\scripts\stop-surreal.ps1
+cargo run -p lighting -- version
 ```
 
-The stop script only stops the SurrealDB process recorded by this project. It
-does not kill arbitrary processes on port 8000.
-
-## Generate Dependencies
+Start the local service (requires a running SurrealDB):
 
 ```powershell
-cargo generate-lockfile
-cargo fetch
-cargo metadata --format-version 1
-```
-
-`Cargo.lock` should be generated by Cargo and committed.
-
-## Build And Check
-
-```powershell
-cargo fmt --all
-cargo check --workspace --all-targets --all-features
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-```
-
-## Test
-
-Run tests without the live database:
-
-```powershell
-$env:LIGHTING_SKIP_INTEGRATION_TESTS = "1"
-cargo test --workspace
-```
-
-Run the complete test suite with the native project-local SurrealDB server:
-
-```powershell
-Remove-Item Env:LIGHTING_SKIP_INTEGRATION_TESTS -ErrorAction SilentlyContinue
-.\scripts\start-surreal.ps1
-cargo test --workspace
-```
-
-The integration tests use disposable database names beginning with
-`lighting_test_`. They never use the `lighting_dev` database directly.
-
-## Run Lighting
-
-Start SurrealDB first, then run:
-
-```powershell
-cargo run -p lighting
+cargo run -p lighting -- serve
 ```
 
 Default service address:
@@ -174,46 +153,167 @@ $env:LIGHTING_HOST = "127.0.0.1"
 $env:LIGHTING_PORT = "4317"
 ```
 
-Lighting currently rejects non-localhost bind addresses.
+Lighting rejects non-localhost bind addresses.
 
 ## Check The Service
 
+### Readiness
+
 ```powershell
-Invoke-RestMethod http://127.0.0.1:4317/health
-Invoke-RestMethod http://127.0.0.1:4317/version
+Invoke-RestMethod http://127.0.0.1:4317/health/ready
 ```
 
-Expected healthy response:
+Expected response when storage is connected:
+
+```json
+{ "ready": true, "reason": "durable Source storage is ready" }
+```
+
+When SurrealDB is not connected, the endpoint returns 503 with
+`"storage is not configured"`.
+
+### Liveness
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:4317/health/live
+```
+
+Expected response:
+
+```json
+{ "alive": true }
+```
+
+### Version
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:4317/api/v1/version
+```
+
+Expected response:
 
 ```json
 {
   "service": "Lighting",
-  "status": "ok",
-  "database": "connected"
+  "project": "Lantern Keeper",
+  "version": "0.1.0"
 }
 ```
 
-## lighting-cli
+## Source API
+
+### Post a Small Markdown Source
 
 ```powershell
-cargo run -p lighting-cli -- print-config
-cargo run -p lighting-cli -- init-db
-cargo run -p lighting-cli -- health
+$body = @{
+  title   = "Lantern Keeper handbook"
+  kind    = "markdown"
+  content = "# Lantern Keeper`n`nA local-first shared memory project."
+} | ConvertTo-Json
+
+$response = Invoke-RestMethod -Uri http://127.0.0.1:4317/api/v1/sources -Method Post -Body $body -ContentType "application/json"
+$response | ConvertTo-Json
 ```
 
-`print-config` redacts the password completely.
+Expected response (new Source):
 
-## Optional Docker Alternative
+```json
+{
+  "outcome": "stored",
+  "source_id": "<uuid>"
+}
+```
 
-Docker Compose remains available as an alternative for environments that already
-use Docker:
+HTTP status: 201.
+
+Expected response (exact duplicate):
+
+```json
+{
+  "outcome": "duplicate",
+  "source_id": "<same uuid>"
+}
+```
+
+HTTP status: 200.
+
+### Retrieve a Source by ID
 
 ```powershell
-docker compose up -d surrealdb
-docker compose down
+Invoke-RestMethod http://127.0.0.1:4317/api/v1/sources/<source_id>
 ```
 
-The native scripts are the primary Windows development path for this project.
+Expected response:
+
+```json
+{
+  "source_id": "<uuid>",
+  "title": "Lantern Keeper handbook",
+  "kind": "markdown",
+  "content": "# Lantern Keeper\n\nA local-first shared memory project.",
+  "fingerprint": "<sha256 hex>",
+  "created_at": "2026-07-18T13:00:00Z"
+}
+```
+
+### Error Responses
+
+All errors use a stable shape:
+
+```json
+{
+  "code": "invalid_source",
+  "message": "Source title must not be empty"
+}
+```
+
+Common error codes: `invalid_source`, `invalid_source_id`, `source_not_found`,
+`storage_unavailable`, `internal_error`, `payload_too_large`.
+
+Source content, credentials, and raw database error text are never included in
+error responses or logs.
+
+## CLI Commands
+
+All commands below use the unified `lighting` executable (port 4317 by default).
+
+### Health Check
+
+```powershell
+cargo run -p lighting -- health
+cargo run -p lighting -- health --json
+```
+
+### Add a Source
+
+```powershell
+cargo run -p lighting -- source add README.md
+cargo run -p lighting -- source add notes.txt --title "My Notes" --kind plain_text
+cargo run -p lighting -- source add handbook.md --json
+```
+
+### Show a Source
+
+```powershell
+cargo run -p lighting -- source show <source_id>
+cargo run -p lighting -- source show <source_id> --json
+```
+
+## Full Validation
+
+```powershell
+.\scripts\validate.ps1
+```
+
+Or run each step manually:
+
+```powershell
+.\scripts\start-surreal.ps1
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo run -p lighting -- version
+```
 
 ## Naming
 
@@ -221,11 +321,14 @@ Project: Lantern Keeper
 
 Service: Lighting
 
-Database namespace: `lantern_keeper`
+Default bind address: `127.0.0.1:4317`
 
-Development database: `lighting_dev`
+## Engineering Handbook
 
-## Known Current Limitations
+The `LK handbook.txt` file was not found in or beside the project workspace.
+Place it at `docs/Lantern-Keeper-Engineering-Handbook.md` when it becomes
+available. Do not invent or reconstruct it.
 
-This is a foundation only. It intentionally avoids the first memory proof,
-ingestion, integrations, authentication, search, and UI work.
+## Roadmap
+
+See `docs/ROADMAP.md` for the ten-job MVP sequence.

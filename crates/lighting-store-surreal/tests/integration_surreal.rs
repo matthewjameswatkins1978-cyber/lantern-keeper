@@ -3,8 +3,15 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn connects_initialises_schema_and_runs_health_check() {
-    if std::env::var("LIGHTING_SKIP_INTEGRATION_TESTS").as_deref() == Ok("1") {
+    if skip_integration_tests() {
         return;
+    }
+
+    fn skip_integration_tests() -> bool {
+        matches!(
+            std::env::var("LIGHTING_SKIP_INTEGRATION_TESTS").as_deref(),
+            Ok("1") | Ok("true")
+        )
     }
 
     dotenvy::dotenv().ok();
