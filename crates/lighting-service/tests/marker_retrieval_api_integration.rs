@@ -50,6 +50,7 @@ async fn full_app() -> Router {
             Arc::clone(&mr),
             Arc::clone(&sr),
         )),
+        project_retrieval_service: None,
     })
 }
 async fn body_json(body: Body) -> Value {

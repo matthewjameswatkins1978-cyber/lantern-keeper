@@ -46,6 +46,7 @@ async fn full_app() -> Router {
         episode_service: Some(EpisodeService::new(Arc::clone(&sr), Arc::clone(&mr))),
         association_service: Some(EpisodeAssociationService::new(Arc::clone(&mr))),
         retrieval_service: None,
+        project_retrieval_service: None,
     })
 }
 async fn body_json(body: Body) -> Value {

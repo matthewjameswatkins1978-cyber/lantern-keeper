@@ -4,12 +4,21 @@ Lantern Keeper is a local-first shared memory project for future ChatGPT and
 Codex workflows.
 
 Lighting is the local service inside Lantern Keeper. This repository contains
-the smallest runnable skeleton for the first vertical slice:
+the smallest runnable proof for the first vertical slice:
 
-`Markdown Source → Episodes → Marker + Project → retrieval with an explanation → exact source return → compact Cline handoff`
+```text
+Markdown Source
+-> Episode
+-> Marker + Project links
+-> deterministic retrieval with exact Source excerpts
+-> Codex handoff
+-> recorded result writeback
+-> updated Project handoff
+```
 
-This task (LK-004) wires a real SurrealDB Source repository into the local
-Lighting service and exposes the first Source HTTP API.
+This is the hackathon proof: Lantern Keeper preserves exact project knowledge,
+retrieves the right source-backed context for Codex, and records completed work
+back into the same durable Project memory.
 
 ## Current Status
 
@@ -23,6 +32,8 @@ Implemented now:
   - `GET /api/v1/version` — returns service name, project, and version
   - `POST /api/v1/sources` — stores a Source; returns 201 (stored) or 200 (duplicate)
   - `GET /api/v1/sources/{source_id}` — returns exact Source by ID
+  - `POST /api/v1/projects/{project_id}/record-result` — records a result file as Source-backed Project memory
+  - `POST /api/v1/retrieval/projects` — returns a deterministic Codex handoff context package
 - `lighting-core` with the `Source` domain, `SourceRepository` trait, and no
   SurrealDB or HTTP dependency.
 - `lighting-store-surreal` with `SurrealSourceRepository`, schema migration V1,
@@ -31,16 +42,19 @@ Implemented now:
   request validation, request-size limiting, and honest readiness.
 - Automated tests for service routes that do not need SurrealDB (stub-based).
 - Live SurrealDB API integration tests with strict DB isolation.
+- CLI commands for Source add/show, marker retrieval, Project handoff, and
+  Project result writeback.
+- Full-loop local demo using public CLI/API paths only.
 - `scripts/validate.ps1` to run formatting, Clippy, tests, and `lighting version`.
 - Configuration example in `config/example.toml`.
 
 Not implemented yet:
 
-- `lighting source add` or `lighting source show` CLI commands
-- Filesystem or Markdown-file import
-- Episodes, retrieval, context packages, or graph relationships
 - Embeddings, AI processing, MCP, cloud services, GUI, task automation, or
   importer work
+- Automatic conversation ingestion
+- Automatic episode detection
+- Universal importers, ranking, recommendations, or broad graph expansion
 
 ## Prerequisites
 
@@ -308,9 +322,58 @@ All errors use a stable shape:
 Common error codes: `invalid_source`, `invalid_source_id`, `source_not_found`,
 `storage_unavailable`, `internal_error`, `payload_too_large`.
 `invalid_marker`, `invalid_marker_id`, `invalid_lookup`, `marker_not_found`.
+Project retrieval can also return `project_not_found` or `source_unavailable`.
 
 Source content, credentials, and raw database error text are never included in
 error responses or logs.
+
+## Project Retrieval And Codex Handoff
+
+Project retrieval turns linked memory records into a compact context package for
+an AI coding agent:
+
+```powershell
+$body = @{ project_id = "<project_id>" } | ConvertTo-Json
+Invoke-RestMethod -Uri http://127.0.0.1:4317/api/v1/retrieval/projects -Method Post -Body $body -ContentType "application/json"
+```
+
+Expected response shape:
+
+```json
+{
+  "project": {
+    "project_id": "<uuid>",
+    "name": "Lantern Keeper First Proof",
+    "status": "active",
+    "created_at": "2026-07-18T13:00:00Z"
+  },
+  "episodes": [
+    {
+      "episode_id": "<uuid>",
+      "title": "The Human Relay Problem",
+      "source_id": "<uuid>",
+      "start_byte": 30,
+      "end_byte": 320,
+      "excerpt": "When a person copies context...",
+      "why_matched": "Episode is linked to Project \"Lantern Keeper First Proof\"."
+    }
+  ],
+  "context_package": {
+    "format": "markdown",
+    "audience": "codex",
+    "content": "# Codex Handoff Context\n..."
+  },
+  "warnings": []
+}
+```
+
+If a linked Episode points at a missing authoritative Source, the endpoint
+returns HTTP 409 with `code: "source_unavailable"` instead of silently omitting
+the Episode or returning partial context.
+
+The `context_package` is a deterministic Codex-oriented rendering of retrieved
+authoritative excerpts and provenance metadata. It is not an AI-generated
+summary, recommendation, or narrative.
 
 ## CLI Commands
 
@@ -344,17 +407,31 @@ Run the complete first-proof demonstration after starting SurrealDB and Lighting
 
 ```powershell
 .\scripts\start-surreal.ps1
-cargo run -p lighting -- serve
-.\scripts\demo-first-proof.ps1
+.\scripts\run-first-proof-local.ps1
 ```
 
 The script seeds a harmless local development demonstration that walks through:
 
 ```
-fixtures/first-proof.md → Source → Episode → Project + Marker → retrieve
+fixtures/first-proof.md
+-> Source -> Episode -> Project + Marker
+-> retrieve -> Codex handoff context
+-> local result file -> project-record-result
+-> updated Project handoff
 ```
 
-It is safe to rerun; objects are reused via stored IDs in `.local/first-proof-demo.json`. No data is uploaded or deleted.
+It is safe to rerun; objects are reused via stored IDs in
+`.local/full-loop-demo-v2.json`, and the result writeback is idempotent. No data
+is uploaded or deleted.
+
+The four-step proof for the hackathon slice is:
+
+```powershell
+.\scripts\start-surreal.ps1
+.\scripts\run-first-proof-local.ps1
+cargo run -p lighting -- project-handoff <project-id>
+cargo run -p lighting -- project-record-result <project-id> .local\full-loop-result.md --title "First Proof Result"
+```
 
 ## Full Validation
 

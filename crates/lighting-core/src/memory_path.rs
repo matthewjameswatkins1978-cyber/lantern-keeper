@@ -465,6 +465,27 @@ pub trait MemoryPathRepository: Send + Sync {
         &self,
         marker_id: &MarkerId,
     ) -> Result<Vec<EpisodeMarkerLink>, MemoryPathRepositoryError>;
+
+    /// List Episodes linked to a Project via native graph traversal.
+    /// Results ordered by Episode created_at ascending, then episode_id ascending. Hard limit 50.
+    async fn list_project_episode_links(
+        &self,
+        project_id: &ProjectId,
+    ) -> Result<Vec<EpisodeProjectLink>, MemoryPathRepositoryError>;
+
+    /// Find a Project-linked Episode by source and exact byte range.
+    ///
+    /// Used for writeback idempotency: before creating a new Episode for a
+    /// recorded result, the service checks whether the Project already has a
+    /// linked Episode that covers the same Source range. Returns the first
+    /// matching Episode if found.
+    async fn find_project_episode_by_source_range(
+        &self,
+        project_id: &ProjectId,
+        source_id: &SourceId,
+        start_byte: usize,
+        end_byte: usize,
+    ) -> Result<Option<Episode>, MemoryPathRepositoryError>;
 }
 
 /// Failure categories returned by a memory-path repository.

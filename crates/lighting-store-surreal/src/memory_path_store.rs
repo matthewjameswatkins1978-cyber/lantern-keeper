@@ -358,6 +358,92 @@ impl MemoryPathRepository for SurrealMemoryPathRepository {
             .map(to_domain_episode_marker_link)
             .collect()
     }
+
+    async fn list_project_episode_links(
+        &self,
+        project_id: &ProjectId,
+    ) -> Result<Vec<EpisodeProjectLink>, MemoryPathRepositoryError> {
+        // V3 relation: RELATE episode->episode_project_relation->project
+        // so 'in' = episode, 'out' = project.
+        // Query episodes linked to this project: WHERE out = project
+        let records: Vec<surrealdb::types::Object> = self
+            .store
+            .query(
+                "\
+                SELECT * FROM episode_project_relation \
+                WHERE out = type::record('project', $pid) \
+                LIMIT 50;\
+                ",
+            )
+            .bind(("pid", project_id.as_str()))
+            .await
+            .map_err(|e| MemoryPathRepositoryError::Operation(Box::new(e)))?
+            .take(0)
+            .map_err(|e| MemoryPathRepositoryError::Operation(Box::new(e)))?;
+
+        records
+            .into_iter()
+            .map(to_domain_episode_project_link)
+            .collect()
+    }
+
+    async fn find_project_episode_by_source_range(
+        &self,
+        project_id: &ProjectId,
+        source_id: &SourceId,
+        start_byte: usize,
+        end_byte: usize,
+    ) -> Result<Option<Episode>, MemoryPathRepositoryError> {
+        let records: Vec<surrealdb::types::Object> = self
+            .store
+            .query(
+                "SELECT * FROM episode_project_relation \
+                 WHERE out = type::record('project', $pid) \
+                 LIMIT 50;",
+            )
+            .bind(("pid", project_id.as_str()))
+            .await
+            .map_err(|e| MemoryPathRepositoryError::Operation(Box::new(e)))?
+            .take(0)
+            .map_err(|e| MemoryPathRepositoryError::Operation(Box::new(e)))?;
+
+        for record in records {
+            let obj = record.into_inner();
+            let in_rec = match obj
+                .get("in")
+                .and_then(|v| v.clone().into_t::<surrealdb::types::RecordId>().ok())
+            {
+                Some(r) => r,
+                None => continue,
+            };
+
+            let episode_result: Option<surrealdb::types::Object> = self
+                .store
+                .query("SELECT * FROM episode WHERE id = $eid")
+                .bind(("eid", in_rec.clone()))
+                .await
+                .map_err(|e| MemoryPathRepositoryError::Operation(Box::new(e)))?
+                .take(0)
+                .map_err(|e| MemoryPathRepositoryError::Operation(Box::new(e)))?;
+
+            let episode = match episode_result {
+                Some(obj) => match to_domain_episode(obj) {
+                    Ok(ep) => ep,
+                    Err(_) => continue,
+                },
+                None => continue,
+            };
+
+            if episode.source_range().source_id().as_str() == source_id.as_str()
+                && episode.source_range().start_byte() == start_byte
+                && episode.source_range().end_byte() == end_byte
+            {
+                return Ok(Some(episode));
+            }
+        }
+
+        Ok(None)
+    }
 }
 
 // ---------------------------------------------------------------------------

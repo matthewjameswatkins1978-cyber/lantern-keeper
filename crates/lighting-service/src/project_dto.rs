@@ -60,3 +60,45 @@ fn status_to_str(s: lighting_core::ProjectStatus) -> &'static str {
         lighting_core::ProjectStatus::Archived => "archived",
     }
 }
+
+// ── Record-result DTOs ─────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct RecordResultRequest {
+    pub title: String,
+    #[serde(default = "default_kind")]
+    pub kind: String,
+    pub content: String,
+}
+
+fn default_kind() -> String {
+    "markdown".to_owned()
+}
+
+impl RecordResultRequest {
+    pub fn validate(&self) -> Result<(), super::source_dto::ApiError> {
+        if self.title.trim().is_empty() {
+            return Err(super::source_dto::ApiError {
+                code: "invalid_result".to_owned(),
+                message: "result title must not be empty".to_owned(),
+            });
+        }
+        if self.content.is_empty() {
+            return Err(super::source_dto::ApiError {
+                code: "invalid_result".to_owned(),
+                message: "result content must not be empty".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct RecordResultResponse {
+    pub outcome: String,
+    pub project_id: String,
+    pub source_id: String,
+    pub episode_id: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+}

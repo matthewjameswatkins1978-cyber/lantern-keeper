@@ -5,6 +5,7 @@ use crate::episode_ops::EpisodeService;
 use crate::marker_ops::MarkerService;
 use crate::marker_retrieval_ops::MarkerRetrievalService;
 use crate::project_ops::ProjectService;
+use crate::project_retrieval_ops::ProjectRetrievalService;
 use crate::source_ops::SourceService;
 
 #[derive(Clone)]
@@ -16,6 +17,7 @@ pub struct AppState {
     pub episode_service: Option<EpisodeService>,
     pub association_service: Option<EpisodeAssociationService>,
     pub retrieval_service: Option<MarkerRetrievalService>,
+    pub project_retrieval_service: Option<ProjectRetrievalService>,
 }
 
 impl AppState {
@@ -28,6 +30,7 @@ impl AppState {
             episode_service: None,
             association_service: None,
             retrieval_service: None,
+            project_retrieval_service: None,
         }
     }
 

@@ -6,7 +6,7 @@ use lighting_cli::{default_service_url, run_cli_command, validate_service_url, C
 use lighting_service::source_ops::SourceService;
 use lighting_service::{
     build_router, AppState, EpisodeAssociationService, EpisodeService, MarkerRetrievalService,
-    MarkerService, ProjectService,
+    MarkerService, ProjectRetrievalService, ProjectService,
 };
 use lighting_store_surreal::{
     StoreConfig, SurrealMemoryPathRepository, SurrealSourceRepository, SurrealStore,
@@ -65,6 +65,27 @@ fn main() -> anyhow::Result<()> {
             let url = cli.service_url.unwrap_or_else(default_service_url);
             run_cli_command(&url, CliCommand::Retrieve { phrase, json })
         }
+        Command::ProjectHandoff { project_id, json } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(&url, CliCommand::ProjectHandoff { project_id, json })
+        }
+        Command::ProjectRecordResult {
+            project_id,
+            path,
+            title,
+            json,
+        } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(
+                &url,
+                CliCommand::ProjectRecordResult {
+                    project_id,
+                    path,
+                    title,
+                    json,
+                },
+            )
+        }
     }
 }
 
@@ -120,6 +141,27 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Produce a Codex-ready handoff for a Project.
+    ProjectHandoff {
+        /// Project ID (UUID).
+        project_id: String,
+        /// Output the full JSON response only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record a result file against a Project.
+    ProjectRecordResult {
+        /// Project ID (UUID).
+        project_id: String,
+        /// Path to the result file.
+        path: std::path::PathBuf,
+        /// Result title (default: file name).
+        #[arg(long)]
+        title: Option<String>,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 async fn serve() -> anyhow::Result<()> {
@@ -168,6 +210,8 @@ async fn serve() -> anyhow::Result<()> {
     let association_service = EpisodeAssociationService::new(Arc::clone(&mp_repo));
     let retrieval_service =
         MarkerRetrievalService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
+    let project_retrieval_service =
+        ProjectRetrievalService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
     let app_state = AppState {
         ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         source_service: Some(source_service),
@@ -176,6 +220,7 @@ async fn serve() -> anyhow::Result<()> {
         episode_service: Some(episode_service),
         association_service: Some(association_service),
         retrieval_service: Some(retrieval_service),
+        project_retrieval_service: Some(project_retrieval_service),
     };
     app_state.mark_ready();
 

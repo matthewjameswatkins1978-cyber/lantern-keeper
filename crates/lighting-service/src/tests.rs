@@ -98,6 +98,7 @@ mod router_tests {
             episode_service: None,
             association_service: None,
             retrieval_service: None,
+            project_retrieval_service: None,
         };
         build_router(state)
     }

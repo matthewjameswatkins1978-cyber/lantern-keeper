@@ -1,37 +1,51 @@
-# Lantern Keeper — Current Phase
+# Lantern Keeper - Current Phase
 
 ## Phase
 
-1 — source storage
+Hackathon vertical slice: complete source-backed shared-memory loop.
 
 ## Current Task
 
-LK-003: SurrealDB-backed Source repository with integration tests
+Checkpoint 2: freeze the working proof and prepare a Git/GitHub checkpoint.
 
-## Acceptance Criteria
+## Verified Workflow
 
-- `SourceRepository` trait and `Source` repository result/error types live in
-  `lighting-core` without SurrealDB or HTTP dependencies.
-- `SurrealSourceRepository` in `lighting-store-surreal` implements `store` and
-  `get` for `Source`, returning `StoreSourceResult::Stored` or
-  `StoreSourceResult::Duplicate`.
-- Schema migration V1 defines a `source` table with a unique fingerprint index
-  and a `__lighting_schema` version record.
-- Duplicate detection returns the existing `SourceId` without creating a second
-  record.
-- Exact bytes/characters of `SourceContent` round-trip through the database,
-  including mixed line endings and trailing whitespace.
-- Real integration tests run against a live SurrealDB 3.2.1 engine in a
-  disposable test namespace/database, and can be skipped with
-  `LIGHTING_SKIP_INTEGRATION_TESTS=1`.
-- `cargo fmt --check` passes.
-- `cargo clippy --workspace --all-targets -- -D warnings` passes.
-- `cargo test --workspace` passes with SurrealDB running.
-- Documentation tells a human how to run the integration tests and how to skip
-  them.
-- No episode, marker, project, retrieval, context, embeddings, AI processing,
-  MCP, cloud, GUI, or importer work is implemented yet.
+Lantern Keeper now proves one complete loop through the real system:
+
+```text
+Capture project knowledge
+-> store it as canonical Source-backed memory
+-> retrieve Project context
+-> format a Codex handoff
+-> record the completed result as canonical memory
+-> retrieve the updated Project handoff
+```
+
+## Implemented Now
+
+- Exact Source storage and retrieval with fingerprint duplicate detection.
+- Episodes as UTF-8-safe byte ranges into authoritative Sources.
+- Projects and Markers stored through the memory-path repository.
+- Episode-to-Project and Episode-to-Marker links through native SurrealDB relation tables.
+- Marker-led retrieval with exact excerpts and deterministic provenance.
+- Project-led retrieval with a deterministic Codex `context_package`.
+- `lighting project-handoff <project-id>` for paste-ready Codex context.
+- `lighting project-record-result <project-id> <result-file> --title "..."`
+  for writing completed work back into the same Project.
+- A full local proof script that demonstrates the loop using public CLI/API paths.
+
+## Validation
+
+Last verified locally:
+
+```powershell
+.\scripts\validate.ps1
+.\scripts\run-first-proof-local.ps1
+```
+
+Both commands passed with live local SurrealDB.
 
 ## Next Verified Step
 
-LK-004: In-memory Source repository and service wiring
+Make a checkpoint commit/PR that excludes local runtime state and unrelated
+evidence folders, then write the hackathon description around this working loop.

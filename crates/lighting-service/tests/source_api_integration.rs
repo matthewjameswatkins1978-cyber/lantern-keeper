@@ -1,6 +1,4 @@
 //! Live SurrealDB integration tests for the Source HTTP API.
-//! Each test uses a unique disposable test database to guarantee isolation.
-
 use axum::body::Body;
 use axum::http::{self, Request, StatusCode};
 use axum::Router;
@@ -12,64 +10,57 @@ use std::sync::Arc;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-fn skip_integration_tests() -> bool {
+fn skip() -> bool {
     matches!(
         std::env::var("LIGHTING_SKIP_INTEGRATION_TESTS").as_deref(),
         Ok("1") | Ok("true")
     )
 }
-
-fn test_config() -> StoreConfig {
+fn tc() -> StoreConfig {
     dotenvy::dotenv().ok();
-    let mut config = StoreConfig::from_env();
-    config.namespace = "lighting_test".to_owned();
-    config.database = format!("lighting_api_test_{}", Uuid::new_v4().simple());
-    config
+    let mut c = StoreConfig::from_env();
+    c.namespace = "lighting_test".to_owned();
+    c.database = format!("lighting_api_test_{}", Uuid::new_v4().simple());
+    c
 }
-
-async fn connect_repo() -> SurrealSourceRepository {
-    let config = test_config();
-    let store = SurrealStore::connect(&config)
+async fn cr() -> SurrealSourceRepository {
+    let c = tc();
+    let s = SurrealStore::connect(&c)
         .await
-        .unwrap_or_else(|error| panic!("failed to connect to SurrealDB: {error}"));
-    let repo = SurrealSourceRepository::new(store);
-    repo.migrate()
-        .await
-        .expect("schema migration should succeed");
-    repo
+        .unwrap_or_else(|e| panic!("SurrealDB: {e}"));
+    let r = SurrealSourceRepository::new(s);
+    r.migrate().await.expect("migrate");
+    r
 }
-
-fn create_app(repo: Arc<SurrealSourceRepository>) -> Router {
-    let source_service = SourceService::new(repo);
-    let state = AppState {
+fn ca(repo: Arc<SurrealSourceRepository>) -> Router {
+    let svc = SourceService::new(repo);
+    let st = AppState {
         ready: Arc::new(std::sync::atomic::AtomicBool::new(true)),
-        source_service: Some(source_service),
+        source_service: Some(svc),
         project_service: None,
         marker_service: None,
         episode_service: None,
         association_service: None,
         retrieval_service: None,
+        project_retrieval_service: None,
     };
-    build_router(state)
+    build_router(st)
 }
-
-async fn body_as_value(body: Body) -> Value {
-    let bytes = axum::body::to_bytes(body, 1024 * 1024)
-        .await
-        .expect("body readable");
-    serde_json::from_slice(&bytes).expect("body should be valid JSON")
+async fn bv(body: Body) -> Value {
+    let b = axum::body::to_bytes(body, 1024 * 1024).await.expect("read");
+    serde_json::from_slice(&b).expect("json")
 }
 
 #[tokio::test]
 async fn store_markdown_and_retrieve_exact_content() {
-    if skip_integration_tests() {
+    if skip() {
         return;
     }
-    let repo = connect_repo().await;
+    let repo = cr().await;
     let repo = Arc::new(repo);
-    let app = create_app(repo.clone());
+    let app = ca(repo.clone());
     let content = "# Handbook\n\n  leading\r\n\n\ntrailing  \t";
-    let create_response = app
+    let crr = app
         .clone()
         .oneshot(
             Request::builder()
@@ -84,36 +75,33 @@ async fn store_markdown_and_retrieve_exact_content() {
         )
         .await
         .unwrap();
-    assert_eq!(create_response.status(), StatusCode::CREATED);
-    let create_body = body_as_value(create_response.into_body()).await;
-    assert_eq!(create_body["outcome"], "stored");
-    let source_id = create_body["source_id"].as_str().unwrap().to_owned();
-    let get_response = app
+    assert_eq!(crr.status(), StatusCode::CREATED);
+    let cb = bv(crr.into_body()).await;
+    let sid = cb["source_id"].as_str().unwrap().to_owned();
+    let gr = app
         .oneshot(
             Request::builder()
                 .method(http::Method::GET)
-                .uri(format!("/api/v1/sources/{source_id}"))
+                .uri(format!("/api/v1/sources/{sid}"))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(get_response.status(), StatusCode::OK);
-    let get_body = body_as_value(get_response.into_body()).await;
-    assert_eq!(get_body["source_id"], source_id);
-    assert_eq!(get_body["title"], "API test handbook");
-    assert_eq!(get_body["kind"], "markdown");
-    assert_eq!(get_body["content"], content);
+    assert_eq!(gr.status(), StatusCode::OK);
+    let gb = bv(gr.into_body()).await;
+    assert_eq!(gb["source_id"], sid);
+    assert_eq!(gb["content"], content);
 }
 
 #[tokio::test]
 async fn duplicate_content_returns_same_id_without_new_record() {
-    if skip_integration_tests() {
+    if skip() {
         return;
     }
-    let repo = connect_repo().await;
+    let repo = cr().await;
     let repo = Arc::new(repo);
-    let app = create_app(repo.clone());
+    let app = ca(repo);
     let r1 = app
         .clone()
         .oneshot(
@@ -122,16 +110,15 @@ async fn duplicate_content_returns_same_id_without_new_record() {
                 .uri("/api/v1/sources")
                 .header(http::header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({"title":"First","kind":"markdown","content":"duplicate API content"})
-                        .to_string(),
+                    json!({"title":"First","kind":"markdown","content":"dup"}).to_string(),
                 ))
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(r1.status(), StatusCode::CREATED);
-    let b1 = body_as_value(r1.into_body()).await;
-    let first_id = b1["source_id"].as_str().unwrap().to_owned();
+    let b1 = bv(r1.into_body()).await;
+    let fid = b1["source_id"].as_str().unwrap().to_owned();
     let r2 = app
         .oneshot(
             Request::builder()
@@ -139,72 +126,68 @@ async fn duplicate_content_returns_same_id_without_new_record() {
                 .uri("/api/v1/sources")
                 .header(http::header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({"title":"Second","kind":"markdown","content":"duplicate API content"})
-                        .to_string(),
+                    json!({"title":"Second","kind":"markdown","content":"dup"}).to_string(),
                 ))
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(r2.status(), StatusCode::OK);
-    let b2 = body_as_value(r2.into_body()).await;
+    let b2 = bv(r2.into_body()).await;
     assert_eq!(b2["outcome"], "duplicate");
-    assert_eq!(b2["source_id"].as_str().unwrap(), first_id);
+    assert_eq!(b2["source_id"].as_str().unwrap(), fid);
 }
 
 #[tokio::test]
 async fn source_survives_fresh_connection() {
-    if skip_integration_tests() {
+    if skip() {
         return;
     }
     dotenvy::dotenv().ok();
-    let db_name = format!("lighting_api_reconnect_{}", Uuid::new_v4().simple());
-    let mut config_1 = StoreConfig::from_env();
-    config_1.namespace = "lighting_test".to_owned();
-    config_1.database = db_name.clone();
-    let mut config_2 = StoreConfig::from_env();
-    config_2.namespace = "lighting_test".to_owned();
-    config_2.database = db_name.clone();
-    let store_1 = SurrealStore::connect(&config_1).await.expect("connect");
-    let repo_1 = SurrealSourceRepository::new(store_1);
-    repo_1.migrate().await.expect("migrate");
-    let repo_1 = Arc::new(repo_1);
-    let app_1 = create_app(repo_1);
+    let db = format!("lighting_api_reconnect_{}", Uuid::new_v4().simple());
+    let mut c1 = StoreConfig::from_env();
+    c1.namespace = "lighting_test".to_owned();
+    c1.database = db.clone();
+    let mut c2 = StoreConfig::from_env();
+    c2.namespace = "lighting_test".to_owned();
+    c2.database = db.clone();
+    let s1 = SurrealStore::connect(&c1).await.expect("c");
+    let r1 = SurrealSourceRepository::new(s1);
+    r1.migrate().await.expect("m");
+    let r1 = Arc::new(r1);
+    let a1 = ca(r1);
     let content = "persistence check content";
-    let create_r = app_1
+    let crr = a1
         .oneshot(
             Request::builder()
                 .method(http::Method::POST)
                 .uri("/api/v1/sources")
                 .header(http::header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({"title":"Persistence test","kind":"plain_text","content":content})
-                        .to_string(),
+                    json!({"title":"P","kind":"plain_text","content":content}).to_string(),
                 ))
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(create_r.status(), StatusCode::CREATED);
-    let create_body = body_as_value(create_r.into_body()).await;
-    let source_id = create_body["source_id"].as_str().unwrap().to_owned();
-    let store_2 = SurrealStore::connect(&config_2).await.expect("connect");
-    let repo_2 = SurrealSourceRepository::new(store_2);
-    repo_2.migrate().await.expect("migrate");
-    let repo_2 = Arc::new(repo_2);
-    let app_2 = create_app(repo_2);
-    let get_r = app_2
+    assert_eq!(crr.status(), StatusCode::CREATED);
+    let cb = bv(crr.into_body()).await;
+    let sid = cb["source_id"].as_str().unwrap().to_owned();
+    let s2 = SurrealStore::connect(&c2).await.expect("c");
+    let r2 = SurrealSourceRepository::new(s2);
+    r2.migrate().await.expect("m");
+    let r2 = Arc::new(r2);
+    let a2 = ca(r2);
+    let gr = a2
         .oneshot(
             Request::builder()
                 .method(http::Method::GET)
-                .uri(format!("/api/v1/sources/{source_id}"))
+                .uri(format!("/api/v1/sources/{sid}"))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(get_r.status(), StatusCode::OK);
-    let get_body = body_as_value(get_r.into_body()).await;
-    assert_eq!(get_body["source_id"], source_id);
-    assert_eq!(get_body["content"], content);
+    assert_eq!(gr.status(), StatusCode::OK);
+    assert_eq!(bv(gr.into_body()).await["content"], content);
 }

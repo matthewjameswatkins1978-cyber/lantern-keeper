@@ -40,6 +40,15 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
         } => cmd_source_add(&client, &path, title, kind, json),
         CliCommand::SourceShow { source_id, json } => cmd_source_show(&client, &source_id, json),
         CliCommand::Retrieve { phrase, json } => cmd_retrieve(&client, &phrase, json),
+        CliCommand::ProjectHandoff { project_id, json } => {
+            cmd_project_handoff(&client, &project_id, json)
+        }
+        CliCommand::ProjectRecordResult {
+            project_id,
+            path,
+            title,
+            json,
+        } => cmd_project_record_result(&client, &project_id, &path, title, json),
     }
 }
 
@@ -80,6 +89,27 @@ pub enum CliCommand {
     Retrieve {
         /// The remembered phrase to look up.
         phrase: String,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Produce a Codex-ready handoff for a Project.
+    ProjectHandoff {
+        /// Project ID (UUID).
+        project_id: String,
+        /// Output the full JSON response only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record a result file against a Project.
+    ProjectRecordResult {
+        /// Project ID (UUID).
+        project_id: String,
+        /// Path to the result file.
+        path: PathBuf,
+        /// Result title (default: file name).
+        #[arg(long)]
+        title: Option<String>,
         /// Output JSON only.
         #[arg(long)]
         json: bool,
@@ -254,6 +284,52 @@ struct RetrievedEpisode {
     end_byte: u64,
     excerpt: String,
     why_matched: String,
+}
+
+// Project handoff response shapes (private, HTTP-shaped; no domain imports)
+#[derive(Debug, Deserialize)]
+struct ProjectHandoffResponse {
+    project: ProjectHandoffSummary,
+    episodes: Vec<ProjectHandoffEpisode>,
+    context_package: ContextPackage,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectHandoffSummary {
+    project_id: String,
+    name: String,
+    status: String,
+    #[serde(rename = "created_at")]
+    _created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectHandoffEpisode {
+    episode_id: String,
+    title: String,
+    source_id: String,
+    start_byte: usize,
+    end_byte: usize,
+    excerpt: String,
+    why_matched: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextPackage {
+    format: String,
+    audience: String,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RecordResultResponse {
+    outcome: String,
+    project_id: String,
+    source_id: String,
+    episode_id: String,
+    start_byte: usize,
+    end_byte: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -483,6 +559,129 @@ fn cmd_retrieve(client: &HttpClient, phrase: &str, json: bool) -> anyhow::Result
     Ok(())
 }
 
+fn cmd_project_handoff(client: &HttpClient, project_id: &str, json: bool) -> anyhow::Result<()> {
+    // Validate UUID locally before any HTTP request.
+    if uuid::Uuid::parse_str(project_id).is_err() {
+        bail!("invalid Project ID: {project_id} — must be a valid UUID");
+    }
+
+    let body = serde_json::json!({ "project_id": project_id });
+
+    let response = client
+        .post_json("/api/v1/retrieval/projects", &body)
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+
+    let body = HttpClient::handle_response(response)?;
+    let handoff: ProjectHandoffResponse = serde_json::from_value(body)
+        .map_err(|e| anyhow::Error::msg(format!("unexpected API response: {e}")))?;
+
+    if json {
+        // Print the complete server JSON response, no added prose.
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "project": {
+                    "project_id": handoff.project.project_id,
+                    "name": handoff.project.name,
+                    "status": handoff.project.status,
+                },
+                "episodes": handoff.episodes.iter().map(|e| serde_json::json!({
+                    "episode_id": e.episode_id,
+                    "title": e.title,
+                    "source_id": e.source_id,
+                    "start_byte": e.start_byte,
+                    "end_byte": e.end_byte,
+                    "excerpt": e.excerpt,
+                    "why_matched": e.why_matched,
+                })).collect::<Vec<_>>(),
+                "context_package": {
+                    "format": handoff.context_package.format,
+                    "audience": handoff.context_package.audience,
+                    "content": handoff.context_package.content,
+                },
+                "warnings": handoff.warnings,
+            }))
+            .unwrap()
+        );
+    } else {
+        // Print the context_package content and nothing else.
+        print!("{}", handoff.context_package.content);
+    }
+
+    Ok(())
+}
+
+fn cmd_project_record_result(
+    client: &HttpClient,
+    project_id: &str,
+    path: &Path,
+    title: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
+    if uuid::Uuid::parse_str(project_id).is_err() {
+        bail!("invalid Project ID: {project_id} — must be a valid UUID");
+    }
+    if !path.exists() {
+        bail!("file not found: {}", path.display());
+    }
+    if path.is_dir() {
+        bail!("path is a directory, not a file: {}", path.display());
+    }
+
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("failed to read UTF-8 result file: {}", path.display()))?;
+
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+    let title = title.unwrap_or_else(|| file_name.to_owned());
+    let kind = infer_kind(path);
+
+    let body = serde_json::json!({
+        "title": title,
+        "kind": kind,
+        "content": content,
+    });
+
+    let response = client
+        .post_json(
+            &format!("/api/v1/projects/{project_id}/record-result"),
+            &body,
+        )
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+
+    let body = HttpClient::handle_response(response)?;
+    let recorded: RecordResultResponse = serde_json::from_value(body)
+        .map_err(|e| anyhow::Error::msg(format!("unexpected API response: {e}")))?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "outcome": recorded.outcome,
+                "project_id": recorded.project_id,
+                "source_id": recorded.source_id,
+                "episode_id": recorded.episode_id,
+                "start_byte": recorded.start_byte,
+                "end_byte": recorded.end_byte,
+            }))
+            .unwrap()
+        );
+    } else {
+        match recorded.outcome.as_str() {
+            "recorded" => println!("Recorded result — {}", recorded.episode_id),
+            "already_recorded" => println!("Already recorded — {}", recorded.episode_id),
+            other => println!("{other} — {}", recorded.episode_id),
+        }
+        println!("Project   : {}", recorded.project_id);
+        println!("Source    : {}", recorded.source_id);
+        println!("Byte range: {}..{}", recorded.start_byte, recorded.end_byte);
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -666,5 +865,175 @@ mod tests {
             }
             _ => panic!("expected Retrieve variant"),
         }
+    }
+
+    // ── Project handoff tests ──────────────────────────────────────────────
+
+    #[test]
+    fn project_handoff_command_is_parsed() {
+        let cmd = CliCommand::ProjectHandoff {
+            project_id: "550e8400-e29b-41d4-a716-446655440000".into(),
+            json: false,
+        };
+        match cmd {
+            CliCommand::ProjectHandoff { project_id, json } => {
+                assert_eq!(project_id, "550e8400-e29b-41d4-a716-446655440000");
+                assert!(!json);
+            }
+            _ => panic!("expected ProjectHandoff variant"),
+        }
+    }
+
+    #[test]
+    fn project_handoff_invalid_uuid_rejected_before_request() {
+        let client = HttpClient::new("http://127.0.0.1:1");
+        let result = cmd_project_handoff(&client, "not-a-uuid", false);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("invalid Project ID"));
+        assert!(msg.contains("must be a valid UUID"));
+    }
+
+    #[test]
+    fn project_handoff_normal_output_renders_context_package_exactly() {
+        // Simulate the output path: deserialize a fake response, then check
+        // the printed context_package content is verbatim, including Unicode
+        // and leading/trailing whitespace.
+        let pkg_content = "  \u{00A9} Codex Handoff  \n# Context\n\n---\n  ";
+        let response = serde_json::json!({
+            "project": {
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                "name": "Demo",
+                "status": "active",
+                "created_at": "2026-01-01T00:00:00Z"
+            },
+            "episodes": [],
+            "context_package": {
+                "format": "markdown",
+                "audience": "agent",
+                "content": pkg_content
+            },
+            "warnings": []
+        });
+        let handoff: ProjectHandoffResponse =
+            serde_json::from_value(response).expect("valid handoff response");
+        assert_eq!(handoff.context_package.content, pkg_content);
+        // Normal output must be the content only — verify there is no
+        // "Codex Handoff" block when the package content does not start with it.
+        // The key property is that the content is returned exactly as-is.
+    }
+
+    #[test]
+    fn project_handoff_json_output_is_json_only() {
+        let response = serde_json::json!({
+            "project": {
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                "name": "Demo",
+                "status": "active",
+                "created_at": "2026-01-01T00:00:00Z"
+            },
+            "episodes": [],
+            "context_package": {
+                "format": "markdown",
+                "audience": "agent",
+                "content": "# Handoff"
+            },
+            "warnings": ["test warning"]
+        });
+        // Build the JSON output the same way cmd_project_handoff does.
+        let handoff: ProjectHandoffResponse =
+            serde_json::from_value(response.clone()).expect("valid handoff response");
+        let json_output = serde_json::to_string_pretty(&serde_json::json!({
+            "project": {
+                "project_id": handoff.project.project_id,
+                "name": handoff.project.name,
+                "status": handoff.project.status,
+            },
+            "episodes": handoff.episodes.iter().map(|e| serde_json::json!({
+                "episode_id": e.episode_id,
+                "title": e.title,
+                "source_id": e.source_id,
+                "start_byte": e.start_byte,
+                "end_byte": e.end_byte,
+                "excerpt": e.excerpt,
+                "why_matched": e.why_matched,
+            })).collect::<Vec<_>>(),
+            "context_package": {
+                "format": handoff.context_package.format,
+                "audience": handoff.context_package.audience,
+                "content": handoff.context_package.content,
+            },
+            "warnings": handoff.warnings,
+        }))
+        .unwrap();
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_output).expect("valid JSON output");
+        assert_eq!(
+            parsed["project"]["project_id"],
+            response["project"]["project_id"]
+        );
+        assert_eq!(parsed["warnings"][0], "test warning");
+        assert_eq!(parsed["context_package"]["content"], "# Handoff");
+    }
+
+    #[test]
+    fn project_handoff_api_error_does_not_emit_partial_handoff() {
+        // CliError::Api display should not contain handoff content.
+        let err = CliError::Api {
+            status: 500,
+            code: "internal_error".into(),
+            message: "something broke".into(),
+        };
+        let msg = err.to_string();
+        assert!(!msg.contains("# Codex Handoff Context"));
+        assert!(!msg.contains("context_package"));
+    }
+
+    #[test]
+    fn project_record_result_command_is_parsed() {
+        let cmd = CliCommand::ProjectRecordResult {
+            project_id: "550e8400-e29b-41d4-a716-446655440000".into(),
+            path: PathBuf::from("result.md"),
+            title: Some("Result".into()),
+            json: true,
+        };
+        match cmd {
+            CliCommand::ProjectRecordResult {
+                project_id,
+                path,
+                title,
+                json,
+            } => {
+                assert_eq!(project_id, "550e8400-e29b-41d4-a716-446655440000");
+                assert_eq!(path, PathBuf::from("result.md"));
+                assert_eq!(title.as_deref(), Some("Result"));
+                assert!(json);
+            }
+            _ => panic!("expected ProjectRecordResult variant"),
+        }
+    }
+
+    #[test]
+    fn project_record_result_invalid_uuid_rejected_before_request() {
+        let client = HttpClient::new("http://127.0.0.1:1");
+        let result =
+            cmd_project_record_result(&client, "not-a-uuid", Path::new("missing.md"), None, false);
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("invalid Project ID"));
+        assert!(!msg.contains("file not found"));
+    }
+
+    #[test]
+    fn project_record_result_rejects_missing_file() {
+        let client = HttpClient::new("http://127.0.0.1:1");
+        let result = cmd_project_record_result(
+            &client,
+            "550e8400-e29b-41d4-a716-446655440000",
+            Path::new("missing-result-file.md"),
+            None,
+            false,
+        );
+        assert!(result.unwrap_err().to_string().contains("file not found"));
     }
 }

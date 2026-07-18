@@ -3,7 +3,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::{
     episode_association_routes, episode_routes, marker_retrieval_routes, marker_routes,
-    project_routes, routes, source_routes, state::AppState,
+    project_retrieval_routes, project_routes, routes, source_routes, state::AppState,
 };
 
 /// Maximum accepted request body size for Source creation (1 MiB).
@@ -31,6 +31,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/projects/{project_id}",
             axum::routing::get(project_routes::get_project),
         );
+    let project_routes = project_routes.route(
+        "/api/v1/projects/{project_id}/record-result",
+        axum::routing::post(project_routes::record_result),
+    );
 
     let marker_routes = Router::new()
         .route(
@@ -80,6 +84,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/v1/retrieval/markers",
             axum::routing::post(marker_retrieval_routes::retrieve_by_marker),
+        )
+        .route(
+            "/api/v1/retrieval/projects",
+            axum::routing::post(project_retrieval_routes::retrieve_by_project),
         )
         .with_state(state)
 }

@@ -189,6 +189,77 @@ async fn duplicate_project_link_does_not_create_extra_records() {
 }
 
 #[tokio::test]
+async fn finds_project_episode_by_source_range() {
+    if skip_integration_tests() {
+        return;
+    }
+    let (src, mp) = connect().await;
+    let source = mk_source("s", "alpha\nbeta\n");
+    let source = match src.store(source).await.unwrap() {
+        lighting_core::StoreSourceResult::Stored(s) => s,
+        _ => panic!(),
+    };
+    let full_range = SourceRange::new(
+        source.id().clone(),
+        0,
+        source.content().as_bytes().len(),
+        source.content(),
+    )
+    .unwrap();
+    let partial_range = SourceRange::new(source.id().clone(), 0, 5, source.content()).unwrap();
+    let full_ep = mp
+        .create_episode(Episode::new(EpisodeTitle::new("Full").unwrap(), full_range))
+        .await
+        .unwrap();
+    let partial_ep = mp
+        .create_episode(Episode::new(
+            EpisodeTitle::new("Partial").unwrap(),
+            partial_range,
+        ))
+        .await
+        .unwrap();
+    let prj = mp
+        .create_project(Project::new(
+            ProjectName::new("Prj").unwrap(),
+            ProjectStatus::Active,
+        ))
+        .await
+        .unwrap();
+    mp.link_episode_project(EpisodeProjectLink::new(
+        partial_ep.id().clone(),
+        prj.id().clone(),
+        ProjectLinkKind::Primary,
+    ))
+    .await
+    .unwrap();
+    mp.link_episode_project(EpisodeProjectLink::new(
+        full_ep.id().clone(),
+        prj.id().clone(),
+        ProjectLinkKind::Primary,
+    ))
+    .await
+    .unwrap();
+
+    let found = mp
+        .find_project_episode_by_source_range(
+            prj.id(),
+            source.id(),
+            0,
+            source.content().as_bytes().len(),
+        )
+        .await
+        .unwrap()
+        .expect("matching full-range episode");
+    assert_eq!(found.id(), full_ep.id());
+
+    let missing = mp
+        .find_project_episode_by_source_range(prj.id(), source.id(), 1, 5)
+        .await
+        .unwrap();
+    assert!(missing.is_none());
+}
+
+#[tokio::test]
 async fn link_and_list_episode_marker_links() {
     if skip_integration_tests() {
         return;

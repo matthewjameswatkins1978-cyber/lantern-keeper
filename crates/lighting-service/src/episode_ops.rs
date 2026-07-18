@@ -1,17 +1,11 @@
 //! Application-layer Episode operations.
-//!
-//! Uses `SourceRepository` to load the authoritative Source and
-//! `MemoryPathRepository` to store/retrieve Episodes. Contains no
-//! SurrealDB types, queries, record IDs, or range-validation logic.
-
-use std::sync::Arc;
-
-use lighting_core::{
-    Episode, EpisodeId, EpisodeTitle, MemoryPathRepository, SourceId, SourceRange, SourceRepository,
-};
 
 use crate::episode_dto::EpisodeResponse;
 use crate::source_dto::ApiError;
+use lighting_core::{
+    Episode, EpisodeId, EpisodeTitle, MemoryPathRepository, SourceId, SourceRange, SourceRepository,
+};
+use std::sync::Arc;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EpisodeOperationError {
@@ -65,7 +59,6 @@ pub struct EpisodeService {
     source_repo: Arc<dyn SourceRepository>,
     memory_repo: Arc<dyn MemoryPathRepository>,
 }
-
 impl EpisodeService {
     pub fn new(
         source_repo: Arc<dyn SourceRepository>,
@@ -76,11 +69,6 @@ impl EpisodeService {
             memory_repo,
         }
     }
-
-    /// Creates a new Episode from an exact Source byte range.
-    ///
-    /// Loads the authoritative Source, validates the range against it,
-    /// constructs the domain Episode, and stores it.
     pub async fn create_episode(
         &self,
         title: String,
@@ -89,36 +77,25 @@ impl EpisodeService {
         end_byte: usize,
     ) -> Result<EpisodeResponse, EpisodeOperationError> {
         let title = EpisodeTitle::new(title).map_err(|_| EpisodeOperationError::BlankTitle)?;
-
         let source_id =
             SourceId::parse(&source_id_raw).ok_or(EpisodeOperationError::SourceNotFound)?;
-
-        // Load the authoritative Source
         let source = self
             .source_repo
             .get(&source_id)
             .await
             .map_err(|e| EpisodeOperationError::Repository(e.into()))?
             .ok_or(EpisodeOperationError::SourceNotFound)?;
-
-        // Construct the SourceRange using the domain's validation
         let source_range =
             SourceRange::new(source_id.clone(), start_byte, end_byte, source.content())
                 .map_err(EpisodeOperationError::InvalidRange)?;
-
         let episode = Episode::new(title, source_range);
-
         let stored = self
             .memory_repo
             .create_episode(episode)
             .await
             .map_err(|e| EpisodeOperationError::Repository(e.into()))?;
-
         self.build_response(&stored, &source).await
     }
-
-    /// Retrieves an Episode by ID, loading the authoritative Source to
-    /// produce the exact excerpt.
     pub async fn get_episode(
         &self,
         id: &EpisodeId,
@@ -129,20 +106,14 @@ impl EpisodeService {
             .await
             .map_err(|e| EpisodeOperationError::Repository(e.into()))?
             .ok_or(EpisodeOperationError::EpisodeNotFound)?;
-
-        // Load the authoritative Source for the excerpt
         let source = self
             .source_repo
             .get(episode.source_range().source_id())
             .await
             .map_err(|e| EpisodeOperationError::Repository(e.into()))?
             .ok_or(EpisodeOperationError::SourceUnavailable)?;
-
         self.build_response(&episode, &source).await
     }
-
-    /// Builds an EpisodeResponse, generating the excerpt from the
-    /// authoritative Source content (not from stored duplicate text).
     async fn build_response(
         &self,
         episode: &Episode,
@@ -161,17 +132,15 @@ impl EpisodeService {
     }
 }
 
-/// Creates a no-op EpisodeService for tests that shouldn't touch a real DB.
 #[cfg(test)]
 pub fn unavailable_service() -> EpisodeService {
     use lighting_core::{SourceRepositoryError, StoreSourceResult};
-
     struct UnavailableSourceRepo;
     #[async_trait::async_trait]
     impl SourceRepository for UnavailableSourceRepo {
         async fn store(
             &self,
-            _source: lighting_core::Source,
+            _: lighting_core::Source,
         ) -> Result<StoreSourceResult, SourceRepositoryError> {
             Err(SourceRepositoryError::Operation(Box::new(
                 std::io::Error::other("unavailable"),
@@ -179,20 +148,19 @@ pub fn unavailable_service() -> EpisodeService {
         }
         async fn get(
             &self,
-            _id: &lighting_core::SourceId,
+            _: &lighting_core::SourceId,
         ) -> Result<Option<lighting_core::Source>, SourceRepositoryError> {
             Err(SourceRepositoryError::Operation(Box::new(
                 std::io::Error::other("unavailable"),
             )))
         }
     }
-
     struct UnavailableMemoryRepo;
     #[async_trait::async_trait]
     impl MemoryPathRepository for UnavailableMemoryRepo {
         async fn create_project(
             &self,
-            _project: lighting_core::Project,
+            _: lighting_core::Project,
         ) -> Result<lighting_core::Project, lighting_core::MemoryPathRepositoryError> {
             Err(lighting_core::MemoryPathRepositoryError::Operation(
                 Box::new(std::io::Error::other("unavailable")),
@@ -200,7 +168,7 @@ pub fn unavailable_service() -> EpisodeService {
         }
         async fn get_project(
             &self,
-            _id: &lighting_core::ProjectId,
+            _: &lighting_core::ProjectId,
         ) -> Result<Option<lighting_core::Project>, lighting_core::MemoryPathRepositoryError>
         {
             Err(lighting_core::MemoryPathRepositoryError::Operation(
@@ -209,7 +177,7 @@ pub fn unavailable_service() -> EpisodeService {
         }
         async fn create_episode(
             &self,
-            _episode: lighting_core::Episode,
+            _: lighting_core::Episode,
         ) -> Result<lighting_core::Episode, lighting_core::MemoryPathRepositoryError> {
             Err(lighting_core::MemoryPathRepositoryError::Operation(
                 Box::new(std::io::Error::other("unavailable")),
@@ -217,7 +185,7 @@ pub fn unavailable_service() -> EpisodeService {
         }
         async fn get_episode(
             &self,
-            _id: &lighting_core::EpisodeId,
+            _: &lighting_core::EpisodeId,
         ) -> Result<Option<lighting_core::Episode>, lighting_core::MemoryPathRepositoryError>
         {
             Err(lighting_core::MemoryPathRepositoryError::Operation(
@@ -226,7 +194,7 @@ pub fn unavailable_service() -> EpisodeService {
         }
         async fn create_marker(
             &self,
-            _marker: lighting_core::Marker,
+            _: lighting_core::Marker,
         ) -> Result<lighting_core::StoreMarkerResult, lighting_core::MemoryPathRepositoryError>
         {
             Err(lighting_core::MemoryPathRepositoryError::Operation(
@@ -235,7 +203,7 @@ pub fn unavailable_service() -> EpisodeService {
         }
         async fn get_marker(
             &self,
-            _id: &lighting_core::MarkerId,
+            _: &lighting_core::MarkerId,
         ) -> Result<Option<lighting_core::Marker>, lighting_core::MemoryPathRepositoryError>
         {
             Err(lighting_core::MemoryPathRepositoryError::Operation(
@@ -244,7 +212,7 @@ pub fn unavailable_service() -> EpisodeService {
         }
         async fn find_marker_by_lookup(
             &self,
-            _lookup_key: &str,
+            _: &str,
         ) -> Result<Option<lighting_core::Marker>, lighting_core::MemoryPathRepositoryError>
         {
             Err(lighting_core::MemoryPathRepositoryError::Operation(
@@ -253,7 +221,7 @@ pub fn unavailable_service() -> EpisodeService {
         }
         async fn link_episode_project(
             &self,
-            _link: lighting_core::EpisodeProjectLink,
+            _: lighting_core::EpisodeProjectLink,
         ) -> Result<(), lighting_core::MemoryPathRepositoryError> {
             Err(lighting_core::MemoryPathRepositoryError::Operation(
                 Box::new(std::io::Error::other("unavailable")),
@@ -261,7 +229,7 @@ pub fn unavailable_service() -> EpisodeService {
         }
         async fn link_episode_marker(
             &self,
-            _link: lighting_core::EpisodeMarkerLink,
+            _: lighting_core::EpisodeMarkerLink,
         ) -> Result<(), lighting_core::MemoryPathRepositoryError> {
             Err(lighting_core::MemoryPathRepositoryError::Operation(
                 Box::new(std::io::Error::other("unavailable")),
@@ -269,7 +237,7 @@ pub fn unavailable_service() -> EpisodeService {
         }
         async fn list_episode_project_links(
             &self,
-            _episode_id: &lighting_core::EpisodeId,
+            _: &lighting_core::EpisodeId,
         ) -> Result<Vec<lighting_core::EpisodeProjectLink>, lighting_core::MemoryPathRepositoryError>
         {
             Err(lighting_core::MemoryPathRepositoryError::Operation(
@@ -278,7 +246,7 @@ pub fn unavailable_service() -> EpisodeService {
         }
         async fn list_episode_marker_links(
             &self,
-            _episode_id: &lighting_core::EpisodeId,
+            _: &lighting_core::EpisodeId,
         ) -> Result<Vec<lighting_core::EpisodeMarkerLink>, lighting_core::MemoryPathRepositoryError>
         {
             Err(lighting_core::MemoryPathRepositoryError::Operation(
@@ -287,15 +255,35 @@ pub fn unavailable_service() -> EpisodeService {
         }
         async fn list_marker_episode_links(
             &self,
-            _marker_id: &lighting_core::MarkerId,
+            _: &lighting_core::MarkerId,
         ) -> Result<Vec<lighting_core::EpisodeMarkerLink>, lighting_core::MemoryPathRepositoryError>
         {
             Err(lighting_core::MemoryPathRepositoryError::Operation(
                 Box::new(std::io::Error::other("unavailable")),
             ))
         }
+        async fn list_project_episode_links(
+            &self,
+            _: &lighting_core::ProjectId,
+        ) -> Result<Vec<lighting_core::EpisodeProjectLink>, lighting_core::MemoryPathRepositoryError>
+        {
+            Err(lighting_core::MemoryPathRepositoryError::Operation(
+                Box::new(std::io::Error::other("unavailable")),
+            ))
+        }
+        async fn find_project_episode_by_source_range(
+            &self,
+            _: &lighting_core::ProjectId,
+            _: &lighting_core::SourceId,
+            _: usize,
+            _: usize,
+        ) -> Result<Option<lighting_core::Episode>, lighting_core::MemoryPathRepositoryError>
+        {
+            Err(lighting_core::MemoryPathRepositoryError::Operation(
+                Box::new(std::io::Error::other("unavailable")),
+            ))
+        }
     }
-
     EpisodeService::new(
         Arc::new(UnavailableSourceRepo),
         Arc::new(UnavailableMemoryRepo),
