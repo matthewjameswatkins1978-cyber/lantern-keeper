@@ -94,6 +94,10 @@ mod router_tests {
             ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             source_service: Some(service),
             project_service: None,
+            marker_service: None,
+            episode_service: None,
+            association_service: None,
+            retrieval_service: None,
         };
         build_router(state)
     }

@@ -1,7 +1,10 @@
 use axum::Router;
 use tower_http::limit::RequestBodyLimitLayer;
 
-use crate::{project_routes, routes, source_routes, state::AppState};
+use crate::{
+    episode_association_routes, episode_routes, marker_retrieval_routes, marker_routes,
+    project_routes, routes, source_routes, state::AppState,
+};
 
 /// Maximum accepted request body size for Source creation (1 MiB).
 const SOURCE_CREATE_BODY_LIMIT: usize = 1_048_576;
@@ -29,11 +32,54 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::get(project_routes::get_project),
         );
 
+    let marker_routes = Router::new()
+        .route(
+            "/api/v1/markers",
+            axum::routing::post(marker_routes::create_marker),
+        )
+        .route(
+            "/api/v1/markers/lookup",
+            axum::routing::get(marker_routes::lookup_marker),
+        )
+        .route(
+            "/api/v1/markers/{marker_id}",
+            axum::routing::get(marker_routes::get_marker),
+        );
+
     Router::new()
         .route("/health/live", axum::routing::get(routes::live))
         .route("/health/ready", axum::routing::get(routes::ready))
         .route("/api/v1/version", axum::routing::get(routes::version))
         .merge(source_routes)
         .merge(project_routes)
+        .merge(marker_routes)
+        .merge(
+            Router::new()
+                .route(
+                    "/api/v1/episodes",
+                    axum::routing::post(episode_routes::create_episode),
+                )
+                .route(
+                    "/api/v1/episodes/{episode_id}",
+                    axum::routing::get(episode_routes::get_episode),
+                ),
+        )
+        .merge(
+            Router::new()
+                .route(
+                    "/api/v1/episodes/{episode_id}/projects",
+                    axum::routing::post(episode_association_routes::link_project)
+                        .get(episode_association_routes::list_project_links),
+                )
+                .route(
+                    "/api/v1/episodes/{episode_id}/markers",
+                    axum::routing::post(episode_association_routes::link_marker)
+                        .get(episode_association_routes::list_marker_links),
+                ),
+        )
+        .route(
+            "/api/v1/retrieval/markers",
+            axum::routing::post(marker_retrieval_routes::retrieve_by_marker),
+        )
         .with_state(state)
 }

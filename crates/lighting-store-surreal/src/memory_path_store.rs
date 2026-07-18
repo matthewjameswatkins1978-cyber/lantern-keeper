@@ -330,6 +330,34 @@ impl MemoryPathRepository for SurrealMemoryPathRepository {
             .map(to_domain_episode_marker_link)
             .collect()
     }
+
+    async fn list_marker_episode_links(
+        &self,
+        marker_id: &MarkerId,
+    ) -> Result<Vec<EpisodeMarkerLink>, MemoryPathRepositoryError> {
+        // V3 relation: RELATE episode->episode_marker_relation->marker
+        // so 'in' = episode, 'out' = marker.
+        // Query episodes linked to this marker: WHERE out = marker
+        let records: Vec<surrealdb::types::Object> = self
+            .store
+            .query(
+                "\
+                SELECT * FROM episode_marker_relation \
+                WHERE out = type::record('marker', $mid) \
+                LIMIT 50;\
+                ",
+            )
+            .bind(("mid", marker_id.as_str()))
+            .await
+            .map_err(|e| MemoryPathRepositoryError::Operation(Box::new(e)))?
+            .take(0)
+            .map_err(|e| MemoryPathRepositoryError::Operation(Box::new(e)))?;
+
+        records
+            .into_iter()
+            .map(to_domain_episode_marker_link)
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------------------

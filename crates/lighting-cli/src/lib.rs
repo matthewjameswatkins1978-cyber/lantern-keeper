@@ -39,6 +39,7 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             json,
         } => cmd_source_add(&client, &path, title, kind, json),
         CliCommand::SourceShow { source_id, json } => cmd_source_show(&client, &source_id, json),
+        CliCommand::Retrieve { phrase, json } => cmd_retrieve(&client, &phrase, json),
     }
 }
 
@@ -71,6 +72,14 @@ pub enum CliCommand {
     SourceShow {
         /// Source ID (UUID).
         source_id: String,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Retrieve Episodes by a remembered Marker phrase.
+    Retrieve {
+        /// The remembered phrase to look up.
+        phrase: String,
         /// Output JSON only.
         #[arg(long)]
         json: bool,
@@ -220,6 +229,33 @@ struct ReadinessResponse {
     reason: String,
 }
 
+// Retrieval response shapes
+#[derive(Debug, Deserialize)]
+struct MarkerRetrievalResponse {
+    query: String,
+    marker: Option<MarkerMatch>,
+    episodes: Vec<RetrievedEpisode>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MarkerMatch {
+    marker_id: String,
+    display_text: String,
+    lookup_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RetrievedEpisode {
+    episode_id: String,
+    title: String,
+    source_id: String,
+    start_byte: u64,
+    end_byte: u64,
+    excerpt: String,
+    why_matched: String,
+}
+
 // ---------------------------------------------------------------------------
 // Command implementations
 // ---------------------------------------------------------------------------
@@ -348,6 +384,100 @@ fn cmd_source_show(client: &HttpClient, source_id: &str, json: bool) -> anyhow::
         println!();
         println!("--- Content ---");
         print!("{}", source.content);
+    }
+
+    Ok(())
+}
+
+const MAX_EXCERPT_CHARS: usize = 1200;
+
+fn cmd_retrieve(client: &HttpClient, phrase: &str, json: bool) -> anyhow::Result<()> {
+    if phrase.trim().is_empty() {
+        bail!("phrase must not be blank — provide a remembered phrase to look up");
+    }
+
+    let body = serde_json::json!({ "text": phrase });
+
+    let response = client
+        .post_json("/api/v1/retrieval/markers", &body)
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+
+    let body = HttpClient::handle_response(response)?;
+    let retrieval: MarkerRetrievalResponse = serde_json::from_value(body)
+        .map_err(|e| anyhow::Error::msg(format!("unexpected API response: {e}")))?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "query": retrieval.query,
+                "marker": retrieval.marker.map(|m| serde_json::json!({
+                    "marker_id": m.marker_id,
+                    "display_text": m.display_text,
+                    "lookup_key": m.lookup_key,
+                })),
+                "episodes": retrieval.episodes.iter().map(|e| serde_json::json!({
+                    "episode_id": e.episode_id,
+                    "title": e.title,
+                    "source_id": e.source_id,
+                    "start_byte": e.start_byte,
+                    "end_byte": e.end_byte,
+                    "excerpt": e.excerpt,
+                    "why_matched": e.why_matched,
+                })).collect::<Vec<_>>(),
+                "warnings": retrieval.warnings,
+            }))
+            .unwrap()
+        );
+        return Ok(());
+    }
+
+    // Print warnings
+    for warning in &retrieval.warnings {
+        println!("[warning] {warning}");
+    }
+
+    match retrieval.marker {
+        None => {
+            // No marker match
+            if !retrieval.warnings.is_empty() {
+                // warning already printed
+            }
+        }
+        Some(ref marker) => {
+            println!("Marker: {}", marker.display_text);
+
+            if retrieval.episodes.is_empty() {
+                // warnings printed above handle the explanation
+                return Ok(());
+            }
+
+            println!();
+            for (i, ep) in retrieval.episodes.iter().enumerate() {
+                println!("{}. {}", i + 1, ep.title);
+                println!("   Why: {}", ep.why_matched);
+                println!(
+                    "   Source: {}, bytes {}..{}",
+                    ep.source_id, ep.start_byte, ep.end_byte
+                );
+                println!("   Excerpt:");
+
+                let excerpt = if ep.excerpt.chars().count() > MAX_EXCERPT_CHARS {
+                    let truncated: String = ep.excerpt.chars().take(MAX_EXCERPT_CHARS).collect();
+                    format!("{truncated}\n[... truncated at {MAX_EXCERPT_CHARS} characters ...]")
+                } else {
+                    ep.excerpt.clone()
+                };
+
+                // Indent excerpt by 6 spaces
+                for line in excerpt.lines() {
+                    println!("      {line}");
+                }
+                if i + 1 < retrieval.episodes.len() {
+                    println!();
+                }
+            }
+        }
     }
 
     Ok(())
@@ -482,5 +612,59 @@ mod tests {
     fn default_service_url_uses_documented_port() {
         let url = default_service_url();
         assert_eq!(url, "http://127.0.0.1:4317");
+    }
+
+    // Retrieve-specific tests
+    #[test]
+    fn retrieve_blank_phrase_is_rejected_locally() {
+        // cmd_retrieve validates blank phrase before HTTP
+        let client = HttpClient::new("http://127.0.0.1:1");
+        let result = cmd_retrieve(&client, "   ", false);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must not be blank"));
+    }
+
+    #[test]
+    fn excerpt_truncation_is_unicode_safe() {
+        let long: String = "a".repeat(1500);
+        let truncated: String = long.chars().take(MAX_EXCERPT_CHARS).collect();
+        assert_eq!(truncated.chars().count(), MAX_EXCERPT_CHARS);
+        // Verify the truncation string is valid UTF-8
+        let output = format!("{truncated}\n[... truncated at {MAX_EXCERPT_CHARS} characters ...]");
+        assert!(output.contains("truncated at 1200"));
+    }
+
+    #[test]
+    fn excerpt_truncation_preserves_multibyte_unicode() {
+        let mut s = String::new();
+        for _ in 0..2000 {
+            s.push('\u{4E16}'); // 世 CJK character
+        }
+        assert!(s.chars().count() > MAX_EXCERPT_CHARS);
+        let truncated: String = s.chars().take(MAX_EXCERPT_CHARS).collect();
+        // Each char should be complete
+        assert_eq!(truncated.chars().count(), MAX_EXCERPT_CHARS);
+        for c in truncated.chars() {
+            assert_eq!(c, '\u{4E16}');
+        }
+    }
+
+    #[test]
+    fn retrieval_command_included_in_clap_enum() {
+        // Verify CliCommand has Retrieve variant
+        let cmd = CliCommand::Retrieve {
+            phrase: "test".into(),
+            json: false,
+        };
+        match cmd {
+            CliCommand::Retrieve { phrase, json } => {
+                assert_eq!(phrase, "test");
+                assert!(!json);
+            }
+            _ => panic!("expected Retrieve variant"),
+        }
     }
 }

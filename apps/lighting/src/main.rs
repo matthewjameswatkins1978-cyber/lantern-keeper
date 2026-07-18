@@ -4,7 +4,10 @@ use anyhow::{bail, Context};
 use clap::{Parser, Subcommand};
 use lighting_cli::{default_service_url, run_cli_command, validate_service_url, CliCommand};
 use lighting_service::source_ops::SourceService;
-use lighting_service::{build_router, AppState, ProjectService};
+use lighting_service::{
+    build_router, AppState, EpisodeAssociationService, EpisodeService, MarkerRetrievalService,
+    MarkerService, ProjectService,
+};
 use lighting_store_surreal::{
     StoreConfig, SurrealMemoryPathRepository, SurrealSourceRepository, SurrealStore,
 };
@@ -58,6 +61,10 @@ fn main() -> anyhow::Result<()> {
             let url = cli.service_url.unwrap_or_else(default_service_url);
             run_cli_command(&url, CliCommand::SourceShow { source_id, json })
         }
+        Command::Retrieve { phrase, json } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(&url, CliCommand::Retrieve { phrase, json })
+        }
     }
 }
 
@@ -105,6 +112,14 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Retrieve Episodes by a remembered Marker phrase.
+    Retrieve {
+        /// The remembered phrase to look up.
+        phrase: String,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 async fn serve() -> anyhow::Result<()> {
@@ -144,12 +159,23 @@ async fn serve() -> anyhow::Result<()> {
 
     info!("Memory-path schema migrations applied successfully");
 
-    let source_service = SourceService::new(Arc::new(repo));
-    let project_service = ProjectService::new(Arc::new(mp_repo));
+    let source_repo: Arc<dyn lighting_core::SourceRepository> = Arc::new(repo);
+    let mp_repo: Arc<dyn lighting_core::MemoryPathRepository> = Arc::new(mp_repo);
+    let source_service = SourceService::new(Arc::clone(&source_repo));
+    let project_service = ProjectService::new(Arc::clone(&mp_repo));
+    let marker_service = MarkerService::new(Arc::clone(&mp_repo));
+    let episode_service = EpisodeService::new(Arc::clone(&source_repo), Arc::clone(&mp_repo));
+    let association_service = EpisodeAssociationService::new(Arc::clone(&mp_repo));
+    let retrieval_service =
+        MarkerRetrievalService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
     let app_state = AppState {
         ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         source_service: Some(source_service),
         project_service: Some(project_service),
+        marker_service: Some(marker_service),
+        episode_service: Some(episode_service),
+        association_service: Some(association_service),
+        retrieval_service: Some(retrieval_service),
     };
     app_state.mark_ready();
 

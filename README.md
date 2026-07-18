@@ -38,7 +38,7 @@ Not implemented yet:
 
 - `lighting source add` or `lighting source show` CLI commands
 - Filesystem or Markdown-file import
-- Episodes, markers, projects, retrieval, context packages, or graph relationships
+- Episodes, retrieval, context packages, or graph relationships
 - Embeddings, AI processing, MCP, cloud services, GUI, task automation, or
   importer work
 
@@ -200,6 +200,44 @@ Expected response:
 }
 ```
 
+## Marker API
+
+### Create a Marker
+
+```powershell
+$body = @{ text = "human network cable" } | ConvertTo-Json
+Invoke-RestMethod -Uri http://127.0.0.1:4317/api/v1/markers -Method Post -Body $body -ContentType "application/json"
+```
+
+Expected response (new Marker, HTTP 201):
+
+```json
+{
+  "marker_id": "<uuid>",
+  "display_text": "human network cable",
+  "lookup_key": "human network cable",
+  "created_at": "2026-07-18T13:00:00Z"
+}
+```
+
+Expected response (normalised duplicate, HTTP 200): same body as above, same ID.
+
+### Get a Marker by ID
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:4317/api/v1/markers/<marker_id>
+```
+
+Expected response (HTTP 200): same Marker shape as above.
+
+### Lookup a Marker by Phrase
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:4317/api/v1/markers/lookup?text=HUMAN+network+cable"
+```
+
+Lookup normalises casing and whitespace. Expected response (HTTP 200): the matching Marker, or 404 if none found.
+
 ## Source API
 
 ### Post a Small Markdown Source
@@ -269,6 +307,7 @@ All errors use a stable shape:
 
 Common error codes: `invalid_source`, `invalid_source_id`, `source_not_found`,
 `storage_unavailable`, `internal_error`, `payload_too_large`.
+`invalid_marker`, `invalid_marker_id`, `invalid_lookup`, `marker_not_found`.
 
 Source content, credentials, and raw database error text are never included in
 error responses or logs.

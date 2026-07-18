@@ -458,6 +458,13 @@ pub trait MemoryPathRepository: Send + Sync {
         &self,
         episode_id: &EpisodeId,
     ) -> Result<Vec<EpisodeMarkerLink>, MemoryPathRepositoryError>;
+
+    /// List Episodes linked to a Marker via native graph traversal.
+    /// Results ordered by Episode created_at ascending, then episode_id ascending. Hard limit 50.
+    async fn list_marker_episode_links(
+        &self,
+        marker_id: &MarkerId,
+    ) -> Result<Vec<EpisodeMarkerLink>, MemoryPathRepositoryError>;
 }
 
 /// Failure categories returned by a memory-path repository.

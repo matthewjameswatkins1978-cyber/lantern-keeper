@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+use crate::episode_association_ops::EpisodeAssociationService;
+use crate::episode_ops::EpisodeService;
+use crate::marker_ops::MarkerService;
+use crate::marker_retrieval_ops::MarkerRetrievalService;
 use crate::project_ops::ProjectService;
 use crate::source_ops::SourceService;
 
@@ -8,6 +12,10 @@ pub struct AppState {
     pub ready: Arc<std::sync::atomic::AtomicBool>,
     pub source_service: Option<SourceService>,
     pub project_service: Option<ProjectService>,
+    pub marker_service: Option<MarkerService>,
+    pub episode_service: Option<EpisodeService>,
+    pub association_service: Option<EpisodeAssociationService>,
+    pub retrieval_service: Option<MarkerRetrievalService>,
 }
 
 impl AppState {
@@ -16,6 +24,10 @@ impl AppState {
             ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             source_service: None,
             project_service: None,
+            marker_service: None,
+            episode_service: None,
+            association_service: None,
+            retrieval_service: None,
         }
     }
 
