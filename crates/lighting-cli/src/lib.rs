@@ -280,6 +280,10 @@ struct RetrievedEpisode {
     episode_id: String,
     title: String,
     source_id: String,
+    #[serde(default)]
+    content_source_id: Option<String>,
+    #[serde(default)]
+    latest_source_id: Option<String>,
     start_byte: u64,
     end_byte: u64,
     excerpt: String,
@@ -492,15 +496,24 @@ fn cmd_retrieve(client: &HttpClient, phrase: &str, json: bool) -> anyhow::Result
                     "display_text": m.display_text,
                     "lookup_key": m.lookup_key,
                 })),
-                "episodes": retrieval.episodes.iter().map(|e| serde_json::json!({
-                    "episode_id": e.episode_id,
-                    "title": e.title,
-                    "source_id": e.source_id,
-                    "start_byte": e.start_byte,
-                    "end_byte": e.end_byte,
-                    "excerpt": e.excerpt,
-                    "why_matched": e.why_matched,
-                })).collect::<Vec<_>>(),
+                "episodes": retrieval.episodes.iter().map(|e| {
+                    let mut obj = serde_json::json!({
+                        "episode_id": e.episode_id,
+                        "title": e.title,
+                        "source_id": e.source_id,
+                        "start_byte": e.start_byte,
+                        "end_byte": e.end_byte,
+                        "excerpt": e.excerpt,
+                        "why_matched": e.why_matched,
+                    });
+                    if let Some(ref csid) = e.content_source_id {
+                        obj["content_source_id"] = serde_json::json!(csid);
+                    }
+                    if let Some(ref lsid) = e.latest_source_id {
+                        obj["latest_source_id"] = serde_json::json!(lsid);
+                    }
+                    obj
+                }).collect::<Vec<_>>(),
                 "warnings": retrieval.warnings,
             }))
             .unwrap()
@@ -532,10 +545,26 @@ fn cmd_retrieve(client: &HttpClient, phrase: &str, json: bool) -> anyhow::Result
             for (i, ep) in retrieval.episodes.iter().enumerate() {
                 println!("{}. {}", i + 1, ep.title);
                 println!("   Why: {}", ep.why_matched);
-                println!(
-                    "   Source: {}, bytes {}..{}",
-                    ep.source_id, ep.start_byte, ep.end_byte
-                );
+
+                // Show provenance only when it differs from the simple historical case.
+                let content_src = ep.content_source_id.as_deref().unwrap_or(&ep.source_id);
+                if content_src != ep.source_id {
+                    println!(
+                        "   Source: {} (rebased to {}, bytes {}..{})",
+                        ep.source_id, content_src, ep.start_byte, ep.end_byte
+                    );
+                } else if let Some(ref latest) = ep.latest_source_id {
+                    println!(
+                        "   Source: {} (latest revision: {}, bytes {}..{})",
+                        ep.source_id, latest, ep.start_byte, ep.end_byte
+                    );
+                } else {
+                    println!(
+                        "   Source: {}, bytes {}..{}",
+                        ep.source_id, ep.start_byte, ep.end_byte
+                    );
+                }
+
                 println!("   Excerpt:");
 
                 let excerpt = if ep.excerpt.chars().count() > MAX_EXCERPT_CHARS {

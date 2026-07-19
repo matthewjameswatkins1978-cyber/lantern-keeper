@@ -21,7 +21,15 @@ pub struct MarkerMatch {
 pub struct RetrievedEpisode {
     pub episode_id: String,
     pub title: String,
+    /// The historically-referenced Source ID (the one the Episode was created with).
     pub source_id: String,
+    /// The exact Source whose content was used to produce the excerpt.
+    /// Always present; equal to `source_id` when no newer revision exists.
+    pub content_source_id: String,
+    /// When a newer Source revision exists but the excerpt could not be safely
+    /// rebased into it, this identifies that revision.  Absent when the
+    /// current revision was used or no revision exists.
+    pub latest_source_id: Option<String>,
     pub start_byte: usize,
     pub end_byte: usize,
     pub excerpt: String,

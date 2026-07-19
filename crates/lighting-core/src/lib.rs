@@ -19,8 +19,8 @@ pub use memory_path::{
     ProjectLinkKind, ProjectName, ProjectStatus, SourceRange, SourceRangeError, StoreMarkerResult,
 };
 pub use source::{
-    NewSource, Source, SourceContent, SourceError, SourceFingerprint, SourceId, SourceKind,
-    SourceRepository, SourceRepositoryError, SourceTitle, StoreSourceResult,
+    find_all_matches, NewSource, Source, SourceContent, SourceError, SourceFingerprint, SourceId,
+    SourceKind, SourceRepository, SourceRepositoryError, SourceTitle, StoreSourceResult,
 };
 
 /// Lighting service version.

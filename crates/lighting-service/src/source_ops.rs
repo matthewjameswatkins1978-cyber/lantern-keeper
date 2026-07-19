@@ -130,6 +130,16 @@ pub fn unavailable_service() -> SourceService {
                 std::io::Error::new(std::io::ErrorKind::NotConnected, "unavailable"),
             )))
         }
+
+        async fn get_current(
+            &self,
+            _kind: lighting_core::SourceKind,
+            _title: &lighting_core::SourceTitle,
+        ) -> Result<Option<lighting_core::Source>, lighting_core::SourceRepositoryError> {
+            Err(lighting_core::SourceRepositoryError::Operation(Box::new(
+                std::io::Error::new(std::io::ErrorKind::NotConnected, "unavailable"),
+            )))
+        }
     }
 
     SourceService::new(Arc::new(UnavailableRepo))

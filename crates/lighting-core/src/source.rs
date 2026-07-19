@@ -168,6 +168,7 @@ pub struct Source {
     content: SourceContent,
     fingerprint: SourceFingerprint,
     created_at: DateTime<Utc>,
+    previous_version_id: Option<SourceId>,
 }
 
 /// Result of attempting to store a Source through a repository.
@@ -195,6 +196,17 @@ pub trait SourceRepository: Send + Sync {
 
     /// Retrieves a Source by ID, returning `None` if not found.
     async fn get(&self, id: &SourceId) -> Result<Option<Source>, SourceRepositoryError>;
+
+    /// Resolves the current revision of a logical Source identified by (kind, title).
+    ///
+    /// When a revision chain exists (A → B → C via `previous_version_id`), the
+    /// source whose ID is not referenced by any other `previous_version_id` in
+    /// the same logical group is the current revision.
+    async fn get_current(
+        &self,
+        kind: SourceKind,
+        title: &SourceTitle,
+    ) -> Result<Option<Source>, SourceRepositoryError>;
 }
 
 /// Failure categories returned by a Source repository.
@@ -218,6 +230,7 @@ impl Source {
             input.content,
             fingerprint,
             Utc::now(),
+            None,
         )
     }
 
@@ -232,6 +245,7 @@ impl Source {
         content: SourceContent,
         fingerprint: SourceFingerprint,
         created_at: DateTime<Utc>,
+        previous_version_id: Option<SourceId>,
     ) -> Self {
         Self {
             id,
@@ -240,6 +254,7 @@ impl Source {
             content,
             fingerprint,
             created_at,
+            previous_version_id,
         }
     }
 
@@ -272,6 +287,11 @@ impl Source {
     pub fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
+
+    /// Returns the previous version ID, if this is a revision.
+    pub fn previous_version_id(&self) -> Option<&SourceId> {
+        self.previous_version_id.as_ref()
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -281,6 +301,24 @@ fn hex(bytes: &[u8]) -> String {
         let _ = write!(out, "{byte:02x}");
     }
     out
+}
+
+/// Finds all byte-offsets of `needle` in `haystack`.
+///
+/// Returns `Vec<usize>` with each match's starting byte position.
+/// This is the shared exact-text rebasing primitive used by both
+/// project-scoped and marker-led retrieval.
+pub fn find_all_matches(haystack: &str, needle: &str) -> Vec<usize> {
+    if needle.is_empty() {
+        return vec![];
+    }
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .enumerate()
+        .filter(|(_, window)| *window == needle.as_bytes())
+        .map(|(pos, _)| pos)
+        .collect()
 }
 
 #[cfg(test)]

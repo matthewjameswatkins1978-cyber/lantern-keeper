@@ -154,6 +154,16 @@ pub fn unavailable_service() -> EpisodeService {
                 std::io::Error::other("unavailable"),
             )))
         }
+
+        async fn get_current(
+            &self,
+            _: lighting_core::SourceKind,
+            _: &lighting_core::SourceTitle,
+        ) -> Result<Option<lighting_core::Source>, SourceRepositoryError> {
+            Err(SourceRepositoryError::Operation(Box::new(
+                std::io::Error::other("unavailable"),
+            )))
+        }
     }
     struct UnavailableMemoryRepo;
     #[async_trait::async_trait]

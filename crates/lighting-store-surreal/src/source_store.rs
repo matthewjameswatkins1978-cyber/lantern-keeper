@@ -77,55 +77,114 @@ impl SurrealSourceRepository {
 #[async_trait]
 impl SourceRepository for SurrealSourceRepository {
     async fn store(&self, source: Source) -> Result<StoreSourceResult, SourceRepositoryError> {
-        let id = source.id().as_str();
-        let kind = kind_to_string(source.kind());
-        let title = source.title().as_str();
-        let content = source.content().as_str();
-        let fingerprint = source.fingerprint().as_str();
-        let created_at = source.created_at();
-
-        let result: Result<Vec<surrealdb::types::Object>, surrealdb::Error> = self
-            .store
-            .query(
-                r#"
-                    CREATE source CONTENT {
-                        id: $id,
-                        kind: $kind,
-                        title: $title,
-                        content: $content,
-                        fingerprint: $fingerprint,
-                        created_at: $created_at
-                    };
-                "#,
-            )
-            .bind(("id", id))
-            .bind(("kind", kind))
-            .bind(("title", title))
-            .bind(("content", content))
-            .bind(("fingerprint", fingerprint))
-            .bind(("created_at", created_at))
+        // 1. Look for an existing source with the same kind + title (same logical source).
+        let existing = self
+            .find_by_kind_and_title(source.kind(), source.title().as_str())
             .await
-            .and_then(|mut response| response.take(0));
+            .map_err(|e| SourceRepositoryError::Operation(Box::new(e)))?;
 
-        match result {
-            Ok(_) => Ok(StoreSourceResult::Stored(source)),
-            Err(error) if is_unique_conflict(&error) => {
-                let existing = self
-                    .find_by_fingerprint(fingerprint)
-                    .await
-                    .map_err(|source| SourceRepositoryError::Operation(Box::new(source)))?;
-                Ok(StoreSourceResult::Duplicate {
-                    existing_id: existing.ok_or_else(|| {
-                        SourceRepositoryError::Operation(Box::new(
-                            SurrealSourceRepositoryError::DuplicateFingerprint,
-                        ))
-                    })?,
+        if let Some(existing_source) = existing {
+            // 2. Same logical source exists. Compare fingerprints.
+            if existing_source.fingerprint() == source.fingerprint() {
+                // Identical content → return the existing source.
+                return Ok(StoreSourceResult::Duplicate {
+                    existing_id: existing_source.id().clone(),
                     attempted: source,
-                })
+                });
+            } else {
+                // Changed content → create new revision linked to the previous one.
+                let id = source.id().as_str();
+                let kind = kind_to_string(source.kind());
+                let title = source.title().as_str();
+                let content = source.content().as_str();
+                let fingerprint = source.fingerprint().as_str();
+                let created_at = source.created_at();
+                let previous_id = existing_source.id().as_str();
+
+                let result: Result<Vec<surrealdb::types::Object>, surrealdb::Error> = self
+                    .store
+                    .query(
+                        r#"
+                            CREATE source CONTENT {
+                                id: $id,
+                                kind: $kind,
+                                title: $title,
+                                content: $content,
+                                fingerprint: $fingerprint,
+                                created_at: $created_at,
+                                previous_version_id: $previous_version_id
+                            };
+                        "#,
+                    )
+                    .bind(("id", id))
+                    .bind(("kind", kind))
+                    .bind(("title", title))
+                    .bind(("content", content))
+                    .bind(("fingerprint", fingerprint))
+                    .bind(("created_at", created_at))
+                    .bind(("previous_version_id", previous_id))
+                    .await
+                    .and_then(|mut response| response.take(0));
+
+                match result {
+                    Ok(_) => Ok(StoreSourceResult::Stored(source)),
+                    Err(surrealdb_error) => Err(SourceRepositoryError::Operation(Box::new(
+                        SurrealSourceRepositoryError::Store(surrealdb_error),
+                    ))),
+                }
             }
-            Err(source) => Err(SourceRepositoryError::Operation(Box::new(
-                SurrealSourceRepositoryError::Store(source),
-            ))),
+        } else {
+            // 3. No existing logical source → fresh creation.
+            let id = source.id().as_str();
+            let kind = kind_to_string(source.kind());
+            let title = source.title().as_str();
+            let content = source.content().as_str();
+            let fingerprint = source.fingerprint().as_str();
+            let created_at = source.created_at();
+
+            let result: Result<Vec<surrealdb::types::Object>, surrealdb::Error> = self
+                .store
+                .query(
+                    r#"
+                        CREATE source CONTENT {
+                            id: $id,
+                            kind: $kind,
+                            title: $title,
+                            content: $content,
+                            fingerprint: $fingerprint,
+                            created_at: $created_at
+                        };
+                    "#,
+                )
+                .bind(("id", id))
+                .bind(("kind", kind))
+                .bind(("title", title))
+                .bind(("content", content))
+                .bind(("fingerprint", fingerprint))
+                .bind(("created_at", created_at))
+                .await
+                .and_then(|mut response| response.take(0));
+
+            match result {
+                Ok(_) => Ok(StoreSourceResult::Stored(source)),
+                Err(error) if is_unique_conflict(&error) => {
+                    let existing_id = self
+                        .find_by_fingerprint(fingerprint)
+                        .await
+                        .map_err(|source| SourceRepositoryError::Operation(Box::new(source)))?;
+                    Ok(StoreSourceResult::Duplicate {
+                        existing_id: existing_id.ok_or_else(|| {
+                            SourceRepositoryError::Operation(Box::new(
+                                SurrealSourceRepositoryError::DuplicateFingerprint,
+                            ))
+                        })?,
+                        attempted: source,
+                    })
+                }
+                Err(source) => Err(SourceRepositoryError::Operation(Box::new(
+                    SurrealSourceRepositoryError::Store(source),
+                ))),
+            }
         }
     }
 
@@ -140,6 +199,43 @@ impl SourceRepository for SurrealSourceRepository {
             .map_err(|source| SourceRepositoryError::Operation(Box::new(source)))?;
 
         record.map(to_domain_source).transpose()
+    }
+
+    async fn get_current(
+        &self,
+        kind: SourceKind,
+        title: &SourceTitle,
+    ) -> Result<Option<Source>, SourceRepositoryError> {
+        let kind_str = kind_to_string(kind);
+        let title_str = title.as_str();
+
+        let records: Vec<surrealdb::types::Object> = self
+            .store
+            .query("SELECT * FROM source WHERE kind = $kind AND title = $title")
+            .bind(("kind", kind_str.as_str()))
+            .bind(("title", title_str))
+            .await
+            .map_err(|source| SourceRepositoryError::Operation(Box::new(source)))?
+            .take(0)
+            .map_err(|source| SourceRepositoryError::Operation(Box::new(source)))?;
+
+        if records.is_empty() {
+            return Ok(None);
+        }
+
+        let sources: Vec<Source> = records
+            .into_iter()
+            .map(to_domain_source)
+            .collect::<Result<_, _>>()?;
+
+        // Collect all IDs that are referenced as previous_version_id by another source.
+        let referenced: std::collections::HashSet<SourceId> = sources
+            .iter()
+            .filter_map(|s| s.previous_version_id().cloned())
+            .collect();
+
+        // The current revision is the one NOT referenced by any other source.
+        Ok(sources.into_iter().find(|s| !referenced.contains(s.id())))
     }
 }
 
@@ -162,6 +258,28 @@ impl SurrealSourceRepository {
             .transpose()
             .map_err(|_| SurrealSourceRepositoryError::Decode)?
             .map(|s| s.id().clone()))
+    }
+
+    async fn find_by_kind_and_title(
+        &self,
+        kind: SourceKind,
+        title: &str,
+    ) -> Result<Option<Source>, SurrealSourceRepositoryError> {
+        let kind_str = kind_to_string(kind);
+        let record: Option<surrealdb::types::Object> = self
+            .store
+            .query("SELECT * FROM source WHERE kind = $kind AND title = $title ORDER BY created_at DESC LIMIT 1")
+            .bind(("kind", kind_str.as_str()))
+            .bind(("title", title))
+            .await
+            .map_err(SurrealSourceRepositoryError::Fetch)?
+            .take(0)
+            .map_err(SurrealSourceRepositoryError::Fetch)?;
+
+        record
+            .map(to_domain_source)
+            .transpose()
+            .map_err(|_| SurrealSourceRepositoryError::Decode)
     }
 }
 
@@ -249,6 +367,20 @@ fn to_domain_source(record: surrealdb::types::Object) -> Result<Source, SourceRe
             SourceRepositoryError::Operation(Box::new(SurrealSourceRepositoryError::Decode))
         })?;
 
+    let previous_version_id = obj.get("previous_version_id").and_then(|value| {
+        // It can be either a string directly, or a record ID.
+        if let Ok(s) = value.clone().into_t::<String>() {
+            if s.is_empty() {
+                return None;
+            }
+            Some(SourceId::from_record_id(s))
+        } else if let Ok(rid) = value.clone().into_t::<surrealdb::types::RecordId>() {
+            Some(SourceId::from_record_id(record_id_key_to_string(&rid.key)))
+        } else {
+            None
+        }
+    });
+
     let fingerprint = SourceFingerprint::for_content(&content);
 
     Ok(Source::reconstitute(
@@ -258,6 +390,7 @@ fn to_domain_source(record: surrealdb::types::Object) -> Result<Source, SourceRe
         content,
         fingerprint,
         created_at,
+        previous_version_id,
     ))
 }
 
@@ -268,6 +401,7 @@ DEFINE FIELD IF NOT EXISTS title ON source TYPE string;
 DEFINE FIELD IF NOT EXISTS content ON source TYPE string;
 DEFINE FIELD IF NOT EXISTS fingerprint ON source TYPE string;
 DEFINE FIELD IF NOT EXISTS created_at ON source TYPE datetime;
+DEFINE FIELD IF NOT EXISTS previous_version_id ON source TYPE option<string>;
 DEFINE INDEX IF NOT EXISTS source_fingerprint ON source FIELDS fingerprint UNIQUE;
 
 DEFINE TABLE IF NOT EXISTS __lighting_schema SCHEMALESS;
