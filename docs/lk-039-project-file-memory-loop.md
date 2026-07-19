@@ -33,7 +33,13 @@ Name      : My Demo Project
 Status    : active
 ```
 
-To reuse an existing Project, recall its UUID from a previous run. Capture the ID for later steps:
+To list Projects and find their IDs at any time:
+
+```powershell
+cargo run -p lighting -- project-list
+```
+
+Output is one compact row per Project: `[<uuid>] <status> — <name>`. An empty list prints `(no Projects)`. Capture the ID for later steps:
 
 ```powershell
 $projectId = "<uuid-from-output>"

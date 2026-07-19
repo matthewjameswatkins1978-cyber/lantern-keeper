@@ -290,4 +290,13 @@ impl ProjectService {
             end_byte: content_len,
         })
     }
+
+    pub async fn list_projects(&self) -> Result<Vec<ProjectResponse>, ProjectOperationError> {
+        let projects = self
+            .repo
+            .list_all_projects()
+            .await
+            .map_err(|e| ProjectOperationError::Repository(e.into()))?;
+        Ok(projects.iter().map(ProjectResponse::from_domain).collect())
+    }
 }

@@ -196,3 +196,105 @@ async fn project_survives_fresh_connection() {
     assert_eq!(gr.status(), StatusCode::OK);
     assert_eq!(bv(gr.into_body()).await["project_id"], pid);
 }
+
+#[tokio::test]
+async fn list_projects_empty_returns_200_with_empty_array() {
+    if skip() {
+        return;
+    }
+    dotenvy::dotenv().ok();
+    let a = app().await;
+    let r = a
+        .oneshot(
+            Request::builder()
+                .method(http::Method::GET)
+                .uri("/api/v1/projects")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let body = bv(r.into_body()).await;
+    let projects = body["projects"]
+        .as_array()
+        .expect("projects should be an array");
+    assert!(
+        projects.is_empty(),
+        "empty DB should return empty projects list"
+    );
+}
+
+#[tokio::test]
+async fn list_projects_returns_both_in_create_order() {
+    if skip() {
+        return;
+    }
+    dotenvy::dotenv().ok();
+    let a = app().await;
+
+    // Create two projects
+    let r1 = a
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/api/v1/projects")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"name": "Alpha"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r1.status(), StatusCode::CREATED);
+    let b1 = bv(r1.into_body()).await;
+    let pid1 = b1["project_id"].as_str().unwrap().to_owned();
+    let name1 = b1["name"].as_str().unwrap().to_owned();
+    let status1 = b1["status"].as_str().unwrap().to_owned();
+
+    let r2 = a
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/api/v1/projects")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"name": "Zebra"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r2.status(), StatusCode::CREATED);
+    let b2 = bv(r2.into_body()).await;
+    let pid2 = b2["project_id"].as_str().unwrap().to_owned();
+    let name2 = b2["name"].as_str().unwrap().to_owned();
+
+    // List — must return both in created_at ASC order
+    let list_r = a
+        .oneshot(
+            Request::builder()
+                .method(http::Method::GET)
+                .uri("/api/v1/projects")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_r.status(), StatusCode::OK);
+
+    let body = bv(list_r.into_body()).await;
+    let projects = body["projects"]
+        .as_array()
+        .expect("projects should be an array");
+    assert_eq!(projects.len(), 2, "should return both projects");
+
+    // First should be Alpha (created first)
+    assert_eq!(projects[0]["project_id"].as_str().unwrap(), pid1);
+    assert_eq!(projects[0]["name"].as_str().unwrap(), name1);
+    assert_eq!(projects[0]["status"].as_str().unwrap(), status1);
+
+    // Second should be Zebra (created second)
+    assert_eq!(projects[1]["project_id"].as_str().unwrap(), pid2);
+    assert_eq!(projects[1]["name"].as_str().unwrap(), name2);
+    assert_eq!(projects[1]["status"].as_str().unwrap(), "active");
+}

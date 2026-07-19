@@ -94,6 +94,10 @@ fn main() -> anyhow::Result<()> {
             let url = cli.service_url.unwrap_or_else(default_service_url);
             run_cli_command(&url, CliCommand::ProjectCreate { name, json })
         }
+        Command::ProjectList { json } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(&url, CliCommand::ProjectList { json })
+        }
         Command::ProjectAddFile {
             project_id,
             path,
@@ -204,6 +208,12 @@ enum Command {
     ProjectCreate {
         /// Project name.
         name: String,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List all Projects.
+    ProjectList {
         /// Output JSON only.
         #[arg(long)]
         json: bool,

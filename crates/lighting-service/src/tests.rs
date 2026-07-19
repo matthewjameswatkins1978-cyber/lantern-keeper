@@ -1343,6 +1343,10 @@ mod marker_revision_tests {
         ) -> Result<Option<Episode>, MemoryPathRepositoryError> {
             unimplemented!()
         }
+
+        async fn list_all_projects(&self) -> Result<Vec<Project>, MemoryPathRepositoryError> {
+            unimplemented!()
+        }
     }
 
     // ── helpers ────────────────────────────────────────────────────────────
@@ -1717,6 +1721,11 @@ mod project_add_file_tests {
                 }
             }
             Ok(None)
+        }
+
+        async fn list_all_projects(&self) -> Result<Vec<Project>, MemoryPathRepositoryError> {
+            let inner = self.inner.lock().unwrap();
+            Ok(inner.projects.values().cloned().collect())
         }
     }
 

@@ -5,8 +5,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use lighting_core::{ProjectId, SourceContent, SourceKind};
 
 use crate::project_dto::{AddFileRequest, CreateProjectRequest, RecordResultRequest};
-use crate::source_dto::ApiError;
-use crate::source_dto::CreateSourceResponse;
+use crate::source_dto::{ApiError, CreateSourceResponse};
 use crate::state::AppState;
 
 fn error_response(status: StatusCode, error: ApiError) -> (StatusCode, Json<serde_json::Value>) {
@@ -238,6 +237,36 @@ pub async fn record_result(
             let api_error: ApiError = e.into();
             match api_error.code.as_str() {
                 "project_not_found" => error_response(StatusCode::NOT_FOUND, api_error),
+                "storage_unavailable" => error_response(StatusCode::SERVICE_UNAVAILABLE, api_error),
+                _ => error_response(StatusCode::INTERNAL_SERVER_ERROR, api_error),
+            }
+        }
+    }
+}
+
+pub async fn list_projects(State(state): State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
+    let service = match &state.project_service {
+        Some(svc) => svc,
+        None => {
+            return error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                ApiError::storage_unavailable(),
+            )
+        }
+    };
+
+    match service.list_projects().await {
+        Ok(projects) => {
+            #[allow(clippy::expect_used)]
+            let body = serde_json::to_value(serde_json::json!({
+                "projects": projects,
+            }))
+            .expect("project list serialization must not fail");
+            (StatusCode::OK, Json(body))
+        }
+        Err(e) => {
+            let api_error: ApiError = e.into();
+            match api_error.code.as_str() {
                 "storage_unavailable" => error_response(StatusCode::SERVICE_UNAVAILABLE, api_error),
                 _ => error_response(StatusCode::INTERNAL_SERVER_ERROR, api_error),
             }

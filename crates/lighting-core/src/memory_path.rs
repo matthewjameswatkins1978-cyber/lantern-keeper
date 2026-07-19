@@ -486,6 +486,11 @@ pub trait MemoryPathRepository: Send + Sync {
         start_byte: usize,
         end_byte: usize,
     ) -> Result<Option<Episode>, MemoryPathRepositoryError>;
+
+    /// List all Projects.
+    ///
+    /// Ordered by created_at ascending, then project_id ascending.
+    async fn list_all_projects(&self) -> Result<Vec<Project>, MemoryPathRepositoryError>;
 }
 
 /// Failure categories returned by a memory-path repository.

@@ -53,6 +53,7 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             json,
         } => cmd_project_record_result(&client, &project_id, &path, title, json),
         CliCommand::ProjectCreate { name, json } => cmd_project_create(&client, &name, json),
+        CliCommand::ProjectList { json } => cmd_project_list(&client, json),
         CliCommand::ProjectAddFile {
             project_id,
             path,
@@ -140,6 +141,12 @@ pub enum CliCommand {
     ProjectCreate {
         /// Project name.
         name: String,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List all Projects.
+    ProjectList {
         /// Output JSON only.
         #[arg(long)]
         json: bool,
@@ -406,6 +413,19 @@ struct ProjectCreateResponse {
     name: String,
     status: String,
     created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectListItem {
+    project_id: String,
+    name: String,
+    status: String,
+    created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectListResponse {
+    projects: Vec<ProjectListItem>,
 }
 
 // ---------------------------------------------------------------------------
@@ -992,6 +1012,39 @@ fn cmd_project_create(client: &HttpClient, name: &str, json: bool) -> anyhow::Re
     Ok(())
 }
 
+fn cmd_project_list(client: &HttpClient, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get("/api/v1/projects")
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+
+    let body = HttpClient::handle_response(response)?;
+    let list: ProjectListResponse = serde_json::from_value(body)
+        .map_err(|e| anyhow::Error::msg(format!("unexpected API response: {e}")))?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "projects": list.projects.iter().map(|p| serde_json::json!({
+                    "project_id": p.project_id,
+                    "name": p.name,
+                    "status": p.status,
+                    "created_at": p.created_at,
+                })).collect::<Vec<_>>(),
+            }))
+            .unwrap()
+        );
+    } else if list.projects.is_empty() {
+        println!("(no Projects)");
+    } else {
+        for p in &list.projects {
+            println!("[{}] {} — {}", p.project_id, p.status, p.name);
+        }
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -1384,5 +1437,18 @@ mod tests {
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("must not be empty"));
+    }
+
+    // ── Project list tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn project_list_command_is_parsed() {
+        let cmd = CliCommand::ProjectList { json: false };
+        match cmd {
+            CliCommand::ProjectList { json } => {
+                assert!(!json);
+            }
+            _ => panic!("expected ProjectList variant"),
+        }
     }
 }

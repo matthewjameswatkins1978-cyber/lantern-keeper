@@ -303,6 +303,13 @@ pub fn unavailable_service() -> EpisodeService {
                 Box::new(std::io::Error::other("unavailable")),
             ))
         }
+        async fn list_all_projects(
+            &self,
+        ) -> Result<Vec<lighting_core::Project>, lighting_core::MemoryPathRepositoryError> {
+            Err(lighting_core::MemoryPathRepositoryError::Operation(
+                Box::new(std::io::Error::other("unavailable")),
+            ))
+        }
     }
     EpisodeService::new(
         Arc::new(UnavailableSourceRepo),

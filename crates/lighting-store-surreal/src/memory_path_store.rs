@@ -444,6 +444,18 @@ impl MemoryPathRepository for SurrealMemoryPathRepository {
 
         Ok(None)
     }
+
+    async fn list_all_projects(&self) -> Result<Vec<Project>, MemoryPathRepositoryError> {
+        let records: Vec<surrealdb::types::Object> = self
+            .store
+            .query("SELECT * FROM project ORDER BY created_at ASC, id ASC")
+            .await
+            .map_err(|e| MemoryPathRepositoryError::Operation(Box::new(e)))?
+            .take(0)
+            .map_err(|e| MemoryPathRepositoryError::Operation(Box::new(e)))?;
+
+        records.into_iter().map(to_domain_project).collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
