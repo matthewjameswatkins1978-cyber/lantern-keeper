@@ -49,7 +49,7 @@ pub async fn create_project(
     }
 }
 
-pub async fn get_project(
+pub async fn show_project(
     State(state): State<AppState>,
     axum::extract::Path(project_id_raw): axum::extract::Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
@@ -76,23 +76,17 @@ pub async fn get_project(
         }
     };
 
-    match service.get_project(&project_id).await {
-        Ok(Some(project_response)) => {
+    match service.show(&project_id).await {
+        Ok(response) => {
             #[allow(clippy::expect_used)]
-            let body = serde_json::to_value(&project_response)
-                .expect("ProjectResponse serialization must not fail");
+            let body = serde_json::to_value(&response)
+                .expect("ProjectShowResponse serialization must not fail");
             (StatusCode::OK, Json(body))
         }
-        Ok(None) => error_response(
-            StatusCode::NOT_FOUND,
-            ApiError {
-                code: "project_not_found".to_owned(),
-                message: "No Project exists with the given ID".to_owned(),
-            },
-        ),
         Err(e) => {
             let api_error: ApiError = e.into();
             match api_error.code.as_str() {
+                "project_not_found" => error_response(StatusCode::NOT_FOUND, api_error),
                 "storage_unavailable" => error_response(StatusCode::SERVICE_UNAVAILABLE, api_error),
                 _ => error_response(StatusCode::INTERNAL_SERVER_ERROR, api_error),
             }

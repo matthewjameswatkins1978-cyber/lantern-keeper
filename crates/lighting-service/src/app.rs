@@ -33,7 +33,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/v1/projects/{project_id}",
-            axum::routing::get(project_routes::get_project),
+            axum::routing::get(project_routes::show_project),
         );
     let project_routes = project_routes
         .route(

@@ -107,6 +107,21 @@ A repeatable end-to-end demo script exercises the full workflow:
 
 The script creates a uniquely-named Project, captures a Markdown file, revises and re-captures it, inspects the revision history through `source-history`, produces a deterministic Project handoff, records a result back via `project-record-result`, and verifies the result appears in a final updated handoff. Every command uses `--json` to prove the machine-readable contract. Temporary files are created outside the repository and cleaned up automatically.
 
+## Project Show
+
+Inspect a Project and its linked Episodes anytime through the read path:
+
+```powershell
+cargo run -p lighting -- project-show $projectId
+```
+
+This prints the Project's ID, name, status, and a numbered list of linked Episodes with their Source identity, byte range, and link kind. Use `--json` for the full machine-readable view, which includes all Episode details plus an optional `latest_source_id` per Episode:
+
+- **`source_id`** — the historical Source ID that was current when the Episode was linked to the Project. It is **never** rewritten to a newer revision; you can count on it being stable.
+- **`latest_source_id`** — present only when a newer revision of the same logical Source exists. The historical `source_id` remains intact, and the presence of `latest_source_id` tells you there is an update to inspect.
+
+An empty Project returns `"episodes": []`. An unknown Project ID returns the documented `project_not_found` 404.
+
 ## Provenance Behaviour
 
 - Each file capture creates a Source record with a content fingerprint. Identical content returns the existing Source ID (no duplicate storage).

@@ -140,3 +140,30 @@ pub struct AddFileResponse {
     pub episode_id: String,
     pub link_status: String,
 }
+
+// ── Project-show response ──────────────────────────────────────────────
+
+/// A single Episode entry in the Project show view.
+#[derive(Debug, Serialize)]
+pub struct ProjectShowEpisodeEntry {
+    pub episode_id: String,
+    pub link_kind: String,
+    pub source_id: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub source_title: String,
+    pub source_kind: String,
+    /// Present only when the Source has a newer revision.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_source_id: Option<String>,
+}
+
+/// Full Project inspection view.
+#[derive(Debug, Serialize)]
+pub struct ProjectShowResponse {
+    pub project_id: String,
+    pub name: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub episodes: Vec<ProjectShowEpisodeEntry>,
+}

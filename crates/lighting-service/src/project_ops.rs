@@ -8,7 +8,10 @@ use lighting_core::{
     SourceRepository, SourceTitle,
 };
 
-use crate::project_dto::{AddFileResponse, ProjectResponse, RecordResultResponse};
+use crate::project_dto::{
+    AddFileResponse, ProjectResponse, ProjectShowEpisodeEntry, ProjectShowResponse,
+    RecordResultResponse,
+};
 use crate::source_dto::ApiError;
 
 #[derive(Debug, thiserror::Error)]
@@ -298,5 +301,102 @@ impl ProjectService {
             .await
             .map_err(|e| ProjectOperationError::Repository(e.into()))?;
         Ok(projects.iter().map(ProjectResponse::from_domain).collect())
+    }
+
+    /// Inspect a single Project with its linked Episodes and Source provenance.
+    pub async fn show(
+        &self,
+        project_id: &ProjectId,
+    ) -> Result<ProjectShowResponse, ProjectOperationError> {
+        let project = self
+            .repo
+            .get_project(project_id)
+            .await
+            .map_err(|e| ProjectOperationError::Repository(e.into()))?
+            .ok_or(ProjectOperationError::NotFound)?;
+
+        let links = self
+            .repo
+            .list_project_episode_links(project_id)
+            .await
+            .map_err(|e| ProjectOperationError::Repository(e.into()))?;
+
+        let mut episodes = Vec::with_capacity(links.len());
+        for link in &links {
+            let episode = match self
+                .repo
+                .get_episode(link.episode_id())
+                .await
+                .map_err(|e| ProjectOperationError::Repository(e.into()))
+            {
+                Ok(Some(ep)) => ep,
+                Ok(None) => continue,
+                Err(_) => continue,
+            };
+
+            let source_id = episode.source_range().source_id().clone();
+            let source = match self
+                .source_repo
+                .get(&source_id)
+                .await
+                .map_err(|e| ProjectOperationError::Source(Box::new(e)))
+            {
+                Ok(Some(s)) => s,
+                Ok(None) => continue,
+                Err(_) => continue,
+            };
+
+            // If a newer revision exists, expose it without changing the
+            // Episode's historical source_id.
+            let latest_source_id = self
+                .source_repo
+                .get_current(source.kind(), source.title())
+                .await
+                .map_err(|e| ProjectOperationError::Source(Box::new(e)))
+                .ok()
+                .flatten()
+                .filter(|latest| latest.id() != &source_id)
+                .map(|latest| latest.id().as_str().to_owned());
+
+            let kind_str = match source.kind() {
+                lighting_core::SourceKind::Markdown => "markdown",
+                lighting_core::SourceKind::PlainText => "plain_text",
+            };
+
+            episodes.push(ProjectShowEpisodeEntry {
+                episode_id: episode.id().as_str().to_owned(),
+                link_kind: link_kind_to_str(&link.kind()).to_owned(),
+                source_id: source_id.as_str().to_owned(),
+                start_byte: episode.source_range().start_byte(),
+                end_byte: episode.source_range().end_byte(),
+                source_title: source.title().as_str().to_owned(),
+                source_kind: kind_str.to_owned(),
+                latest_source_id,
+            });
+        }
+
+        Ok(ProjectShowResponse {
+            project_id: project.id().as_str().to_owned(),
+            name: project.name().as_str().to_owned(),
+            status: status_to_str(project.status()).to_owned(),
+            created_at: project.created_at(),
+            episodes,
+        })
+    }
+}
+
+fn status_to_str(s: lighting_core::ProjectStatus) -> &'static str {
+    match s {
+        lighting_core::ProjectStatus::Active => "active",
+        lighting_core::ProjectStatus::Paused => "paused",
+        lighting_core::ProjectStatus::Archived => "archived",
+    }
+}
+
+fn link_kind_to_str(kind: &lighting_core::ProjectLinkKind) -> &'static str {
+    match kind {
+        lighting_core::ProjectLinkKind::Primary => "primary",
+        lighting_core::ProjectLinkKind::Secondary => "secondary",
+        lighting_core::ProjectLinkKind::Possible => "possible",
     }
 }

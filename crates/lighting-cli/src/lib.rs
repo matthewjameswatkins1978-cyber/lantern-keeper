@@ -54,6 +54,9 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
         } => cmd_project_record_result(&client, &project_id, &path, title, json),
         CliCommand::ProjectCreate { name, json } => cmd_project_create(&client, &name, json),
         CliCommand::ProjectList { json } => cmd_project_list(&client, json),
+        CliCommand::ProjectShow { project_id, json } => {
+            cmd_project_show(&client, &project_id, json)
+        }
         CliCommand::ProjectAddFile {
             project_id,
             path,
@@ -147,6 +150,14 @@ pub enum CliCommand {
     },
     /// List all Projects.
     ProjectList {
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect a Project and its linked Episodes.
+    ProjectShow {
+        /// Project ID (UUID).
+        project_id: String,
         /// Output JSON only.
         #[arg(long)]
         json: bool,
@@ -426,6 +437,28 @@ struct ProjectListItem {
 #[derive(Debug, Deserialize)]
 struct ProjectListResponse {
     projects: Vec<ProjectListItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectShowEpisodeEntry {
+    episode_id: String,
+    link_kind: String,
+    source_id: String,
+    start_byte: usize,
+    end_byte: usize,
+    source_title: String,
+    source_kind: String,
+    #[serde(default)]
+    latest_source_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectShowResponse {
+    project_id: String,
+    name: String,
+    status: String,
+    created_at: String,
+    episodes: Vec<ProjectShowEpisodeEntry>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1045,6 +1078,76 @@ fn cmd_project_list(client: &HttpClient, json: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn cmd_project_show(client: &HttpClient, project_id: &str, json: bool) -> anyhow::Result<()> {
+    if uuid::Uuid::parse_str(project_id).is_err() {
+        bail!("invalid Project ID: {project_id} — must be a valid UUID");
+    }
+
+    let response = client
+        .get(&format!("/api/v1/projects/{project_id}"))
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+
+    let body = HttpClient::handle_response(response)?;
+    let show: ProjectShowResponse = serde_json::from_value(body)
+        .map_err(|e| anyhow::Error::msg(format!("unexpected API response: {e}")))?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "project_id": show.project_id,
+                "name": show.name,
+                "status": show.status,
+                "created_at": show.created_at,
+                "episodes": show.episodes.iter().map(|e| {
+                    let mut obj = serde_json::json!({
+                        "episode_id": e.episode_id,
+                        "link_kind": e.link_kind,
+                        "source_id": e.source_id,
+                        "start_byte": e.start_byte,
+                        "end_byte": e.end_byte,
+                        "source_title": e.source_title,
+                        "source_kind": e.source_kind,
+                    });
+                    if let Some(ref lsid) = e.latest_source_id {
+                        obj["latest_source_id"] = serde_json::json!(lsid);
+                    }
+                    obj
+                }).collect::<Vec<_>>(),
+            }))
+            .unwrap()
+        );
+    } else {
+        println!("Project ID : {}", show.project_id);
+        println!("Name       : {}", show.name);
+        println!("Status     : {}", show.status);
+        println!();
+
+        if show.episodes.is_empty() {
+            println!("Episodes   : (none)");
+        } else {
+            for (i, ep) in show.episodes.iter().enumerate() {
+                println!(
+                    "{}. [{}] {} ({} bytes {}..{})",
+                    i + 1,
+                    ep.episode_id,
+                    ep.source_title,
+                    ep.source_kind,
+                    ep.start_byte,
+                    ep.end_byte,
+                );
+                println!("   link  : {}", ep.link_kind);
+                println!("   source: {}", ep.source_id);
+                if let Some(ref lsid) = ep.latest_source_id {
+                    println!("   latest: {lsid}");
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -1450,5 +1553,32 @@ mod tests {
             }
             _ => panic!("expected ProjectList variant"),
         }
+    }
+
+    // ── Project show tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn project_show_command_is_parsed() {
+        let cmd = CliCommand::ProjectShow {
+            project_id: "550e8400-e29b-41d4-a716-446655440000".into(),
+            json: false,
+        };
+        match cmd {
+            CliCommand::ProjectShow { project_id, json } => {
+                assert_eq!(project_id, "550e8400-e29b-41d4-a716-446655440000");
+                assert!(!json);
+            }
+            _ => panic!("expected ProjectShow variant"),
+        }
+    }
+
+    #[test]
+    fn project_show_invalid_uuid_rejected_before_request() {
+        let client = HttpClient::new("http://127.0.0.1:1");
+        let result = cmd_project_show(&client, "not-a-uuid", false);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("invalid Project ID"));
+        assert!(msg.contains("must be a valid UUID"));
     }
 }
