@@ -1,0 +1,7 @@
+Cline task guardrails:
+- Obey the task's total time limit and named stop-coding point.
+- Before the final focused test, run `cargo fmt --all` once.
+- Run the requested final test/check once. Do not repeat equivalent commands after a pass or failure.
+- If blocked, report the blocker rather than trying a second design.
+- Always report elapsed time, whether the limit was met, changed files, and test result.
+- Do not stage, commit, push, or touch `cline-kimi-loop-evidence-2026-07-17-18/` unless explicitly instructed.
