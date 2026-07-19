@@ -45,6 +45,27 @@ Last verified locally:
 
 Both commands passed with live local SurrealDB.
 
+## Task Log — LK-027 through LK-038
+
+LK-027 through LK-038 implement the file-capture, revision-history, revision-safe retrieval, and project-file-linking features that complete the project-file memory loop.
+
+### Commits
+
+- `bb619b7` — Add project file linking (`project-add-file`)
+- `b0f2bee` — Add Cline task guardrails (`.clinerules`)
+
+### Test Validation
+
+141 tests pass across the full workspace (25 CLI, 32 core, 26 service, plus integration tests for episodes, markers, projects, retrieval, sources, store-surreal, and memory-path repository).
+
+### Workflow Delivered
+
+The `lighting source-add`, `lighting source-history`, `lighting project-add-file`, `lighting project-handoff`, and `lighting project-record-result` CLI commands compose the complete project-file memory loop documented in `docs/lk-039-project-file-memory-loop.md`.
+
+## Next Phase
+
+Real-use / hackathon presentation evidence. Run the documented workflow end-to-end, capture the output, and produce concrete demonstration material that proves Lantern Keeper's working memory loop for the hackathon vertical slice.
+
 ## Next Verified Step
 
 Make a checkpoint commit/PR that excludes local runtime state and unrelated

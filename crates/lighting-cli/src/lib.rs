@@ -52,6 +52,7 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             title,
             json,
         } => cmd_project_record_result(&client, &project_id, &path, title, json),
+        CliCommand::ProjectCreate { name, json } => cmd_project_create(&client, &name, json),
         CliCommand::ProjectAddFile {
             project_id,
             path,
@@ -131,6 +132,14 @@ pub enum CliCommand {
         /// Result title (default: file name).
         #[arg(long)]
         title: Option<String>,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create a new Project.
+    ProjectCreate {
+        /// Project name.
+        name: String,
         /// Output JSON only.
         #[arg(long)]
         json: bool,
@@ -389,6 +398,14 @@ struct RecordResultResponse {
     episode_id: String,
     start_byte: usize,
     end_byte: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectCreateResponse {
+    project_id: String,
+    name: String,
+    status: String,
+    created_at: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -937,6 +954,44 @@ fn cmd_project_record_result(
     Ok(())
 }
 
+fn cmd_project_create(client: &HttpClient, name: &str, json: bool) -> anyhow::Result<()> {
+    if name.trim().is_empty() {
+        bail!("Project name must not be empty");
+    }
+
+    let body = serde_json::json!({
+        "name": name,
+        "status": "active",
+    });
+
+    let response = client
+        .post_json("/api/v1/projects", &body)
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+
+    let body = HttpClient::handle_response(response)?;
+    let created: ProjectCreateResponse = serde_json::from_value(body)
+        .map_err(|e| anyhow::Error::msg(format!("unexpected API response: {e}")))?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "project_id": created.project_id,
+                "name": created.name,
+                "status": created.status,
+                "created_at": created.created_at,
+            }))
+            .unwrap()
+        );
+    } else {
+        println!("Project ID: {}", created.project_id);
+        println!("Name      : {}", created.name);
+        println!("Status    : {}", created.status);
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -1303,5 +1358,31 @@ mod tests {
             false,
         );
         assert!(result.unwrap_err().to_string().contains("file not found"));
+    }
+
+    // ── Project create tests ───────────────────────────────────────────────
+
+    #[test]
+    fn project_create_command_is_parsed() {
+        let cmd = CliCommand::ProjectCreate {
+            name: "My Project".into(),
+            json: false,
+        };
+        match cmd {
+            CliCommand::ProjectCreate { name, json } => {
+                assert_eq!(name, "My Project");
+                assert!(!json);
+            }
+            _ => panic!("expected ProjectCreate variant"),
+        }
+    }
+
+    #[test]
+    fn project_create_blank_name_rejected_locally() {
+        let client = HttpClient::new("http://127.0.0.1:1");
+        let result = cmd_project_create(&client, "   ", false);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("must not be empty"));
     }
 }
