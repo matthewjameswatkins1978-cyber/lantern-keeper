@@ -2,7 +2,7 @@
 
 use axum::{extract::State, http::StatusCode, Json};
 
-use lighting_core::SourceId;
+use lighting_core::{SourceId, SourceKind};
 
 use crate::{
     source_dto::{ApiError, CreateSourceRequest, CreateSourceResponse},
@@ -78,6 +78,88 @@ pub async fn get_source(
             #[allow(clippy::expect_used)]
             let body = serde_json::to_value(&source_response)
                 .expect("SourceResponse serialization must not fail");
+            (StatusCode::OK, Json(body))
+        }
+        Ok(None) => error_response(StatusCode::NOT_FOUND, ApiError::not_found()),
+        Err(e) => {
+            let api_error: ApiError = e.into();
+            match api_error.code.as_str() {
+                "storage_unavailable" => error_response(StatusCode::SERVICE_UNAVAILABLE, api_error),
+                _ => error_response(StatusCode::INTERNAL_SERVER_ERROR, api_error),
+            }
+        }
+    }
+}
+
+/// `GET /api/v1/sources/history?kind=markdown&title=d:/projects/doc.md`
+///
+/// Lists all revisions of a logical Source identified by (kind, title).
+pub async fn get_source_history(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let kind_raw = match params.get("kind") {
+        Some(k) => k.clone(),
+        None => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                ApiError {
+                    code: "invalid_source".to_owned(),
+                    message: "query parameter 'kind' is required".to_owned(),
+                },
+            )
+        }
+    };
+    let title = match params.get("title") {
+        Some(t) => t.clone(),
+        None => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                ApiError {
+                    code: "invalid_source".to_owned(),
+                    message: "query parameter 'title' is required".to_owned(),
+                },
+            )
+        }
+    };
+    if title.trim().is_empty() {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            ApiError {
+                code: "invalid_source".to_owned(),
+                message: "title must not be empty".to_owned(),
+            },
+        );
+    }
+    let service = match &state.source_service {
+        Some(svc) => svc,
+        None => {
+            return error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                ApiError::storage_unavailable(),
+            )
+        }
+    };
+
+    let kind = match kind_raw.as_str() {
+        "markdown" => SourceKind::Markdown,
+        "plain_text" => SourceKind::PlainText,
+        _ => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                ApiError {
+                    code: "invalid_source".to_owned(),
+                    message: format!("unsupported source kind: {kind_raw}"),
+                },
+            )
+        }
+    };
+
+    match service.list_history(kind, &title).await {
+        Ok(Some(response)) => {
+            #[allow(clippy::expect_used)]
+            let body = serde_json::to_value(&response)
+                .expect("SourceHistoryResponse serialization must not fail");
             (StatusCode::OK, Json(body))
         }
         Ok(None) => error_response(StatusCode::NOT_FOUND, ApiError::not_found()),

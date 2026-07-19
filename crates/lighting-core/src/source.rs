@@ -207,6 +207,18 @@ pub trait SourceRepository: Send + Sync {
         kind: SourceKind,
         title: &SourceTitle,
     ) -> Result<Option<Source>, SourceRepositoryError>;
+
+    /// Returns all revisions for a logical Source, ordered oldest-first.
+    ///
+    /// Ordered by `created_at` ascending. The last element in the returned
+    /// vector is the most recent revision (which may or may not be the
+    /// "current" one — the consumer is responsible for reconstructing the
+    /// `previous_version_id` chain).
+    async fn list_all_by_kind_and_title(
+        &self,
+        kind: SourceKind,
+        title: &SourceTitle,
+    ) -> Result<Vec<Source>, SourceRepositoryError>;
 }
 
 /// Failure categories returned by a Source repository.

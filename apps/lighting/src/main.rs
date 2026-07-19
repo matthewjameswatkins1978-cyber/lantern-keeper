@@ -61,6 +61,10 @@ fn main() -> anyhow::Result<()> {
             let url = cli.service_url.unwrap_or_else(default_service_url);
             run_cli_command(&url, CliCommand::SourceShow { source_id, json })
         }
+        Command::SourceHistory { path, kind, json } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(&url, CliCommand::SourceHistory { path, kind, json })
+        }
         Command::Retrieve { phrase, json } => {
             let url = cli.service_url.unwrap_or_else(default_service_url);
             run_cli_command(&url, CliCommand::Retrieve { phrase, json })
@@ -115,7 +119,7 @@ enum Command {
     SourceAdd {
         /// Path to the file.
         path: std::path::PathBuf,
-        /// Source title (default: file name).
+        /// Source title (default: normalised absolute path).
         #[arg(long)]
         title: Option<String>,
         /// Source kind (default: inferred from extension).
@@ -129,6 +133,17 @@ enum Command {
     SourceShow {
         /// Source ID (UUID).
         source_id: String,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show revision history for a file-backed Source.
+    SourceHistory {
+        /// Path to the file.
+        path: std::path::PathBuf,
+        /// Source kind (default: inferred from extension).
+        #[arg(long, value_parser = ["markdown", "plain_text"])]
+        kind: Option<String>,
         /// Output JSON only.
         #[arg(long)]
         json: bool,

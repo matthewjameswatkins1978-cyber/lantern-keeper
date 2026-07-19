@@ -39,6 +39,9 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             json,
         } => cmd_source_add(&client, &path, title, kind, json),
         CliCommand::SourceShow { source_id, json } => cmd_source_show(&client, &source_id, json),
+        CliCommand::SourceHistory { path, kind, json } => {
+            cmd_source_history(&client, &path, kind, json)
+        }
         CliCommand::Retrieve { phrase, json } => cmd_retrieve(&client, &phrase, json),
         CliCommand::ProjectHandoff { project_id, json } => {
             cmd_project_handoff(&client, &project_id, json)
@@ -81,6 +84,17 @@ pub enum CliCommand {
     SourceShow {
         /// Source ID (UUID).
         source_id: String,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show revision history for a file-backed Source.
+    SourceHistory {
+        /// Path to the file.
+        path: PathBuf,
+        /// Source kind (default: inferred from extension; "markdown" or "plain_text").
+        #[arg(long, value_parser = ["markdown", "plain_text"])]
+        kind: Option<String>,
         /// Output JSON only.
         #[arg(long)]
         json: bool,
@@ -241,6 +255,8 @@ impl ApiError {
 struct CreateSourceResponse {
     outcome: String,
     source_id: String,
+    #[serde(default)]
+    previous_source_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -327,6 +343,22 @@ struct ContextPackage {
 }
 
 #[derive(Debug, Deserialize)]
+struct SourceHistoryItem {
+    source_id: String,
+    #[serde(default)]
+    previous_source_id: Option<String>,
+    created_at: String,
+    current: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct SourceHistoryResponse {
+    title: String,
+    kind: String,
+    revisions: Vec<SourceHistoryItem>,
+}
+
+#[derive(Debug, Deserialize)]
 struct RecordResultResponse {
     outcome: String,
     project_id: String,
@@ -387,12 +419,8 @@ fn cmd_source_add(
     let content = fs::read_to_string(path)
         .with_context(|| format!("failed to read file: {}", path.display()))?;
 
-    let file_name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
-
-    let title = title.unwrap_or_else(|| file_name.to_owned());
+    let normalized_path = normalize_path_for_title(path);
+    let title = title.unwrap_or_else(|| normalized_path.clone());
     let kind = kind.unwrap_or_else(|| infer_kind(path).to_owned());
 
     let body = serde_json::json!({
@@ -410,19 +438,32 @@ fn cmd_source_add(
         .map_err(|e| anyhow::Error::msg(format!("unexpected API response: {e}")))?;
 
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "outcome": created.outcome,
-                "source_id": created.source_id,
-            }))
-            .unwrap()
-        );
+        let mut obj = serde_json::json!({
+            "outcome": created.outcome,
+            "source_id": created.source_id,
+            "title": title,
+            "path": normalized_path,
+        });
+        if let Some(ref prev) = created.previous_source_id {
+            obj["previous_source_id"] = serde_json::json!(prev);
+        }
+        println!("{}", serde_json::to_string_pretty(&obj).unwrap());
     } else {
+        println!("Title    : {}", title);
+        println!("Path     : {}", normalized_path);
         match created.outcome.as_str() {
-            "stored" => println!("Stored — {}", created.source_id),
-            "duplicate" => println!("Already exists — {}", created.source_id),
-            other => println!("{} — {}", other, created.source_id),
+            "stored" => {
+                println!("Source ID: {}", created.source_id);
+                if let Some(ref prev) = created.previous_source_id {
+                    println!("Outcome  : new revision (previous: {})", prev);
+                } else {
+                    println!("Outcome  : first capture");
+                }
+            }
+            "duplicate" => {
+                println!("Outcome  : unchanged — {}", created.source_id);
+            }
+            other => println!("Outcome  : {} — {}", other, created.source_id),
         }
     }
 
@@ -464,6 +505,76 @@ fn cmd_source_show(client: &HttpClient, source_id: &str, json: bool) -> anyhow::
         println!();
         println!("--- Content ---");
         print!("{}", source.content);
+    }
+
+    Ok(())
+}
+
+fn cmd_source_history(
+    client: &HttpClient,
+    path: &Path,
+    kind: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
+    if !path.exists() {
+        bail!("file not found: {}", path.display());
+    }
+    if path.is_dir() {
+        bail!("path is a directory, not a file: {}", path.display());
+    }
+
+    let normalized_path = normalize_path_for_title(path);
+    let kind = kind.unwrap_or_else(|| infer_kind(path).to_owned());
+
+    let url = format!(
+        "/api/v1/sources/history?kind={kind}&title={}",
+        urlencoding::encode(&normalized_path)
+    );
+
+    let response = client
+        .get(&url)
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+
+    let body = HttpClient::handle_response(response)?;
+    let history: SourceHistoryResponse = serde_json::from_value(body)
+        .map_err(|e| anyhow::Error::msg(format!("unexpected API response: {e}")))?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "title": history.title,
+                "kind": history.kind,
+                "revisions": history.revisions.iter().map(|r| {
+                    let mut obj = serde_json::json!({
+                        "source_id": r.source_id,
+                        "created_at": r.created_at,
+                        "current": r.current,
+                    });
+                    if let Some(ref prev) = r.previous_source_id {
+                        obj["previous_source_id"] = serde_json::json!(prev);
+                    }
+                    obj
+                }).collect::<Vec<_>>(),
+            }))
+            .unwrap()
+        );
+    } else {
+        println!("Title : {}", history.title);
+        println!("Kind  : {}", history.kind);
+        println!();
+        if history.revisions.is_empty() {
+            println!("(no revisions)");
+        } else {
+            for (i, rev) in history.revisions.iter().enumerate() {
+                let marker = if rev.current { " (current)" } else { "" };
+                println!("{}. [{}]{marker}", i + 1, rev.source_id);
+                if let Some(ref prev) = rev.previous_source_id {
+                    println!("   previous: {prev}");
+                }
+                println!("   captured: {}", rev.created_at);
+            }
+        }
     }
 
     Ok(())
@@ -743,6 +854,19 @@ fn infer_kind(path: &Path) -> &str {
     }
 }
 
+/// Derives a stable logical Source title from a file path.
+///
+/// Uses the canonical absolute path, lowercased with forward slashes, so
+/// re-capturing the same file always uses the same logical identity
+/// regardless of the working directory or temporary path variations.
+fn normalize_path_for_title(path: &Path) -> String {
+    // Canonicalize resolves symlinks and normalises components like `.` and `..`.
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    canonical
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_lowercase()
+}
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

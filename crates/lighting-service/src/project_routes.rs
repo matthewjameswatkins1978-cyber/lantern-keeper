@@ -192,7 +192,7 @@ pub async fn record_result(
 
     // Extract source_id from CreateSourceResponse (enum with Stored/Duplicate variants)
     let source_id_str = match &create_result {
-        CreateSourceResponse::Stored { source_id } => source_id.clone(),
+        CreateSourceResponse::Stored { source_id, .. } => source_id.clone(),
         CreateSourceResponse::Duplicate { source_id } => source_id.clone(),
     };
 

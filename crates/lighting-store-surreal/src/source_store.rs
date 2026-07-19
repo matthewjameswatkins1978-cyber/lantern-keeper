@@ -237,9 +237,43 @@ impl SourceRepository for SurrealSourceRepository {
         // The current revision is the one NOT referenced by any other source.
         Ok(sources.into_iter().find(|s| !referenced.contains(s.id())))
     }
+
+    async fn list_all_by_kind_and_title(
+        &self,
+        kind: SourceKind,
+        title: &SourceTitle,
+    ) -> Result<Vec<Source>, SourceRepositoryError> {
+        self.list_by_kind_and_title(kind, title.as_str())
+            .await
+            .map_err(|e| SourceRepositoryError::Operation(Box::new(e)))
+    }
 }
 
 impl SurrealSourceRepository {
+    /// Lists all revisions for a logical (kind, title) Source, oldest first.
+    async fn list_by_kind_and_title(
+        &self,
+        kind: SourceKind,
+        title: &str,
+    ) -> Result<Vec<Source>, SurrealSourceRepositoryError> {
+        let kind_str = kind_to_string(kind);
+        let records: Vec<surrealdb::types::Object> = self
+            .store
+            .query("SELECT * FROM source WHERE kind = $kind AND title = $title ORDER BY created_at ASC")
+            .bind(("kind", kind_str.as_str()))
+            .bind(("title", title))
+            .await
+            .map_err(SurrealSourceRepositoryError::Fetch)?
+            .take(0)
+            .map_err(SurrealSourceRepositoryError::Fetch)?;
+
+        records
+            .into_iter()
+            .map(to_domain_source)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| SurrealSourceRepositoryError::Decode)
+    }
+
     async fn find_by_fingerprint(
         &self,
         fingerprint: &str,

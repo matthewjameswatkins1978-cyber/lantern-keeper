@@ -96,6 +96,14 @@ mod router_tests {
             // Stub: return the last stored source (simplified for router tests).
             Ok(self.last_stored.lock().unwrap().clone())
         }
+
+        async fn list_all_by_kind_and_title(
+            &self,
+            _kind: SourceKind,
+            _title: &SourceTitle,
+        ) -> Result<Vec<Source>, SourceRepositoryError> {
+            Ok(self.last_stored.lock().unwrap().iter().cloned().collect())
+        }
     }
 
     fn test_app(repo: Arc<dyn SourceRepository>) -> axum::Router {
@@ -428,6 +436,565 @@ mod router_tests {
     }
 
     // ---------------------------------------------------------------------------
+    // LK-027: File-capture tests (first capture, unchanged re-capture,
+    // changed re-capture creates revision)
+    // ---------------------------------------------------------------------------
+
+    /// A stub that supports kind+title logical grouping for revision tests.
+    struct LogicalRepo {
+        sources: std::sync::Mutex<Vec<Source>>,
+    }
+
+    impl LogicalRepo {
+        fn new() -> Self {
+            Self {
+                sources: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl SourceRepository for LogicalRepo {
+        async fn store(&self, source: Source) -> Result<StoreSourceResult, SourceRepositoryError> {
+            let mut sources = self.sources.lock().unwrap();
+            // Look for existing source with same kind + title
+            // Find the latest existing source with same kind+title
+            let existing_idx = sources
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, s)| {
+                    s.kind() == source.kind() && s.title().as_str() == source.title().as_str()
+                })
+                .map(|(i, _)| i);
+            if let Some(idx) = existing_idx {
+                let existing = &sources[idx];
+                if existing.fingerprint() == source.fingerprint() {
+                    // Unchanged — duplicate
+                    Ok(StoreSourceResult::Duplicate {
+                        existing_id: existing.id().clone(),
+                        attempted: source,
+                    })
+                } else {
+                    // Changed — create revision linked to previous
+                    let previous_id = existing.id().clone();
+                    sources.push(source.clone());
+                    // We need to return Stored with previous_version_id set.
+                    // But StoreSourceResult::Stored wraps Source, and the source
+                    // already has previous_version_id=None from create().
+                    // We simulate by storing and returning the source as-is.
+                    // In real SurrealDB, the store sets previous_version_id.
+                    // For test, we construct a source with previous_version_id.
+                    let revised = Source::reconstitute(
+                        source.id().clone(),
+                        source.kind(),
+                        source.title().clone(),
+                        source.content().clone(),
+                        source.fingerprint().clone(),
+                        source.created_at(),
+                        Some(previous_id),
+                    );
+                    sources.push(revised.clone());
+                    Ok(StoreSourceResult::Stored(revised))
+                }
+            } else {
+                // Fresh store
+                sources.push(source.clone());
+                Ok(StoreSourceResult::Stored(source))
+            }
+        }
+
+        async fn get(&self, id: &SourceId) -> Result<Option<Source>, SourceRepositoryError> {
+            Ok(self
+                .sources
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.id() == id)
+                .cloned())
+        }
+
+        async fn get_current(
+            &self,
+            _kind: SourceKind,
+            _title: &SourceTitle,
+        ) -> Result<Option<Source>, SourceRepositoryError> {
+            Ok(self.sources.lock().unwrap().last().cloned())
+        }
+
+        async fn list_all_by_kind_and_title(
+            &self,
+            _kind: SourceKind,
+            _title: &SourceTitle,
+        ) -> Result<Vec<Source>, SourceRepositoryError> {
+            Ok(self.sources.lock().unwrap().clone())
+        }
+    }
+
+    fn logical_app(repo: Arc<dyn SourceRepository>) -> axum::Router {
+        let service = SourceService::new(repo);
+        let state = AppState {
+            ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            source_service: Some(service),
+            project_service: None,
+            marker_service: None,
+            episode_service: None,
+            association_service: None,
+            retrieval_service: None,
+            project_retrieval_service: None,
+        };
+        build_router(state)
+    }
+
+    #[tokio::test]
+    async fn first_file_capture_returns_stored_without_previous_id() {
+        let repo = Arc::new(LogicalRepo::new());
+        let app = logical_app(repo);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri("/api/v1/sources")
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "title": "/d/projects/notes.md",
+                            "kind": "markdown",
+                            "content": "# First capture\n\nHello world"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body: Value = body_as_json(response.into_body()).await;
+        assert_eq!(body["outcome"], "stored");
+        assert!(!body["source_id"].as_str().unwrap().is_empty());
+        // First capture must NOT have previous_source_id
+        assert!(body.get("previous_source_id").is_none() || body["previous_source_id"].is_null());
+    }
+
+    #[tokio::test]
+    async fn unchanged_recapture_returns_duplicate_with_same_id() {
+        let repo = Arc::new(LogicalRepo::new());
+        let app = logical_app(repo);
+
+        let payload = json!({
+            "title": "/d/projects/doc.md",
+            "kind": "plain_text",
+            "content": "unchanging content"
+        })
+        .to_string();
+
+        // First capture
+        let r1 = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri("/api/v1/sources")
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r1.status(), StatusCode::CREATED);
+        let b1: Value = body_as_json(r1.into_body()).await;
+        let first_id = b1["source_id"].as_str().unwrap().to_owned();
+
+        // Second capture — same content, same title
+        let r2 = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri("/api/v1/sources")
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(r2.status(), StatusCode::OK);
+        let b2: Value = body_as_json(r2.into_body()).await;
+        assert_eq!(b2["outcome"], "duplicate");
+        assert_eq!(b2["source_id"].as_str().unwrap(), first_id);
+    }
+
+    #[tokio::test]
+    async fn changed_recapture_creates_revision_with_previous_source_id() {
+        let repo = Arc::new(LogicalRepo::new());
+        let app = logical_app(repo);
+
+        // First capture
+        let r1 = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri("/api/v1/sources")
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "title": "/d/projects/evolving.md",
+                            "kind": "markdown",
+                            "content": "# Version 1\n\nInitial draft"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r1.status(), StatusCode::CREATED);
+        let b1: Value = body_as_json(r1.into_body()).await;
+        let first_id = b1["source_id"].as_str().unwrap().to_owned();
+
+        // Second capture — same title, different content
+        let r2 = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri("/api/v1/sources")
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "title": "/d/projects/evolving.md",
+                            "kind": "markdown",
+                            "content": "# Version 2\n\nRevised with new ideas\nMore text"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(r2.status(), StatusCode::CREATED);
+        let b2: Value = body_as_json(r2.into_body()).await;
+        assert_eq!(b2["outcome"], "stored");
+        let second_id = b2["source_id"].as_str().unwrap().to_owned();
+        // New revision should have a different ID
+        assert_ne!(second_id, first_id);
+        // Must carry the previous source ID
+        assert_eq!(
+            b2["previous_source_id"].as_str().unwrap(),
+            first_id,
+            "revision must link to previous source"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // LK-028: Source history tests (revision listing via API)
+    // ---------------------------------------------------------------------------
+
+    /// A stub that preserves inserted sources for history queries.
+    struct HistoryRepo {
+        sources: std::sync::Mutex<Vec<Source>>,
+    }
+
+    impl HistoryRepo {
+        fn new() -> Self {
+            Self {
+                sources: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl SourceRepository for HistoryRepo {
+        async fn store(&self, source: Source) -> Result<StoreSourceResult, SourceRepositoryError> {
+            let mut sources = self.sources.lock().unwrap();
+            // Find the latest existing source with same kind+title
+            let existing_idx = sources
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, s)| {
+                    s.kind() == source.kind() && s.title().as_str() == source.title().as_str()
+                })
+                .map(|(i, _)| i);
+            if let Some(idx) = existing_idx {
+                let existing = &sources[idx];
+                if existing.fingerprint() == source.fingerprint() {
+                    Ok(StoreSourceResult::Duplicate {
+                        existing_id: existing.id().clone(),
+                        attempted: source,
+                    })
+                } else {
+                    let previous_id = existing.id().clone();
+                    let revised = Source::reconstitute(
+                        source.id().clone(),
+                        source.kind(),
+                        source.title().clone(),
+                        source.content().clone(),
+                        source.fingerprint().clone(),
+                        source.created_at(),
+                        Some(previous_id),
+                    );
+                    sources.push(revised.clone());
+                    Ok(StoreSourceResult::Stored(revised))
+                }
+            } else {
+                sources.push(source.clone());
+                Ok(StoreSourceResult::Stored(source))
+            }
+        }
+
+        async fn get(&self, id: &SourceId) -> Result<Option<Source>, SourceRepositoryError> {
+            Ok(self
+                .sources
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.id() == id)
+                .cloned())
+        }
+
+        async fn get_current(
+            &self,
+            _kind: SourceKind,
+            _title: &SourceTitle,
+        ) -> Result<Option<Source>, SourceRepositoryError> {
+            Ok(self.sources.lock().unwrap().last().cloned())
+        }
+
+        async fn list_all_by_kind_and_title(
+            &self,
+            kind: SourceKind,
+            title: &SourceTitle,
+        ) -> Result<Vec<Source>, SourceRepositoryError> {
+            Ok(self
+                .sources
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|s| s.kind() == kind && s.title().as_str() == title.as_str())
+                .cloned()
+                .collect())
+        }
+    }
+
+    fn history_app(repo: Arc<dyn SourceRepository>) -> axum::Router {
+        let service = SourceService::new(repo);
+        let state = AppState {
+            ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            source_service: Some(service),
+            project_service: None,
+            marker_service: None,
+            episode_service: None,
+            association_service: None,
+            retrieval_service: None,
+            project_retrieval_service: None,
+        };
+        build_router(state)
+    }
+
+    #[tokio::test]
+    async fn first_capture_history_returns_one_current_revision() {
+        let repo = Arc::new(HistoryRepo::new());
+        let app = history_app(repo.clone());
+
+        // Store one source
+        let r = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri("/api/v1/sources")
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "title": "/d/projs/single.md",
+                            "kind": "markdown",
+                            "content": "# One\nsingle revision"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::CREATED);
+
+        // Query history
+        let hr = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::GET)
+                    .uri("/api/v1/sources/history?kind=markdown&title=/d/projs/single.md")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(hr.status(), StatusCode::OK);
+        let body: Value = body_as_json(hr.into_body()).await;
+        assert_eq!(body["title"], "/d/projs/single.md");
+        let revs = body["revisions"].as_array().unwrap();
+        assert_eq!(revs.len(), 1, "one revision expected");
+        assert_eq!(revs[0]["current"], true);
+        assert!(revs[0]["previous_source_id"].is_null());
+    }
+
+    #[tokio::test]
+    async fn three_revision_chain_returned_oldest_to_current() {
+        let repo = Arc::new(HistoryRepo::new());
+        let app = history_app(repo);
+
+        // Create 3 revisions by POSTing with same title, different content
+        let titles_and_content = [
+            ("/d/projs/chain.md", "# V1\nfirst"),
+            ("/d/projs/chain.md", "# V2\nsecond"),
+            ("/d/projs/chain.md", "# V3\nthird"),
+        ];
+
+        let mut ids = Vec::new();
+        for (title, content) in &titles_and_content {
+            let r = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(http::Method::POST)
+                        .uri("/api/v1/sources")
+                        .header(http::header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            json!({
+                                "title": title,
+                                "kind": "markdown",
+                                "content": content
+                            })
+                            .to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(r.status(), StatusCode::CREATED);
+            let b: Value = body_as_json(r.into_body()).await;
+            ids.push(b["source_id"].as_str().unwrap().to_owned());
+        }
+
+        // Query history
+        let hr = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::GET)
+                    .uri("/api/v1/sources/history?kind=markdown&title=/d/projs/chain.md")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(hr.status(), StatusCode::OK);
+        let body: Value = body_as_json(hr.into_body()).await;
+        let revs = body["revisions"].as_array().unwrap();
+        assert_eq!(revs.len(), 3, "three revisions expected");
+
+        // Oldest first
+        assert_eq!(revs[0]["source_id"], ids[0]);
+        assert_eq!(revs[0]["current"], false);
+        assert!(revs[0]["previous_source_id"].is_null());
+
+        // Middle
+        assert_eq!(revs[1]["source_id"], ids[1]);
+        assert_eq!(revs[1]["current"], false);
+        assert_eq!(revs[1]["previous_source_id"], ids[0]);
+
+        // Newest = current
+        assert_eq!(revs[2]["source_id"], ids[2]);
+        assert_eq!(revs[2]["current"], true);
+        assert_eq!(revs[2]["previous_source_id"], ids[1]);
+    }
+
+    #[tokio::test]
+    async fn current_marker_identifies_final_revision() {
+        let repo = Arc::new(HistoryRepo::new());
+        let app = history_app(repo);
+
+        // Two revisions: A -> B
+        let mut ids = Vec::new();
+        for content in &["# A\nfirst pass", "# B\nsecond pass"] {
+            let r = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(http::Method::POST)
+                        .uri("/api/v1/sources")
+                        .header(http::header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            json!({
+                                "title": "/d/projs/final.md",
+                                "kind": "markdown",
+                                "content": content
+                            })
+                            .to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(r.status(), StatusCode::CREATED);
+            let b: Value = body_as_json(r.into_body()).await;
+            ids.push(b["source_id"].as_str().unwrap().to_owned());
+        }
+        assert_eq!(ids.len(), 2);
+
+        let hr = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::GET)
+                    .uri("/api/v1/sources/history?kind=markdown&title=/d/projs/final.md")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let body: Value = body_as_json(hr.into_body()).await;
+        let revs = body["revisions"].as_array().unwrap();
+        assert_eq!(revs.len(), 2);
+
+        // A (oldest): not current, no previous
+        assert_eq!(revs[0]["source_id"], ids[0]);
+        assert_eq!(revs[0]["current"], false, "A must not be current");
+        assert!(revs[0]["previous_source_id"].is_null());
+
+        // B (newest = current): references A
+        assert_eq!(revs[1]["source_id"], ids[1]);
+        assert_eq!(revs[1]["current"], true, "B must be current");
+        assert_eq!(revs[1]["previous_source_id"], ids[0]);
+    }
+
+    #[tokio::test]
+    async fn unknown_path_history_returns_404() {
+        let repo = Arc::new(HistoryRepo::new());
+        let app = history_app(repo);
+
+        let r = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::GET)
+                    .uri("/api/v1/sources/history?kind=plain_text&title=/nonexistent/file.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        let body: Value = body_as_json(r.into_body()).await;
+        assert_eq!(body["code"], "source_not_found");
+    }
+
+    // ---------------------------------------------------------------------------
     // GET /api/v1/sources/{source_id}
     // ---------------------------------------------------------------------------
 
@@ -652,6 +1219,14 @@ mod marker_revision_tests {
                 }
             }
             Ok(best.cloned())
+        }
+
+        async fn list_all_by_kind_and_title(
+            &self,
+            _kind: SourceKind,
+            _title: &SourceTitle,
+        ) -> Result<Vec<Source>, SourceRepositoryError> {
+            Ok(self.0.lock().unwrap().sources.values().cloned().collect())
         }
     }
 

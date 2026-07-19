@@ -164,6 +164,16 @@ pub fn unavailable_service() -> EpisodeService {
                 std::io::Error::other("unavailable"),
             )))
         }
+
+        async fn list_all_by_kind_and_title(
+            &self,
+            _: lighting_core::SourceKind,
+            _: &lighting_core::SourceTitle,
+        ) -> Result<Vec<lighting_core::Source>, SourceRepositoryError> {
+            Err(SourceRepositoryError::Operation(Box::new(
+                std::io::Error::other("unavailable"),
+            )))
+        }
     }
     struct UnavailableMemoryRepo;
     #[async_trait::async_trait]

@@ -20,6 +20,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/sources/{source_id}",
             axum::routing::get(source_routes::get_source),
         )
+        .route(
+            "/api/v1/sources/history",
+            axum::routing::get(source_routes::get_source_history),
+        )
         .layer(RequestBodyLimitLayer::new(SOURCE_CREATE_BODY_LIMIT));
 
     let project_routes = Router::new()

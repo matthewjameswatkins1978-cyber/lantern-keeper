@@ -12,7 +12,11 @@ use lighting_core::{Source, SourceId, SourceKind};
 #[serde(tag = "outcome")]
 pub enum CreateSourceResponse {
     #[serde(rename = "stored")]
-    Stored { source_id: String },
+    Stored {
+        source_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        previous_source_id: Option<String>,
+    },
     #[serde(rename = "duplicate")]
     Duplicate { source_id: String },
 }
@@ -85,9 +89,10 @@ impl SourceResponse {
 }
 
 impl CreateSourceResponse {
-    pub fn stored(id: &SourceId) -> Self {
+    pub fn stored(id: &SourceId, previous_id: Option<&SourceId>) -> Self {
         Self::Stored {
             source_id: id.as_str().to_owned(),
+            previous_source_id: previous_id.map(|p| p.as_str().to_owned()),
         }
     }
 
@@ -133,6 +138,24 @@ impl ApiError {
             message: "Request body exceeds the maximum allowed size".to_owned(),
         }
     }
+}
+
+/// A single revision in the history response.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct SourceHistoryItem {
+    pub source_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_source_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub current: bool,
+}
+
+/// Response for listing all revisions of a logical Source.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct SourceHistoryResponse {
+    pub title: String,
+    pub kind: String,
+    pub revisions: Vec<SourceHistoryItem>,
 }
 
 /// Trait so we can go from SourceKind to the API wire representation.
