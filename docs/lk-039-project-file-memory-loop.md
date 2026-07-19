@@ -97,6 +97,16 @@ cargo run -p lighting -- project-record-result $projectId result.md --title "Com
 
 Captures the result file as a Source, creates or reuses a full-range Episode, and links it to the Project. Re-running with identical content is idempotent (`already_recorded`). The updated Project handoff now includes the recorded result.
 
+## Run the Demo
+
+A repeatable end-to-end demo script exercises the full workflow:
+
+```powershell
+.\scripts\demo-lk049-project-memory.ps1
+```
+
+The script creates a uniquely-named Project, captures a Markdown file, revises and re-captures it, inspects the revision history through `source-history`, produces a deterministic Project handoff, records a result back via `project-record-result`, and verifies the result appears in a final updated handoff. Every command uses `--json` to prove the machine-readable contract. Temporary files are created outside the repository and cleaned up automatically.
+
 ## Provenance Behaviour
 
 - Each file capture creates a Source record with a content fingerprint. Identical content returns the existing Source ID (no duplicate storage).

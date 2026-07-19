@@ -127,7 +127,20 @@ impl SourceRepository for SurrealSourceRepository {
                     .and_then(|mut response| response.take(0));
 
                 match result {
-                    Ok(_) => Ok(StoreSourceResult::Stored(source)),
+                    Ok(_) => {
+                        // Reconstitute the Source with the correct previous_version_id
+                        // so that callers receive accurate revision provenance.
+                        let revised = Source::reconstitute(
+                            source.id().clone(),
+                            source.kind(),
+                            source.title().clone(),
+                            source.content().clone(),
+                            source.fingerprint().clone(),
+                            source.created_at(),
+                            Some(existing_source.id().clone()),
+                        );
+                        Ok(StoreSourceResult::Stored(revised))
+                    }
                     Err(surrealdb_error) => Err(SourceRepositoryError::Operation(Box::new(
                         SurrealSourceRepositoryError::Store(surrealdb_error),
                     ))),
