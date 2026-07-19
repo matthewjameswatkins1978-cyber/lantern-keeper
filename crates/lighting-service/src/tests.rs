@@ -1466,3 +1466,563 @@ mod marker_revision_tests {
         assert_eq!(ep.end_byte, 9);
     }
 }
+
+// ── LK-033: Project add-file tests ───────────────────────────────────────
+
+#[cfg(test)]
+mod project_add_file_tests {
+    use std::sync::{Arc, Mutex};
+
+    use axum::body::Body;
+    use axum::http::{self, Request, StatusCode};
+    use serde_json::{json, Value};
+    use tower::ServiceExt;
+
+    use lighting_core::{
+        Episode, EpisodeId, EpisodeProjectLink, MemoryPathRepository, MemoryPathRepositoryError,
+        Project, ProjectId, Source, SourceId, SourceKind, SourceRepository, SourceRepositoryError,
+        SourceTitle, StoreSourceResult,
+    };
+
+    use crate::project_ops::ProjectService;
+    use crate::source_ops::SourceService;
+    use crate::{build_router, AppState};
+
+    // ── Stub that supports Source + Project + Episode + linking ──────────
+
+    struct FullStub {
+        inner: Mutex<FullStubInner>,
+    }
+
+    #[derive(Clone)]
+    struct FullStubInner {
+        sources: Vec<Source>,
+        projects: std::collections::HashMap<String, Project>,
+        episodes: Vec<Episode>,
+        project_links: Vec<EpisodeProjectLink>,
+    }
+
+    impl FullStub {
+        fn new() -> Self {
+            Self {
+                inner: Mutex::new(FullStubInner {
+                    sources: Vec::new(),
+                    projects: std::collections::HashMap::new(),
+                    episodes: Vec::new(),
+                    project_links: Vec::new(),
+                }),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl SourceRepository for FullStub {
+        async fn store(&self, source: Source) -> Result<StoreSourceResult, SourceRepositoryError> {
+            let mut inner = self.inner.lock().unwrap();
+            let existing_idx = inner
+                .sources
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, s)| {
+                    s.kind() == source.kind() && s.title().as_str() == source.title().as_str()
+                })
+                .map(|(i, _)| i);
+            if let Some(idx) = existing_idx {
+                let existing = &inner.sources[idx];
+                if existing.fingerprint() == source.fingerprint() {
+                    Ok(StoreSourceResult::Duplicate {
+                        existing_id: existing.id().clone(),
+                        attempted: source,
+                    })
+                } else {
+                    let previous_id = existing.id().clone();
+                    let revised = Source::reconstitute(
+                        source.id().clone(),
+                        source.kind(),
+                        source.title().clone(),
+                        source.content().clone(),
+                        source.fingerprint().clone(),
+                        source.created_at(),
+                        Some(previous_id),
+                    );
+                    inner.sources.push(revised.clone());
+                    Ok(StoreSourceResult::Stored(revised))
+                }
+            } else {
+                inner.sources.push(source.clone());
+                Ok(StoreSourceResult::Stored(source))
+            }
+        }
+
+        async fn get(&self, id: &SourceId) -> Result<Option<Source>, SourceRepositoryError> {
+            let inner = self.inner.lock().unwrap();
+            Ok(inner.sources.iter().find(|s| s.id() == id).cloned())
+        }
+
+        async fn get_current(
+            &self,
+            _kind: SourceKind,
+            _title: &SourceTitle,
+        ) -> Result<Option<Source>, SourceRepositoryError> {
+            let inner = self.inner.lock().unwrap();
+            Ok(inner.sources.last().cloned())
+        }
+
+        async fn list_all_by_kind_and_title(
+            &self,
+            kind: SourceKind,
+            title: &SourceTitle,
+        ) -> Result<Vec<Source>, SourceRepositoryError> {
+            let inner = self.inner.lock().unwrap();
+            Ok(inner
+                .sources
+                .iter()
+                .filter(|s| s.kind() == kind && s.title().as_str() == title.as_str())
+                .cloned()
+                .collect())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MemoryPathRepository for FullStub {
+        async fn create_project(
+            &self,
+            project: Project,
+        ) -> Result<Project, MemoryPathRepositoryError> {
+            let mut inner = self.inner.lock().unwrap();
+            inner
+                .projects
+                .insert(project.id().as_str().to_owned(), project.clone());
+            Ok(project)
+        }
+
+        async fn get_project(
+            &self,
+            id: &ProjectId,
+        ) -> Result<Option<Project>, MemoryPathRepositoryError> {
+            let inner = self.inner.lock().unwrap();
+            Ok(inner.projects.get(id.as_str()).cloned())
+        }
+
+        async fn create_episode(
+            &self,
+            episode: Episode,
+        ) -> Result<Episode, MemoryPathRepositoryError> {
+            let mut inner = self.inner.lock().unwrap();
+            inner.episodes.push(episode.clone());
+            Ok(episode)
+        }
+
+        async fn get_episode(
+            &self,
+            id: &EpisodeId,
+        ) -> Result<Option<Episode>, MemoryPathRepositoryError> {
+            let inner = self.inner.lock().unwrap();
+            Ok(inner.episodes.iter().find(|e| *e.id() == *id).cloned())
+        }
+
+        async fn create_marker(
+            &self,
+            _marker: lighting_core::Marker,
+        ) -> Result<lighting_core::StoreMarkerResult, MemoryPathRepositoryError> {
+            unimplemented!()
+        }
+
+        async fn get_marker(
+            &self,
+            _id: &lighting_core::MarkerId,
+        ) -> Result<Option<lighting_core::Marker>, MemoryPathRepositoryError> {
+            unimplemented!()
+        }
+
+        async fn find_marker_by_lookup(
+            &self,
+            _lookup_key: &str,
+        ) -> Result<Option<lighting_core::Marker>, MemoryPathRepositoryError> {
+            unimplemented!()
+        }
+
+        async fn link_episode_project(
+            &self,
+            link: EpisodeProjectLink,
+        ) -> Result<(), MemoryPathRepositoryError> {
+            let mut inner = self.inner.lock().unwrap();
+            // Only add if not already present
+            let is_duplicate = inner.project_links.iter().any(|existing| {
+                existing.episode_id() == link.episode_id()
+                    && existing.project_id() == link.project_id()
+            });
+            if !is_duplicate {
+                inner.project_links.push(link);
+            }
+            Ok(())
+        }
+
+        async fn link_episode_marker(
+            &self,
+            _link: lighting_core::EpisodeMarkerLink,
+        ) -> Result<(), MemoryPathRepositoryError> {
+            unimplemented!()
+        }
+
+        async fn list_episode_project_links(
+            &self,
+            _episode_id: &EpisodeId,
+        ) -> Result<Vec<EpisodeProjectLink>, MemoryPathRepositoryError> {
+            Ok(self.inner.lock().unwrap().project_links.clone())
+        }
+
+        async fn list_episode_marker_links(
+            &self,
+            _episode_id: &EpisodeId,
+        ) -> Result<Vec<lighting_core::EpisodeMarkerLink>, MemoryPathRepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn list_marker_episode_links(
+            &self,
+            _marker_id: &lighting_core::MarkerId,
+        ) -> Result<Vec<lighting_core::EpisodeMarkerLink>, MemoryPathRepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn list_project_episode_links(
+            &self,
+            _project_id: &ProjectId,
+        ) -> Result<Vec<EpisodeProjectLink>, MemoryPathRepositoryError> {
+            Ok(self.inner.lock().unwrap().project_links.clone())
+        }
+
+        async fn find_project_episode_by_source_range(
+            &self,
+            project_id: &ProjectId,
+            source_id: &SourceId,
+            _start_byte: usize,
+            _end_byte: usize,
+        ) -> Result<Option<Episode>, MemoryPathRepositoryError> {
+            let inner = self.inner.lock().unwrap();
+            // Find an episode linked to this project with this source_id
+            for link in &inner.project_links {
+                if link.project_id() == project_id {
+                    if let Some(ep) = inner
+                        .episodes
+                        .iter()
+                        .find(|e| *e.id() == *link.episode_id())
+                    {
+                        if ep.source_range().source_id() == source_id {
+                            return Ok(Some(ep.clone()));
+                        }
+                    }
+                }
+            }
+            Ok(None)
+        }
+    }
+
+    fn full_app(stub: Arc<FullStub>) -> axum::Router {
+        let source_repo: Arc<dyn SourceRepository> = stub.clone();
+        let memory_repo: Arc<dyn MemoryPathRepository> = stub;
+        let source_service = SourceService::new(source_repo.clone());
+        let project_service = ProjectService::new(memory_repo, source_repo);
+        let state = AppState {
+            ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            source_service: Some(source_service),
+            project_service: Some(project_service),
+            marker_service: None,
+            episode_service: None,
+            association_service: None,
+            retrieval_service: None,
+            project_retrieval_service: None,
+        };
+        build_router(state)
+    }
+
+    async fn body_as_json<T: for<'de> serde::Deserialize<'de>>(body: Body) -> T {
+        let bytes = axum::body::to_bytes(body, 1024 * 1024)
+            .await
+            .expect("body should be readable");
+        serde_json::from_slice(&bytes).expect("body should be valid JSON")
+    }
+
+    async fn create_test_project(stub: &FullStub, name: &str) -> String {
+        let project = Project::new(
+            lighting_core::ProjectName::new(name).unwrap(),
+            lighting_core::ProjectStatus::Active,
+        );
+        let pid = project.id().as_str().to_owned();
+        stub.inner
+            .lock()
+            .unwrap()
+            .projects
+            .insert(pid.clone(), project);
+        pid
+    }
+
+    // ── tests ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn first_add_file_produces_201_creates_source_episode_and_link() {
+        let stub = Arc::new(FullStub::new());
+        let project_id = create_test_project(&stub, "Demo").await;
+        let app = full_app(stub.clone());
+
+        let r = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri(format!("/api/v1/projects/{project_id}/add-file"))
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "title": "/d/projects/notes.md",
+                            "kind": "markdown",
+                            "content": "# Hello\n\nWorld file content"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            r.status(),
+            StatusCode::CREATED,
+            "first add-file should return 201"
+        );
+        let body: Value = body_as_json(r.into_body()).await;
+        assert_eq!(body["outcome"], "stored");
+        assert!(!body["source_id"].as_str().unwrap().is_empty());
+        assert!(
+            body["previous_source_id"].is_null() || body["previous_source_id"].as_str().is_none()
+        );
+        assert!(!body["episode_id"].as_str().unwrap().is_empty());
+        assert_eq!(body["link_status"], "linked");
+
+        // Verify internal state: one source, one episode, one link
+        let inner = stub.inner.lock().unwrap();
+        assert_eq!(inner.sources.len(), 1, "should have 1 source");
+        assert_eq!(inner.episodes.len(), 1, "should have 1 episode");
+        assert_eq!(inner.project_links.len(), 1, "should have 1 project link");
+    }
+
+    #[tokio::test]
+    async fn unchanged_repeat_is_idempotent_no_duplicate_link() {
+        let stub = Arc::new(FullStub::new());
+        let project_id = create_test_project(&stub, "Demo").await;
+        let app = full_app(stub.clone());
+
+        let payload = json!({
+            "title": "/d/projects/static.md",
+            "kind": "plain_text",
+            "content": "static content unchanged"
+        })
+        .to_string();
+
+        // First call
+        let r1 = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri(format!("/api/v1/projects/{project_id}/add-file"))
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r1.status(), StatusCode::CREATED);
+        let b1: Value = body_as_json(r1.into_body()).await;
+        let first_sid = b1["source_id"].as_str().unwrap().to_owned();
+        let first_eid = b1["episode_id"].as_str().unwrap().to_owned();
+
+        // Second call — same content, same title
+        let r2 = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri(format!("/api/v1/projects/{project_id}/add-file"))
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            r2.status(),
+            StatusCode::OK,
+            "unchanged repeat should return 200"
+        );
+        let b2: Value = body_as_json(r2.into_body()).await;
+        assert_eq!(
+            b2["outcome"], "duplicate",
+            "Source capture should be duplicate"
+        );
+        assert_eq!(
+            b2["source_id"].as_str().unwrap(),
+            first_sid,
+            "same source ID"
+        );
+        assert_eq!(b2["link_status"], "already_linked");
+        assert_eq!(
+            b2["episode_id"].as_str().unwrap(),
+            first_eid,
+            "same episode ID"
+        );
+
+        // Verify no duplicate sources, episodes, or links created
+        let inner = stub.inner.lock().unwrap();
+        assert_eq!(inner.sources.len(), 1, "still 1 source");
+        assert_eq!(inner.episodes.len(), 1, "still 1 episode");
+        assert_eq!(inner.project_links.len(), 1, "still 1 project link");
+    }
+
+    #[tokio::test]
+    async fn changed_repeat_creates_revision_without_duplicate_project_link() {
+        let stub = Arc::new(FullStub::new());
+        let project_id = create_test_project(&stub, "Evolving").await;
+        let app = full_app(stub.clone());
+
+        // First capture
+        let r1 = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri(format!("/api/v1/projects/{project_id}/add-file"))
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "title": "/d/projects/evolving.md",
+                            "kind": "markdown",
+                            "content": "# V1\ninitial"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r1.status(), StatusCode::CREATED);
+        let b1: Value = body_as_json(r1.into_body()).await;
+        let first_sid = b1["source_id"].as_str().unwrap().to_owned();
+        let first_eid = b1["episode_id"].as_str().unwrap().to_owned();
+
+        // Second capture — different content, same title
+        let r2 = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri(format!("/api/v1/projects/{project_id}/add-file"))
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "title": "/d/projects/evolving.md",
+                            "kind": "markdown",
+                            "content": "# V2\nrevised with more text"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            r2.status(),
+            StatusCode::OK,
+            "changed file signals existing project link"
+        );
+        let b2: Value = body_as_json(r2.into_body()).await;
+        assert_eq!(
+            b2["outcome"], "revision_captured_existing_project_link",
+            "outcome must signal revision was captured but no new link created"
+        );
+        let second_sid = b2["source_id"].as_str().unwrap().to_owned();
+        assert_ne!(second_sid, first_sid, "new source ID for revision");
+        assert_eq!(
+            b2["previous_source_id"].as_str().unwrap(),
+            first_sid,
+            "links to previous source"
+        );
+        assert_eq!(b2["link_status"], "already_linked");
+        assert_eq!(
+            b2["episode_id"].as_str().unwrap(),
+            first_eid,
+            "same episode ID — no new Episode created"
+        );
+
+        // Verify: 2 sources (v1 + v2), but still only 1 episode and 1 link
+        let inner = stub.inner.lock().unwrap();
+        assert_eq!(inner.sources.len(), 2, "2 sources (v1 + v2)");
+        assert_eq!(inner.episodes.len(), 1, "still 1 episode — no duplicate");
+        assert_eq!(
+            inner.project_links.len(),
+            1,
+            "still 1 project link — no duplicate"
+        );
+    }
+
+    // ── LK-034: Handoff entry count test ─────────────────────────────────
+
+    #[tokio::test]
+    async fn handoff_contains_one_entry_after_revision() {
+        let stub = Arc::new(FullStub::new());
+        let project_id = create_test_project(&stub, "HandoffProof").await;
+        let app = full_app(stub.clone());
+
+        // First add-file
+        let r1 = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri(format!("/api/v1/projects/{project_id}/add-file"))
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "title": "/d/projects/handoff.md",
+                            "kind": "markdown",
+                            "content": "# V1\nfirst version of handoff file"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r1.status(), StatusCode::CREATED);
+
+        // Change and re-add — should NOT create duplicate links
+        let r2 = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri(format!("/api/v1/projects/{project_id}/add-file"))
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "title": "/d/projects/handoff.md",
+                            "kind": "markdown",
+                            "content": "# V2\nsecond version of handoff file with more text"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r2.status(), StatusCode::OK);
+
+        // Verify internal counts
+        let inner = stub.inner.lock().unwrap();
+        let link_count = inner.project_links.len();
+        let episode_count = inner.episodes.len();
+        assert_eq!(link_count, 1, "handoff must have exactly 1 project link");
+        assert_eq!(episode_count, 1, "handoff must have exactly 1 episode");
+    }
+}

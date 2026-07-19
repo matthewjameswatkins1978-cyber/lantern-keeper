@@ -35,10 +35,15 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/projects/{project_id}",
             axum::routing::get(project_routes::get_project),
         );
-    let project_routes = project_routes.route(
-        "/api/v1/projects/{project_id}/record-result",
-        axum::routing::post(project_routes::record_result),
-    );
+    let project_routes = project_routes
+        .route(
+            "/api/v1/projects/{project_id}/record-result",
+            axum::routing::post(project_routes::record_result),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/add-file",
+            axum::routing::post(project_routes::add_file),
+        );
 
     let marker_routes = Router::new()
         .route(

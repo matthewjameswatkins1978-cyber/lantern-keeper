@@ -102,3 +102,41 @@ pub struct RecordResultResponse {
     pub start_byte: usize,
     pub end_byte: usize,
 }
+
+// ── Add-file DTOs ─────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AddFileRequest {
+    pub title: String,
+    #[serde(default = "default_kind")]
+    pub kind: String,
+    pub content: String,
+}
+
+impl AddFileRequest {
+    pub fn validate(&self) -> Result<(), super::source_dto::ApiError> {
+        if self.title.trim().is_empty() {
+            return Err(super::source_dto::ApiError {
+                code: "invalid_add_file".to_owned(),
+                message: "title must not be empty".to_owned(),
+            });
+        }
+        if self.content.is_empty() {
+            return Err(super::source_dto::ApiError {
+                code: "invalid_add_file".to_owned(),
+                message: "file content must not be empty".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct AddFileResponse {
+    pub outcome: String,
+    pub source_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_source_id: Option<String>,
+    pub episode_id: String,
+    pub link_status: String,
+}

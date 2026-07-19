@@ -4,10 +4,11 @@ use std::sync::Arc;
 
 use lighting_core::{
     Episode, EpisodeProjectLink, EpisodeTitle, MemoryPathRepository, Project, ProjectId,
-    ProjectLinkKind, ProjectName, ProjectStatus, SourceContent, SourceRange,
+    ProjectLinkKind, ProjectName, ProjectStatus, SourceContent, SourceId, SourceKind, SourceRange,
+    SourceRepository, SourceTitle,
 };
 
-use crate::project_dto::{ProjectResponse, RecordResultResponse};
+use crate::project_dto::{AddFileResponse, ProjectResponse, RecordResultResponse};
 use crate::source_dto::ApiError;
 
 #[derive(Debug, thiserror::Error)]
@@ -42,11 +43,15 @@ impl From<ProjectOperationError> for ApiError {
 #[derive(Clone)]
 pub struct ProjectService {
     repo: Arc<dyn MemoryPathRepository>,
+    source_repo: Arc<dyn SourceRepository>,
 }
 
 impl ProjectService {
-    pub fn new(repo: Arc<dyn MemoryPathRepository>) -> Self {
-        Self { repo }
+    pub fn new(
+        repo: Arc<dyn MemoryPathRepository>,
+        source_repo: Arc<dyn SourceRepository>,
+    ) -> Self {
+        Self { repo, source_repo }
     }
 
     pub async fn create_project(
@@ -84,6 +89,132 @@ impl ProjectService {
             .await
             .map_err(|e| ProjectOperationError::Repository(e.into()))?;
         Ok(project.as_ref().map(ProjectResponse::from_domain))
+    }
+
+    /// Add a local file to a Project.
+    ///
+    /// This is the core operation behind `project-add-file`.
+    /// It captures the file content as a Source (with fingerprint dedup),
+    /// creates or reuses a full-range Episode, and links it to the Project.
+    /// All three steps are idempotent via logical Source identity `(kind, title)`.
+    pub async fn add_file(
+        &self,
+        project_id: &ProjectId,
+        title: String,
+        kind: SourceKind,
+        source_id: SourceId,
+        source_content: SourceContent,
+    ) -> Result<AddFileResponse, ProjectOperationError> {
+        // Verify project exists
+        let _project = self
+            .repo
+            .get_project(project_id)
+            .await
+            .map_err(|e| ProjectOperationError::Repository(e.into()))?
+            .ok_or(ProjectOperationError::NotFound)?;
+
+        // Check idempotency by logical Source identity `(kind, title)`:
+        // does this Project already have a linked Episode whose Source
+        // shares the same kind+title (i.e. is the same logical file)?
+        let logical_title = SourceTitle::new(&title).map_err(|_| {
+            ProjectOperationError::Repository(Box::new(std::io::Error::other(
+                "invalid source title",
+            )))
+        })?;
+
+        let links = self
+            .repo
+            .list_project_episode_links(project_id)
+            .await
+            .map_err(|e| ProjectOperationError::Repository(e.into()))?;
+
+        let mut existing_episode: Option<(Episode, SourceId)> = None;
+        for link in &links {
+            if let Ok(Some(ep)) = self
+                .repo
+                .get_episode(link.episode_id())
+                .await
+                .map_err(|e| ProjectOperationError::Repository(e.into()))
+            {
+                let ep_source_id = ep.source_range().source_id().clone();
+                if let Ok(Some(existing_source)) = self
+                    .source_repo
+                    .get(&ep_source_id)
+                    .await
+                    .map_err(|e| ProjectOperationError::Repository(e.into()))
+                {
+                    if existing_source.kind() == kind
+                        && existing_source.title().as_str() == logical_title.as_str()
+                    {
+                        existing_episode = Some((ep, ep_source_id));
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some((existing_ep, existing_source_id)) = existing_episode {
+            // This Project already has an Episode for this logical file.
+            // If the source content is unchanged (same source_id), it's a
+            // pure duplicate. If the source_id differs, the Source was
+            // revised but no new Project linkage is needed.
+            if existing_source_id == source_id {
+                return Ok(AddFileResponse {
+                    outcome: "unchanged".to_owned(),
+                    source_id: source_id.as_str().to_owned(),
+                    previous_source_id: None,
+                    episode_id: existing_ep.id().as_str().to_owned(),
+                    link_status: "already_linked".to_owned(),
+                });
+            } else {
+                return Ok(AddFileResponse {
+                    outcome: "revision_captured_existing_project_link".to_owned(),
+                    source_id: source_id.as_str().to_owned(),
+                    previous_source_id: None,
+                    episode_id: existing_ep.id().as_str().to_owned(),
+                    link_status: "already_linked".to_owned(),
+                });
+            }
+        }
+
+        let content_len = source_content.as_bytes().len();
+
+        // Create a full-range Episode
+        let source_range = SourceRange::new(source_id.clone(), 0, content_len, &source_content)
+            .map_err(|e| {
+                ProjectOperationError::Repository(Box::new(std::io::Error::other(e.to_string())))
+            })?;
+        let episode_title = EpisodeTitle::new(&title).map_err(|_| {
+            ProjectOperationError::Repository(Box::new(std::io::Error::other(
+                "invalid episode title",
+            )))
+        })?;
+        let episode = Episode::new(episode_title, source_range);
+
+        let episode = self
+            .repo
+            .create_episode(episode)
+            .await
+            .map_err(|e| ProjectOperationError::Repository(e.into()))?;
+
+        // Link to Project as primary
+        let link = EpisodeProjectLink::new(
+            episode.id().clone(),
+            project_id.clone(),
+            ProjectLinkKind::Primary,
+        );
+        self.repo
+            .link_episode_project(link)
+            .await
+            .map_err(|e| ProjectOperationError::Repository(e.into()))?;
+
+        Ok(AddFileResponse {
+            outcome: "linked".to_owned(),
+            source_id: source_id.as_str().to_owned(),
+            previous_source_id: None,
+            episode_id: episode.id().as_str().to_owned(),
+            link_status: "linked".to_owned(),
+        })
     }
 
     pub async fn record_result(

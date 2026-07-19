@@ -41,7 +41,7 @@ async fn full_app() -> Router {
     build_router(AppState {
         ready: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         source_service: Some(SourceService::new(Arc::clone(&sr))),
-        project_service: Some(ProjectService::new(Arc::clone(&mr))),
+        project_service: Some(ProjectService::new(Arc::clone(&mr), Arc::clone(&sr))),
         marker_service: Some(MarkerService::new(Arc::clone(&mr))),
         episode_service: Some(EpisodeService::new(Arc::clone(&sr), Arc::clone(&mr))),
         association_service: Some(EpisodeAssociationService::new(Arc::clone(&mr))),

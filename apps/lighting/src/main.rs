@@ -90,6 +90,25 @@ fn main() -> anyhow::Result<()> {
                 },
             )
         }
+        Command::ProjectAddFile {
+            project_id,
+            path,
+            title,
+            kind,
+            json,
+        } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(
+                &url,
+                CliCommand::ProjectAddFile {
+                    project_id,
+                    path,
+                    title,
+                    kind,
+                    json,
+                },
+            )
+        }
     }
 }
 
@@ -177,6 +196,22 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Add a local file to a Project's handoff context.
+    ProjectAddFile {
+        /// Project ID (UUID).
+        project_id: String,
+        /// Path to the file.
+        path: std::path::PathBuf,
+        /// Source title (default: normalised absolute path).
+        #[arg(long)]
+        title: Option<String>,
+        /// Source kind (default: inferred from extension).
+        #[arg(long, value_parser = ["markdown", "plain_text"])]
+        kind: Option<String>,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 async fn serve() -> anyhow::Result<()> {
@@ -219,7 +254,7 @@ async fn serve() -> anyhow::Result<()> {
     let source_repo: Arc<dyn lighting_core::SourceRepository> = Arc::new(repo);
     let mp_repo: Arc<dyn lighting_core::MemoryPathRepository> = Arc::new(mp_repo);
     let source_service = SourceService::new(Arc::clone(&source_repo));
-    let project_service = ProjectService::new(Arc::clone(&mp_repo));
+    let project_service = ProjectService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
     let marker_service = MarkerService::new(Arc::clone(&mp_repo));
     let episode_service = EpisodeService::new(Arc::clone(&source_repo), Arc::clone(&mp_repo));
     let association_service = EpisodeAssociationService::new(Arc::clone(&mp_repo));

@@ -25,16 +25,15 @@ async fn app() -> Router {
     c.namespace = "lighting_test".to_owned();
     c.database = d;
     let s = SurrealStore::connect(&c).await.expect("c");
-    SurrealSourceRepository::new(s.clone())
-        .migrate()
-        .await
-        .expect("m");
+    let src = SurrealSourceRepository::new(s.clone());
+    src.migrate().await.expect("m");
     let mp = SurrealMemoryPathRepository::new(s);
     mp.migrate().await.expect("m");
+    let sr: Arc<dyn lighting_core::SourceRepository> = Arc::new(src);
     let st = AppState {
         ready: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         source_service: None,
-        project_service: Some(ProjectService::new(Arc::new(mp))),
+        project_service: Some(ProjectService::new(Arc::new(mp), Arc::clone(&sr))),
         marker_service: None,
         episode_service: None,
         association_service: None,
@@ -134,12 +133,15 @@ async fn project_survives_fresh_connection() {
     c1.namespace = "lighting_test".to_owned();
     c1.database = d.clone();
     let s1 = SurrealStore::connect(&c1).await.expect("c");
+    let src1 = SurrealSourceRepository::new(s1.clone());
+    src1.migrate().await.expect("m");
+    let sr1: Arc<dyn lighting_core::SourceRepository> = Arc::new(src1);
     let mp1 = SurrealMemoryPathRepository::new(s1);
     mp1.migrate().await.expect("m");
     let a1 = build_router(AppState {
         ready: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         source_service: None,
-        project_service: Some(ProjectService::new(Arc::new(mp1))),
+        project_service: Some(ProjectService::new(Arc::new(mp1), Arc::clone(&sr1))),
         marker_service: None,
         episode_service: None,
         association_service: None,
@@ -166,12 +168,15 @@ async fn project_survives_fresh_connection() {
     c2.namespace = "lighting_test".to_owned();
     c2.database = d;
     let s2 = SurrealStore::connect(&c2).await.expect("c");
+    let src2 = SurrealSourceRepository::new(s2.clone());
+    src2.migrate().await.expect("m");
+    let sr2: Arc<dyn lighting_core::SourceRepository> = Arc::new(src2);
     let mp2 = SurrealMemoryPathRepository::new(s2);
     mp2.migrate().await.expect("m");
     let a2 = build_router(AppState {
         ready: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         source_service: None,
-        project_service: Some(ProjectService::new(Arc::new(mp2))),
+        project_service: Some(ProjectService::new(Arc::new(mp2), Arc::clone(&sr2))),
         marker_service: None,
         episode_service: None,
         association_service: None,

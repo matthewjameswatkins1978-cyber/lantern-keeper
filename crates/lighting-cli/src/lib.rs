@@ -52,6 +52,13 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             title,
             json,
         } => cmd_project_record_result(&client, &project_id, &path, title, json),
+        CliCommand::ProjectAddFile {
+            project_id,
+            path,
+            title,
+            kind,
+            json,
+        } => cmd_project_add_file(&client, &project_id, &path, title, kind, json),
     }
 }
 
@@ -124,6 +131,22 @@ pub enum CliCommand {
         /// Result title (default: file name).
         #[arg(long)]
         title: Option<String>,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Add a local file to a Project's handoff context.
+    ProjectAddFile {
+        /// Project ID (UUID).
+        project_id: String,
+        /// Path to the file.
+        path: PathBuf,
+        /// Source title (default: normalised absolute path).
+        #[arg(long)]
+        title: Option<String>,
+        /// Source kind (default: inferred from extension; "markdown" or "plain_text").
+        #[arg(long, value_parser = ["markdown", "plain_text"])]
+        kind: Option<String>,
         /// Output JSON only.
         #[arg(long)]
         json: bool,
@@ -746,6 +769,98 @@ fn cmd_project_handoff(client: &HttpClient, project_id: &str, json: bool) -> any
     } else {
         // Print the context_package content and nothing else.
         print!("{}", handoff.context_package.content);
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct AddFileResponse {
+    outcome: String,
+    source_id: String,
+    #[serde(default)]
+    previous_source_id: Option<String>,
+    episode_id: String,
+    link_status: String,
+}
+
+fn cmd_project_add_file(
+    client: &HttpClient,
+    project_id: &str,
+    path: &Path,
+    title: Option<String>,
+    kind: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
+    if uuid::Uuid::parse_str(project_id).is_err() {
+        bail!("invalid Project ID: {project_id} — must be a valid UUID");
+    }
+    if !path.exists() {
+        bail!("file not found: {}", path.display());
+    }
+    if path.is_dir() {
+        bail!("path is a directory, not a file: {}", path.display());
+    }
+
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("failed to read file: {}", path.display()))?;
+
+    let normalized_path = normalize_path_for_title(path);
+    let title = title.unwrap_or_else(|| normalized_path.clone());
+    let kind = kind.unwrap_or_else(|| infer_kind(path).to_owned());
+
+    let body = serde_json::json!({
+        "title": title,
+        "kind": kind,
+        "content": content,
+    });
+
+    let response = client
+        .post_json(&format!("/api/v1/projects/{project_id}/add-file"), &body)
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+
+    let body = HttpClient::handle_response(response)?;
+    let added: AddFileResponse = serde_json::from_value(body)
+        .map_err(|e| anyhow::Error::msg(format!("unexpected API response: {e}")))?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "outcome": added.outcome,
+                "source_id": added.source_id,
+                "previous_source_id": added.previous_source_id,
+                "episode_id": added.episode_id,
+                "link_status": added.link_status,
+                "title": title,
+                "path": normalized_path,
+            }))
+            .unwrap()
+        );
+    } else {
+        println!("Title    : {}", title);
+        println!("Path     : {}", normalized_path);
+        println!("Source ID: {}", added.source_id);
+        match added.outcome.as_str() {
+            "stored" => {
+                if let Some(ref prev) = added.previous_source_id {
+                    println!("Capture  : new revision (previous: {})", prev);
+                } else {
+                    println!("Capture  : first capture");
+                }
+            }
+            "duplicate" => {
+                println!("Capture  : unchanged");
+            }
+            other => println!("Capture  : {}", other),
+        }
+        match added.link_status.as_str() {
+            "linked" => println!("Link     : newly linked — {}", added.episode_id),
+            "already_linked" => {
+                println!("Link     : already linked — {}", added.episode_id)
+            }
+            other => println!("Link     : {}", other),
+        }
     }
 
     Ok(())
