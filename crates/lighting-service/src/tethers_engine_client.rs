@@ -75,10 +75,19 @@ pub enum TethersEngineError {
 // ── Client ────────────────────────────────────────────────────────
 
 /// Async client that evaluates a `TethersRequest` through the OCaml engine.
+///
+/// In production this spawns the external engine binary.  Under `#[cfg(test)]`
+/// a client can also be constructed with a pre-canned response via
+/// `TethersEngineClient::fixed(…)` — the only injection seam exposed for
+/// handler-level tests.
+#[derive(Clone)]
 pub struct TethersEngineClient {
     engine_path: PathBuf,
     engine_args: Vec<String>,
     timeout: Duration,
+    /// Only populated via `#[cfg(test)] TethersEngineClient::fixed(…)`.
+    #[cfg(test)]
+    fixed_response: Option<TethersResponse>,
 }
 
 impl TethersEngineClient {
@@ -88,6 +97,21 @@ impl TethersEngineClient {
             engine_path,
             engine_args: Vec::new(),
             timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+            #[cfg(test)]
+            fixed_response: None,
+        }
+    }
+
+    /// Construct a client that always returns `response` without spawning
+    /// a process.  Only available in tests — this is the seam that lets
+    /// handler-level tests provide deterministic Tethers responses.
+    #[cfg(test)]
+    pub(crate) fn fixed(response: TethersResponse) -> Self {
+        Self {
+            engine_path: PathBuf::new(),
+            engine_args: Vec::new(),
+            timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+            fixed_response: Some(response),
         }
     }
 
@@ -97,6 +121,7 @@ impl TethersEngineClient {
             engine_path,
             engine_args,
             timeout,
+            fixed_response: None,
         }
     }
 
@@ -127,6 +152,11 @@ impl TethersEngineClient {
         &self,
         request: &TethersRequest,
     ) -> Result<TethersResponse, TethersEngineError> {
+        #[cfg(test)]
+        if let Some(ref response) = self.fixed_response {
+            return Ok(response.clone());
+        }
+        let _ = request;
         self.evaluate_with_timeout(request, self.timeout).await
     }
 

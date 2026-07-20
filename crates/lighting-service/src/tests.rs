@@ -117,6 +117,7 @@ mod router_tests {
             association_service: None,
             retrieval_service: None,
             project_retrieval_service: None,
+            tethers_client: None,
         };
         build_router(state)
     }
@@ -542,6 +543,7 @@ mod router_tests {
             association_service: None,
             retrieval_service: None,
             project_retrieval_service: None,
+            tethers_client: None,
         };
         build_router(state)
     }
@@ -791,6 +793,7 @@ mod router_tests {
             association_service: None,
             retrieval_service: None,
             project_retrieval_service: None,
+            tethers_client: None,
         };
         build_router(state)
     }
@@ -1743,6 +1746,7 @@ mod project_add_file_tests {
             association_service: None,
             retrieval_service: None,
             project_retrieval_service: None,
+            tethers_client: None,
         };
         build_router(state)
     }
@@ -2033,5 +2037,336 @@ mod project_add_file_tests {
         let episode_count = inner.episodes.len();
         assert_eq!(link_count, 1, "handoff must have exactly 1 project link");
         assert_eq!(episode_count, 1, "handoff must have exactly 1 episode");
+    }
+
+    // ── Tethers preview handler tests ───────────────────────────────
+
+    fn tethers_full_app(
+        stub: Arc<FullStub>,
+        tethers_client: crate::tethers_engine_client::TethersEngineClient,
+    ) -> axum::Router {
+        let source_repo: Arc<dyn SourceRepository> = stub.clone();
+        let memory_repo: Arc<dyn MemoryPathRepository> = stub;
+        let source_service = SourceService::new(source_repo.clone());
+        let project_service = ProjectService::new(memory_repo, source_repo);
+        let state = AppState {
+            ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            source_service: Some(source_service),
+            project_service: Some(project_service),
+            marker_service: None,
+            episode_service: None,
+            association_service: None,
+            retrieval_service: None,
+            project_retrieval_service: None,
+            tethers_client: Some(tethers_client),
+        };
+        build_router(state)
+    }
+
+    #[tokio::test]
+    async fn matched_response_crosses_http_boundary() {
+        let stub = Arc::new(FullStub::new());
+        let project_id = create_test_project(&stub, "MatchedProject").await;
+
+        let matched = crate::tethers_preview::TethersResponse {
+            protocol_version: "0.1".into(),
+            evaluation_id: Some("eval-m-1".into()),
+            event_id: Some("evt-m-1".into()),
+            tether_id: Some("t-m-1".into()),
+            tether_version: Some("v-m-1".into()),
+            status: crate::tethers_preview::TethersStatus::Matched,
+            plan: Some(crate::tethers_preview::Plan {
+                id: "eval-m-1/plan".into(),
+                required_effects: vec!["lantern.write".into()],
+                actions: vec![crate::tethers_preview::PlannedAction {
+                    action_id: "a1".into(),
+                    idempotency_key: "eval-m-1/a1".into(),
+                    capability: "lantern.task.record".into(),
+                    capability_version: "1.0.0".into(),
+                    arguments: serde_json::json!({"project": "lantern-keeper"}),
+                    effects: vec!["lantern.write".into()],
+                }],
+            }),
+            trail: Some(vec![
+                crate::tethers_preview::TrailEntry {
+                    sequence: 1,
+                    phase: "reception".into(),
+                    kind: "event_received".into(),
+                    outcome: "accepted".into(),
+                    message: "Received event".into(),
+                },
+                crate::tethers_preview::TrailEntry {
+                    sequence: 2,
+                    phase: "evaluation".into(),
+                    kind: "condition_checked".into(),
+                    outcome: "matched".into(),
+                    message: "Condition passed".into(),
+                },
+            ]),
+            error: None,
+        };
+
+        let client = crate::tethers_engine_client::TethersEngineClient::fixed(matched);
+        let app = tethers_full_app(stub, client);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri(format!("/api/v1/projects/{project_id}/tethers/preview"))
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "task": "LK-39",
+                            "changed_files": 3,
+                            "evaluation_id": "eval-m-1",
+                            "event_id": "evt-m-1"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = body_as_json(response.into_body()).await;
+
+        assert_eq!(body["status"], "matched");
+        // Plan contains capability "lantern.task.record"
+        let plan = &body["plan"];
+        let actions = plan["actions"].as_array().expect("actions array");
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0]["capability"], "lantern.task.record");
+
+        // Trail sequence remains ordered
+        let trail = body["trail"].as_array().expect("trail array");
+        assert_eq!(trail.len(), 2);
+        assert_eq!(trail[0]["sequence"], 1);
+        assert_eq!(trail[1]["sequence"], 2);
+        assert!(trail[0]["sequence"].as_u64().unwrap() < trail[1]["sequence"].as_u64().unwrap());
+    }
+
+    #[tokio::test]
+    async fn not_matched_response_crosses_http_boundary() {
+        let stub = Arc::new(FullStub::new());
+        let project_id = create_test_project(&stub, "NotMatchedProject").await;
+
+        let not_matched = crate::tethers_preview::TethersResponse {
+            protocol_version: "0.1".into(),
+            evaluation_id: Some("eval-nm-1".into()),
+            event_id: Some("evt-nm-1".into()),
+            tether_id: Some("t-nm-1".into()),
+            tether_version: Some("v-nm-1".into()),
+            status: crate::tethers_preview::TethersStatus::NotMatched,
+            plan: None,
+            trail: Some(vec![crate::tethers_preview::TrailEntry {
+                sequence: 1,
+                phase: "evaluation".into(),
+                kind: "condition_checked".into(),
+                outcome: "not_matched".into(),
+                message: "condition false".into(),
+            }]),
+            error: None,
+        };
+
+        let client = crate::tethers_engine_client::TethersEngineClient::fixed(not_matched);
+        let app = tethers_full_app(stub, client);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri(format!("/api/v1/projects/{project_id}/tethers/preview"))
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "task": "LK-40",
+                            "changed_files": 0,
+                            "evaluation_id": "eval-nm-1",
+                            "event_id": "evt-nm-1"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = body_as_json(response.into_body()).await;
+
+        assert_eq!(body["status"], "not_matched");
+
+        // The plan key exists and is JSON null
+        let plan_val = body
+            .get("plan")
+            .expect("plan key must exist in not_matched response");
+        assert!(
+            plan_val.is_null(),
+            "plan must be JSON null, got: {plan_val}"
+        );
+
+        // Trail is present
+        let trail = body["trail"].as_array().expect("trail array present");
+        assert_eq!(trail.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn minimal_error_remains_minimal_over_http() {
+        let stub = Arc::new(FullStub::new());
+        let project_id = create_test_project(&stub, "MinErrProject").await;
+
+        let minimal_err = crate::tethers_preview::TethersResponse {
+            protocol_version: "0.1".into(),
+            evaluation_id: None,
+            event_id: None,
+            tether_id: None,
+            tether_version: None,
+            status: crate::tethers_preview::TethersStatus::Error,
+            plan: None,
+            trail: None,
+            error: Some(crate::tethers_preview::TethersError {
+                code: "parse_error".into(),
+                message: "unexpected token".into(),
+            }),
+        };
+
+        let client = crate::tethers_engine_client::TethersEngineClient::fixed(minimal_err);
+        let app = tethers_full_app(stub, client);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri(format!("/api/v1/projects/{project_id}/tethers/preview"))
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "task": "LK-41",
+                            "changed_files": 1,
+                            "evaluation_id": "eval-me-1",
+                            "event_id": "evt-me-1"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = body_as_json(response.into_body()).await;
+
+        // Exact semantic JSON
+        assert_eq!(body["protocol_version"], "0.1");
+        assert_eq!(body["status"], "error");
+        assert_eq!(body["error"]["code"], "parse_error");
+        assert_eq!(body["error"]["message"], "unexpected token");
+
+        // Explicitly assert these keys are absent
+        assert!(
+            body.get("evaluation_id").is_none(),
+            "evaluation_id must be absent"
+        );
+        assert!(body.get("event_id").is_none(), "event_id must be absent");
+        assert!(body.get("tether_id").is_none(), "tether_id must be absent");
+        assert!(
+            body.get("tether_version").is_none(),
+            "tether_version must be absent"
+        );
+        assert!(body.get("plan").is_none(), "plan must be absent");
+        assert!(body.get("trail").is_none(), "trail must be absent");
+    }
+
+    #[tokio::test]
+    async fn correlated_error_crosses_http_boundary() {
+        let stub = Arc::new(FullStub::new());
+        let project_id = create_test_project(&stub, "CorrErrProject").await;
+
+        let correlated_err = crate::tethers_preview::TethersResponse {
+            protocol_version: "0.1".into(),
+            evaluation_id: Some("eval-ce-1".into()),
+            event_id: Some("evt-ce-1".into()),
+            tether_id: Some("t-ce-1".into()),
+            tether_version: Some("v-ce-1".into()),
+            status: crate::tethers_preview::TethersStatus::Error,
+            plan: None,
+            trail: Some(vec![
+                crate::tethers_preview::TrailEntry {
+                    sequence: 1,
+                    phase: "reception".into(),
+                    kind: "event_received".into(),
+                    outcome: "accepted".into(),
+                    message: "Received event".into(),
+                },
+                crate::tethers_preview::TrailEntry {
+                    sequence: 2,
+                    phase: "evaluation".into(),
+                    kind: "condition_failed".into(),
+                    outcome: "error".into(),
+                    message: "Fact missing".into(),
+                },
+            ]),
+            error: Some(crate::tethers_preview::TethersError {
+                code: "missing_fact".into(),
+                message: "Fact not found".into(),
+            }),
+        };
+
+        let client = crate::tethers_engine_client::TethersEngineClient::fixed(correlated_err);
+        let app = tethers_full_app(stub, client);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri(format!("/api/v1/projects/{project_id}/tethers/preview"))
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "task": "LK-42",
+                            "changed_files": 2,
+                            "evaluation_id": "eval-ce-1",
+                            "event_id": "evt-ce-1"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = body_as_json(response.into_body()).await;
+
+        // Status is "error"
+        assert_eq!(body["status"], "error");
+
+        // All four correlation identifiers remain present
+        assert_eq!(body["evaluation_id"], "eval-ce-1");
+        assert_eq!(body["event_id"], "evt-ce-1");
+        assert_eq!(body["tether_id"], "t-ce-1");
+        assert_eq!(body["tether_version"], "v-ce-1");
+
+        // Plan key exists and is JSON null
+        let plan_val = body
+            .get("plan")
+            .expect("plan key must exist in correlated error response");
+        assert!(
+            plan_val.is_null(),
+            "plan must be JSON null, got: {plan_val}"
+        );
+
+        // Error code/message remain present
+        assert_eq!(body["error"]["code"], "missing_fact");
+        assert_eq!(body["error"]["message"], "Fact not found");
+
+        // Trail remains present and ordered
+        let trail = body["trail"].as_array().expect("trail array present");
+        assert_eq!(trail.len(), 2);
+        assert_eq!(trail[0]["sequence"], 1);
+        assert_eq!(trail[1]["sequence"], 2);
+        assert!(trail[0]["sequence"].as_u64().unwrap() < trail[1]["sequence"].as_u64().unwrap());
     }
 }

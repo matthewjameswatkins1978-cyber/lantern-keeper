@@ -82,26 +82,30 @@ pub async fn preview(
 
     let request = build_preview_request(&input);
 
-    // 3. Obtain engine client.
-    let client = match TethersEngineClient::from_env() {
-        Ok(c) => c,
-        Err(TethersEngineError::MissingEnginePath) => {
-            return error_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                ApiError {
-                    code: "tethers_unavailable".into(),
-                    message: "Tethers engine is not configured".into(),
-                },
-            );
-        }
-        Err(e) => {
-            return error_response(
-                StatusCode::BAD_GATEWAY,
-                ApiError {
-                    code: "tethers_engine_error".into(),
-                    message: format!("{e}"),
-                },
-            );
+    // 3. Obtain engine client from state (test seam) or from_env.
+    let client = if let Some(ref client) = state.tethers_client {
+        client.clone()
+    } else {
+        match TethersEngineClient::from_env() {
+            Ok(c) => c,
+            Err(TethersEngineError::MissingEnginePath) => {
+                return error_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ApiError {
+                        code: "tethers_unavailable".into(),
+                        message: "Tethers engine is not configured".into(),
+                    },
+                );
+            }
+            Err(e) => {
+                return error_response(
+                    StatusCode::BAD_GATEWAY,
+                    ApiError {
+                        code: "tethers_engine_error".into(),
+                        message: format!("{e}"),
+                    },
+                );
+            }
         }
     };
 

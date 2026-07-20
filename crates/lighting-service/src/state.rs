@@ -7,6 +7,7 @@ use crate::marker_retrieval_ops::MarkerRetrievalService;
 use crate::project_ops::ProjectService;
 use crate::project_retrieval_ops::ProjectRetrievalService;
 use crate::source_ops::SourceService;
+use crate::tethers_engine_client::TethersEngineClient;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -18,6 +19,7 @@ pub struct AppState {
     pub association_service: Option<EpisodeAssociationService>,
     pub retrieval_service: Option<MarkerRetrievalService>,
     pub project_retrieval_service: Option<ProjectRetrievalService>,
+    pub tethers_client: Option<TethersEngineClient>,
 }
 
 impl AppState {
@@ -31,6 +33,7 @@ impl AppState {
             association_service: None,
             retrieval_service: None,
             project_retrieval_service: None,
+            tethers_client: None,
         }
     }
 
