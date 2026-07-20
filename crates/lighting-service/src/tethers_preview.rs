@@ -68,7 +68,7 @@ pub struct CapabilitySchema {
 /// - `matched` — identifiers, plan, trail
 /// - `not_matched` — identifiers, no plan, trail
 /// - `error` — minimal envelope (protocol_version + status + error only)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct TethersResponse {
     pub protocol_version: String,
@@ -92,6 +92,62 @@ pub struct TethersResponse {
 
     #[serde(default)]
     pub error: Option<TethersError>,
+}
+
+impl Serialize for TethersResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+
+        // Determine how many keys we need.
+        let mut len = 2; // protocol_version + status are always present
+        let has_correlation = self.evaluation_id.is_some();
+        if has_correlation {
+            len += 4; // evaluation_id, event_id, tether_id, tether_version
+        }
+        // plan key is always present when we have correlation (matched, not_matched, correlated error)
+        // or when status is matched/not_matched with plan
+        let emit_plan = has_correlation || self.plan.is_some();
+        if emit_plan {
+            len += 1;
+        }
+        if self.trail.is_some() {
+            len += 1;
+        }
+        if self.error.is_some() {
+            len += 1;
+        }
+
+        let mut map = serializer.serialize_map(Some(len))?;
+        map.serialize_entry("protocol_version", &self.protocol_version)?;
+
+        if let Some(ref v) = self.evaluation_id {
+            map.serialize_entry("evaluation_id", v)?;
+        }
+        if let Some(ref v) = self.event_id {
+            map.serialize_entry("event_id", v)?;
+        }
+        if let Some(ref v) = self.tether_id {
+            map.serialize_entry("tether_id", v)?;
+        }
+        if let Some(ref v) = self.tether_version {
+            map.serialize_entry("tether_version", v)?;
+        }
+
+        map.serialize_entry("status", &self.status)?;
+
+        if emit_plan {
+            // Explicit null for not_matched and correlated error; object for matched
+            map.serialize_entry("plan", &self.plan)?;
+        }
+        if let Some(ref v) = self.trail {
+            map.serialize_entry("trail", v)?;
+        }
+        if let Some(ref v) = self.error {
+            map.serialize_entry("error", v)?;
+        }
+
+        map.end()
+    }
 }
 
 /// A proposed Action Plan.
@@ -681,5 +737,139 @@ mod tests {
         assert_eq!(trail[0].message, "First");
         assert_eq!(trail[1].message, "Second");
         assert_eq!(trail[2].message, "Third");
+    }
+
+    // ── Serialization round-trip tests ─────────────────────────
+
+    #[test]
+    fn serialize_matched_round_trip() {
+        let json = matched_response_json();
+        let resp: TethersResponse = serde_json::from_value(json.clone()).expect("deserialize");
+        let re_serialized = serde_json::to_value(&resp).expect("serialize");
+
+        // Re-serialized value must equal the original JSON value
+        assert_eq!(re_serialized, json);
+    }
+
+    #[test]
+    fn serialize_not_matched_preserves_plan_null() {
+        let json = serde_json::json!({
+            "protocol_version": "0.1",
+            "evaluation_id": "eval-nomatch-1",
+            "event_id": "evt-nomatch-1",
+            "tether_id": "preview-project-result",
+            "tether_version": "0.1",
+            "status": "not_matched",
+            "plan": null,
+            "trail": [
+                {
+                    "sequence": 1,
+                    "phase": "reception",
+                    "kind": "event_received",
+                    "outcome": "accepted",
+                    "message": "Received lantern.project_result_preview_requested"
+                },
+                {
+                    "sequence": 2,
+                    "phase": "evaluation",
+                    "kind": "condition_checked",
+                    "outcome": "not_matched",
+                    "message": "project.type is \"software\""
+                }
+            ]
+        });
+
+        let resp: TethersResponse = serde_json::from_value(json.clone()).expect("deserialize");
+        let re_serialized = serde_json::to_value(&resp).expect("serialize");
+
+        // plan key must exist and be JSON null
+        let plan_val = re_serialized
+            .get("plan")
+            .expect("plan key must be present in not_matched response");
+        assert!(plan_val.is_null(), "plan must be JSON null");
+
+        // Full round-trip equality
+        assert_eq!(re_serialized, json);
+    }
+
+    #[test]
+    fn serialize_minimal_error_remains_minimal() {
+        let json = serde_json::json!({
+            "protocol_version": "0.1",
+            "status": "error",
+            "error": {
+                "code": "parse_error",
+                "message": "unexpected token at line 3"
+            }
+        });
+
+        let resp: TethersResponse = serde_json::from_value(json.clone()).expect("deserialize");
+        let re_serialized = serde_json::to_value(&resp).expect("serialize");
+
+        // Full round-trip equality (no extra keys)
+        assert_eq!(re_serialized, json);
+
+        // Explicitly assert absent keys
+        assert!(re_serialized.get("evaluation_id").is_none());
+        assert!(re_serialized.get("event_id").is_none());
+        assert!(re_serialized.get("tether_id").is_none());
+        assert!(re_serialized.get("tether_version").is_none());
+        assert!(re_serialized.get("plan").is_none());
+        assert!(re_serialized.get("trail").is_none());
+    }
+
+    #[test]
+    fn serialize_correlated_error_round_trip() {
+        let json = serde_json::json!({
+            "protocol_version": "0.1",
+            "evaluation_id": "eval-corr-err-1",
+            "event_id": "evt-corr-err-1",
+            "tether_id": "preview-project-result",
+            "tether_version": "0.1",
+            "status": "error",
+            "plan": null,
+            "error": {
+                "code": "missing_fact",
+                "message": "Fact 'project.type' not found in the supplied Facts"
+            },
+            "trail": [
+                {
+                    "sequence": 1,
+                    "phase": "reception",
+                    "kind": "event_received",
+                    "outcome": "accepted",
+                    "message": "Received lantern.project_result_preview_requested"
+                },
+                {
+                    "sequence": 2,
+                    "phase": "evaluation",
+                    "kind": "anchor_checked",
+                    "outcome": "matched",
+                    "message": "Anchor lantern.project_result_preview_requested matched"
+                },
+                {
+                    "sequence": 3,
+                    "phase": "evaluation",
+                    "kind": "condition_failed",
+                    "outcome": "error",
+                    "message": "Fact 'project.type' not found in the supplied Facts"
+                }
+            ]
+        });
+
+        let resp: TethersResponse = serde_json::from_value(json.clone()).expect("deserialize");
+        let re_serialized = serde_json::to_value(&resp).expect("serialize");
+
+        // plan key must exist and be JSON null
+        let plan_val = re_serialized
+            .get("plan")
+            .expect("plan key must be present in correlated error response");
+        assert!(
+            plan_val.is_null(),
+            "plan must be JSON null in correlated error"
+        );
+
+        // Full round-trip equality
+        assert_eq!(re_serialized, json);
     }
 }
