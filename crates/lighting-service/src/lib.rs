@@ -23,6 +23,7 @@ pub mod source_ops;
 pub mod source_outline_dto;
 pub mod source_routes;
 pub mod state;
+pub mod tethers_preview;
 
 #[cfg(test)]
 mod tests;
