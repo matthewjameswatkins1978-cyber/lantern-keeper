@@ -6,6 +6,19 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+// ── Status enum ───────────────────────────────────────────────────
+
+/// Tethers 0.1 evaluation status.
+///
+/// The engine returns exactly one of these three status values.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum TethersStatus {
+    Matched,
+    NotMatched,
+    Error,
+}
+
 // ── Request DTOs ──────────────────────────────────────────────────
 
 /// Top-level Tethers 0.1 engine request.
@@ -69,7 +82,7 @@ pub struct TethersResponse {
     #[serde(default)]
     pub tether_version: Option<String>,
 
-    pub status: String,
+    pub status: TethersStatus,
 
     #[serde(default)]
     pub plan: Option<Plan>,
@@ -416,7 +429,7 @@ mod tests {
         let resp: TethersResponse = serde_json::from_value(json).expect("deserialize matched");
 
         assert_eq!(resp.protocol_version, "0.1");
-        assert_eq!(resp.status, "matched");
+        assert_eq!(resp.status, TethersStatus::Matched);
         assert_eq!(resp.evaluation_id.as_deref(), Some("eval_demo_001"));
         assert_eq!(resp.event_id.as_deref(), Some("evt_demo_001"));
 
@@ -470,7 +483,7 @@ mod tests {
 
         let resp: TethersResponse = serde_json::from_value(json).expect("deserialize not_matched");
 
-        assert_eq!(resp.status, "not_matched");
+        assert_eq!(resp.status, TethersStatus::NotMatched);
         assert_eq!(resp.evaluation_id.as_deref(), Some("eval-nomatch-1"));
         assert!(resp.plan.is_none());
         assert!(resp.error.is_none());
@@ -494,7 +507,7 @@ mod tests {
         let resp: TethersResponse = serde_json::from_value(json).expect("deserialize error");
 
         assert_eq!(resp.protocol_version, "0.1");
-        assert_eq!(resp.status, "error");
+        assert_eq!(resp.status, TethersStatus::Error);
         assert!(resp.evaluation_id.is_none());
         assert!(resp.event_id.is_none());
         assert!(resp.tether_id.is_none());
@@ -505,6 +518,84 @@ mod tests {
         let err = resp.error.expect("error present");
         assert_eq!(err.code, "parse_error");
         assert!(!err.message.is_empty());
+    }
+
+    #[test]
+    fn deserialize_correlated_error_response() {
+        // Represents a SPEC §11.2 correlated error (e.g. missing_fact or
+        // action-planning-failed).  Uses the exact shape: all correlation
+        // identifiers present, plan: null, error code/message, accumulated
+        // Trail entries with condition_failed kind.
+        let json = serde_json::json!({
+            "protocol_version": "0.1",
+            "evaluation_id": "eval-corr-err-1",
+            "event_id": "evt-corr-err-1",
+            "tether_id": "preview-project-result",
+            "tether_version": "0.1",
+            "status": "error",
+            "plan": null,
+            "error": {
+                "code": "missing_fact",
+                "message": "Fact 'project.type' not found in the supplied Facts"
+            },
+            "trail": [
+                {
+                    "sequence": 1,
+                    "phase": "reception",
+                    "kind": "event_received",
+                    "outcome": "accepted",
+                    "message": "Received lantern.project_result_preview_requested"
+                },
+                {
+                    "sequence": 2,
+                    "phase": "evaluation",
+                    "kind": "anchor_checked",
+                    "outcome": "matched",
+                    "message": "Anchor lantern.project_result_preview_requested matched"
+                },
+                {
+                    "sequence": 3,
+                    "phase": "evaluation",
+                    "kind": "condition_failed",
+                    "outcome": "error",
+                    "message": "Fact 'project.type' not found in the supplied Facts"
+                }
+            ]
+        });
+
+        let resp: TethersResponse =
+            serde_json::from_value(json).expect("deserialize correlated error");
+
+        // Protocol version always present
+        assert_eq!(resp.protocol_version, "0.1");
+
+        // Status is typed Error
+        assert_eq!(resp.status, TethersStatus::Error);
+
+        // Every correlation identifier preserved
+        assert_eq!(resp.evaluation_id.as_deref(), Some("eval-corr-err-1"));
+        assert_eq!(resp.event_id.as_deref(), Some("evt-corr-err-1"));
+        assert_eq!(resp.tether_id.as_deref(), Some("preview-project-result"));
+        assert_eq!(resp.tether_version.as_deref(), Some("0.1"));
+
+        // Plan is null (None after deserialisation)
+        assert!(resp.plan.is_none());
+
+        // Error code and message preserved
+        let err = resp.error.expect("error present");
+        assert_eq!(err.code, "missing_fact");
+        assert!(!err.message.is_empty());
+
+        // Trail present with correct sequence and order
+        let trail = resp.trail.expect("trail present");
+        assert_eq!(trail.len(), 3);
+        assert_eq!(trail[0].sequence, 1);
+        assert_eq!(trail[0].kind, "event_received");
+        assert_eq!(trail[1].sequence, 2);
+        assert_eq!(trail[1].kind, "anchor_checked");
+        assert_eq!(trail[2].sequence, 3);
+        assert_eq!(trail[2].kind, "condition_failed");
+        assert_eq!(trail[2].outcome, "error");
     }
 
     #[test]
@@ -572,6 +663,8 @@ mod tests {
         });
 
         let resp: TethersResponse = serde_json::from_value(json).expect("deserialize order test");
+
+        assert_eq!(resp.status, TethersStatus::Matched);
 
         let plan = resp.plan.expect("plan");
         assert_eq!(plan.required_effects.len(), 2);
