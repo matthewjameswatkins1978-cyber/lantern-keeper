@@ -10,10 +10,11 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use thiserror::Error;
-use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
-use tracing::debug;
+use tokio::task::JoinError;
+use tracing::{debug, warn};
 
 use super::tethers_preview::{TethersRequest, TethersResponse};
 
@@ -21,6 +22,9 @@ use super::tethers_preview::{TethersRequest, TethersResponse};
 
 /// Maximum stderr bytes captured into error messages.
 const STDERR_LIMIT_BYTES: usize = 8192;
+
+/// Maximum stdout bytes accepted from one engine response.
+const STDOUT_LIMIT_BYTES: usize = 1024 * 1024;
 
 /// Default evaluation timeout.
 const DEFAULT_TIMEOUT_SECS: u64 = 10;
@@ -45,8 +49,15 @@ pub enum TethersEngineError {
     #[error("engine did not respond within {0:?}")]
     Timeout(Duration),
 
-    #[error("engine exited with status {0}")]
-    NonZeroExit(i32),
+    #[error("engine exited with status {code}")]
+    NonZeroExit {
+        code: i32,
+        stderr: String,
+        stderr_truncated: bool,
+    },
+
+    #[error("engine stdout exceeded {0} bytes")]
+    StdoutTooLarge(usize),
 
     #[error("engine produced empty output")]
     EmptyOutput,
@@ -66,6 +77,7 @@ pub enum TethersEngineError {
 /// Async client that evaluates a `TethersRequest` through the OCaml engine.
 pub struct TethersEngineClient {
     engine_path: PathBuf,
+    engine_args: Vec<String>,
     timeout: Duration,
 }
 
@@ -74,7 +86,17 @@ impl TethersEngineClient {
     pub fn new(engine_path: PathBuf) -> Self {
         Self {
             engine_path,
+            engine_args: Vec::new(),
             timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+        }
+    }
+
+    #[cfg(test)]
+    fn new_with_args(engine_path: PathBuf, engine_args: Vec<String>, timeout: Duration) -> Self {
+        Self {
+            engine_path,
+            engine_args,
+            timeout,
         }
     }
 
@@ -105,62 +127,111 @@ impl TethersEngineClient {
         &self,
         request: &TethersRequest,
     ) -> Result<TethersResponse, TethersEngineError> {
-        let mut child = Command::new(&self.engine_path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(TethersEngineError::SpawnFailed)?;
+        self.evaluate_with_timeout(request, self.timeout).await
+    }
 
-        let mut child_stdin = child.stdin.take().expect("stdin piped");
-        let child_stdout = child.stdout.take().expect("stdout piped");
-        let child_stderr = child.stderr.take().expect("stderr piped");
-
-        // Serialise request as one compact JSON line + newline.
+    async fn evaluate_with_timeout(
+        &self,
+        request: &TethersRequest,
+        timeout_dur: Duration,
+    ) -> Result<TethersResponse, TethersEngineError> {
+        // Serialise before spawning so a request error cannot leak a child.
         let mut payload =
             serde_json::to_string(request).map_err(TethersEngineError::SerializeFailed)?;
         payload.push('\n');
 
-        debug!(payload_len = payload.len(), "writing Tethers request");
-        child_stdin
-            .write_all(payload.as_bytes())
-            .await
-            .map_err(TethersEngineError::StdinWriteFailed)?;
-        child_stdin
-            .shutdown()
-            .await
-            .map_err(TethersEngineError::StdinWriteFailed)?;
-        drop(child_stdin);
+        let mut command = Command::new(&self.engine_path);
+        command
+            .args(&self.engine_args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
-        // Read stdout and bounded stderr concurrently to avoid deadlock.
-        let (stdout_result, stderr_result) = tokio::join!(
-            read_to_string(child_stdout),
-            read_stderr_bounded(child_stderr),
-        );
+        // Backup only: Tokio 1.53 documents that strict cleanup should still
+        // use child.kill().await or child.wait().await where possible.
+        command.kill_on_drop(true);
 
-        let stdout = stdout_result?;
-        let stderr = stderr_result?;
+        let mut child = command.spawn().map_err(TethersEngineError::SpawnFailed)?;
 
-        // Wait for process exit.
-        let exit_status = child.wait().await?;
+        let mut child_stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| std::io::Error::other("engine stdin was not piped"))?;
+        let child_stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| std::io::Error::other("engine stdout was not piped"))?;
+        let child_stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| std::io::Error::other("engine stderr was not piped"))?;
+
+        let stdout_task = tokio::spawn(read_bounded(child_stdout, STDOUT_LIMIT_BYTES, "stdout"));
+        let stderr_task = tokio::spawn(read_bounded(child_stderr, STDERR_LIMIT_BYTES, "stderr"));
+
+        let operation = async {
+            debug!(payload_len = payload.len(), "writing Tethers request");
+            child_stdin
+                .write_all(payload.as_bytes())
+                .await
+                .map_err(TethersEngineError::StdinWriteFailed)?;
+            child_stdin
+                .shutdown()
+                .await
+                .map_err(TethersEngineError::StdinWriteFailed)?;
+            drop(child_stdin);
+
+            child.wait().await.map_err(TethersEngineError::Io)
+        };
+
+        let exit_status = match tokio::time::timeout(timeout_dur, operation).await {
+            Ok(result) => result?,
+            Err(_elapsed) => {
+                // child.kill().await in Tokio 1.53 sends the kill request and
+                // then waits, giving this client a definite reap point.
+                if let Err(error) = child.kill().await {
+                    warn!(%error, "failed to kill timed-out Tethers engine");
+                }
+
+                let _ = await_reader(stdout_task).await;
+                let _ = await_reader(stderr_task).await;
+                return Err(TethersEngineError::Timeout(timeout_dur));
+            }
+        };
+
+        let stdout = await_reader(stdout_task).await?;
+        let stderr = await_reader(stderr_task).await?;
 
         if !exit_status.success() {
             let code = exit_status.code().unwrap_or(-1);
             debug!(
                 code,
-                stderr_len = stderr.len(),
+                stderr_len = stderr.text.len(),
+                stderr_truncated = stderr.truncated,
                 "engine exited unsuccessfully"
             );
-            return Err(TethersEngineError::NonZeroExit(code));
+            return Err(TethersEngineError::NonZeroExit {
+                code,
+                stderr: stderr.text,
+                stderr_truncated: stderr.truncated,
+            });
+        }
+
+        if stdout.truncated {
+            return Err(TethersEngineError::StdoutTooLarge(STDOUT_LIMIT_BYTES));
         }
 
         // Extract exactly one nonblank response line.
-        let trimmed: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+        let trimmed: Vec<&str> = stdout
+            .text
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .collect();
 
         if trimmed.is_empty() {
             debug!(
-                stderr_len = stderr.len(),
-                stderr_preview = %stderr.chars().take(200).collect::<String>(),
+                stderr_len = stderr.text.len(),
+                stderr_preview = %stderr.text.chars().take(200).collect::<String>(),
                 "engine produced empty output"
             );
             return Err(TethersEngineError::EmptyOutput);
@@ -180,60 +251,69 @@ impl TethersEngineClient {
 
 // ── I/O helpers ───────────────────────────────────────────────────
 
-async fn read_to_string(mut reader: tokio::process::ChildStdout) -> std::io::Result<String> {
-    let mut buf = String::new();
-    reader.read_to_string(&mut buf).await?;
-    Ok(buf)
+#[derive(Debug)]
+struct CapturedOutput {
+    text: String,
+    truncated: bool,
 }
 
-async fn read_stderr_bounded(reader: tokio::process::ChildStderr) -> std::io::Result<String> {
-    let mut buf = Vec::new();
-    reader
-        .take(STDERR_LIMIT_BYTES as u64)
-        .read_to_end(&mut buf)
-        .await?;
-    Ok(String::from_utf8_lossy(&buf).into_owned())
-}
+async fn read_bounded<R: AsyncRead + Unpin>(
+    mut reader: R,
+    limit: usize,
+    stream_name: &'static str,
+) -> std::io::Result<CapturedOutput> {
+    let mut retained = Vec::new();
+    let mut scratch = [0_u8; 8192];
+    let mut truncated = false;
 
-// ── Timeout wrapper ───────────────────────────────────────────────
+    loop {
+        let read = reader.read(&mut scratch).await?;
+        if read == 0 {
+            break;
+        }
 
-impl TethersEngineClient {
-    /// Evaluate with a timeout, killing the child process if it exceeds
-    /// the deadline.
-    ///
-    /// The timeout is applied to the entire evaluate cycle (spawn, I/O,
-    /// wait).  On timeout the child is sent SIGKILL/TerminateProcess
-    /// and reaped before the error is returned.
-    pub async fn evaluate_timeout(
-        &self,
-        request: &TethersRequest,
-    ) -> Result<TethersResponse, TethersEngineError> {
-        let timeout_dur = self.timeout;
-
-        let engine_path = self.engine_path.clone();
-        let req_owned = request.clone();
-
-        // Spawn on a blocking-friendly task to keep timeout clean.
-        let result = tokio::time::timeout(timeout_dur, async move {
-            let client = TethersEngineClient {
-                engine_path,
-                timeout: timeout_dur,
-            };
-            client.evaluate(&req_owned).await
-        })
-        .await;
-
-        match result {
-            Ok(inner) => inner,
-            Err(_elapsed) => Err(TethersEngineError::Timeout(timeout_dur)),
+        let remaining = limit.saturating_sub(retained.len());
+        if remaining > 0 {
+            let keep = remaining.min(read);
+            retained.extend_from_slice(&scratch[..keep]);
+        }
+        if read > remaining {
+            truncated = true;
         }
     }
+
+    debug!(
+        stream = stream_name,
+        retained_len = retained.len(),
+        truncated,
+        "drained engine stream"
+    );
+
+    Ok(CapturedOutput {
+        text: String::from_utf8_lossy(&retained).into_owned(),
+        truncated,
+    })
+}
+
+async fn await_reader(
+    task: tokio::task::JoinHandle<std::io::Result<CapturedOutput>>,
+) -> Result<CapturedOutput, TethersEngineError> {
+    task.await
+        .map_err(join_error_to_io)?
+        .map_err(TethersEngineError::Io)
+}
+
+fn join_error_to_io(error: JoinError) -> TethersEngineError {
+    TethersEngineError::Io(std::io::Error::other(error))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tethers_preview::{build_preview_request, PreviewInput, TethersStatus};
+    use std::fs;
+    use std::process::Command as StdCommand;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     // ── Pure request/response tests ────────────────────────────
 
@@ -323,42 +403,209 @@ mod tests {
     }
 
     #[test]
-    fn stderr_error_message_is_bounded() {
-        // The stderr reader is capped at STDERR_LIMIT_BYTES (8 KiB).
-        // This test verifies the constant is reasonable and the
-        // string-from-lossy conversion doesn't panic.
-        let long = "x".repeat(STDERR_LIMIT_BYTES + 1024);
-        let bounded = &long[..STDERR_LIMIT_BYTES.min(long.len())];
-        // read_stderr_bounded uses .take(n).read_to_end, which
-        // produces at most n bytes. Verify the bound arithmetic.
-        assert_eq!(bounded.len(), STDERR_LIMIT_BYTES);
-        // UTF-8 lossy conversion of arbitrary bytes won't panic.
-        let _ = String::from_utf8_lossy(bounded.as_bytes());
+    fn stdout_and_stderr_limits_are_named_and_ordered() {
+        assert_eq!(STDERR_LIMIT_BYTES, 8192);
+        assert!(
+            STDOUT_LIMIT_BYTES > STDERR_LIMIT_BYTES,
+            "stdout accepts full protocol responses; stderr only keeps diagnostics"
+        );
+    }
+
+    // ── Controlled child-process tests ─────────────────────────
+
+    fn sample_request() -> TethersRequest {
+        build_preview_request(&PreviewInput {
+            evaluation_id: "eval-child-001".into(),
+            event_id: "evt-child-001".into(),
+            project_id: "lantern-keeper".into(),
+            task: "LK-39".into(),
+            changed_files: 3,
+        })
+    }
+
+    fn powershell_client(script: String, timeout: Duration) -> TethersEngineClient {
+        TethersEngineClient::new_with_args(
+            PathBuf::from("powershell.exe"),
+            vec![
+                "-NoProfile".into(),
+                "-ExecutionPolicy".into(),
+                "Bypass".into(),
+                "-Command".into(),
+                script,
+            ],
+            timeout,
+        )
+    }
+
+    fn minimal_error_json() -> &'static str {
+        r#"{"protocol_version":"0.1","status":"error","error":{"code":"parse_error","message":"bad"}}"#
+    }
+
+    fn ps_single_quoted(value: &str) -> String {
+        format!("'{}'", value.replace('\'', "''"))
+    }
+
+    fn unique_temp_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("lighting-{name}-{nanos}.txt"))
+    }
+
+    async fn read_pid_file(path: &PathBuf) -> u32 {
+        for _ in 0..20 {
+            if let Ok(text) = fs::read_to_string(path) {
+                if let Ok(pid) = text.trim().parse::<u32>() {
+                    return pid;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("timed-out child did not write its pid file");
+    }
+
+    fn process_is_running(pid: u32) -> bool {
+        let script =
+            format!("if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}");
+        StdCommand::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ])
+            .status()
+            .expect("powershell should run")
+            .success()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn timeout_kills_and_reaps_child_process() {
+        let pid_file = unique_temp_path("tethers-timeout-pid");
+        let script = format!(
+            "Set-Content -LiteralPath {} -Value $PID; Start-Sleep -Seconds 60",
+            ps_single_quoted(&pid_file.to_string_lossy())
+        );
+        let client = powershell_client(script, Duration::from_millis(300));
+
+        let result = client.evaluate(&sample_request()).await;
+
+        assert!(
+            matches!(result, Err(TethersEngineError::Timeout(_))),
+            "expected timeout, got: {result:?}"
+        );
+
+        let pid = read_pid_file(&pid_file).await;
+        let _ = fs::remove_file(&pid_file);
+
+        assert!(
+            !process_is_running(pid),
+            "timed-out child process {pid} should have been killed and reaped"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn large_stderr_is_drained_without_unbounded_diagnostics() {
+        let stderr_bytes = STDERR_LIMIT_BYTES + 32_768;
+        let script = format!(
+            "[Console]::Error.Write(('x' * {stderr_bytes})); [Console]::Out.WriteLine({}); exit 37",
+            ps_single_quoted(minimal_error_json())
+        );
+        let client = powershell_client(script, Duration::from_secs(5));
+
+        let result = client.evaluate(&sample_request()).await;
+
+        match result {
+            Err(TethersEngineError::NonZeroExit {
+                code,
+                stderr,
+                stderr_truncated,
+            }) => {
+                assert_eq!(code, 37);
+                assert!(stderr_truncated, "stderr truncation should be identifiable");
+                assert_eq!(stderr.len(), STDERR_LIMIT_BYTES);
+            }
+            other => panic!("expected nonzero exit with bounded stderr, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn oversized_stdout_is_drained_and_rejected() {
+        let stdout_bytes = STDOUT_LIMIT_BYTES + 1024;
+        let script = format!("[Console]::Out.Write(('x' * {stdout_bytes})); exit 0");
+        let client = powershell_client(script, Duration::from_secs(5));
+
+        let result = client.evaluate(&sample_request()).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(TethersEngineError::StdoutTooLarge(STDOUT_LIMIT_BYTES))
+            ),
+            "expected stdout limit error, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn empty_output_is_distinguishable() {
+        let client = powershell_client("exit 0".into(), Duration::from_secs(5));
+
+        let result = client.evaluate(&sample_request()).await;
+
+        assert!(
+            matches!(result, Err(TethersEngineError::EmptyOutput)),
+            "expected empty output, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn invalid_json_is_distinguishable() {
+        let script = "[Console]::Out.WriteLine('not-json'); exit 0".to_owned();
+        let client = powershell_client(script, Duration::from_secs(5));
+
+        let result = client.evaluate(&sample_request()).await;
+
+        assert!(
+            matches!(result, Err(TethersEngineError::ResponseParseFailed(_))),
+            "expected invalid JSON error, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multiple_response_lines_are_distinguishable() {
+        let script = format!(
+            "[Console]::Out.WriteLine({0}); [Console]::Out.WriteLine({0}); exit 0",
+            ps_single_quoted(minimal_error_json())
+        );
+        let client = powershell_client(script, Duration::from_secs(5));
+
+        let result = client.evaluate(&sample_request()).await;
+
+        assert!(
+            matches!(result, Err(TethersEngineError::MultipleResponseLines)),
+            "expected multiple response lines, got: {result:?}"
+        );
     }
 
     // ── Live engine test (environment-driven) ──────────────────
 
     /// Sends `build_preview_request` through a real Tethers engine
-    /// if `TETHERS_ENGINE_PATH` is configured.
+    /// using the engine at `TETHERS_ENGINE_PATH`.
     ///
-    /// Skipped silently when the environment variable is absent or
-    /// the binary does not exist.
+    /// Ignored by default because it requires the external OCaml engine to
+    /// have been built deliberately.
     #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "requires TETHERS_ENGINE_PATH pointing at a built Tethers engine"]
     async fn live_preview_request_matches() {
-        let engine_path = match std::env::var("TETHERS_ENGINE_PATH") {
-            Ok(v) if !v.trim().is_empty() => PathBuf::from(v.trim()),
-            _ => {
-                eprintln!("SKIP: TETHERS_ENGINE_PATH not set");
-                return;
-            }
-        };
-
-        if !engine_path.exists() {
-            eprintln!("SKIP: engine binary not found at {}", engine_path.display());
-            return;
-        }
-
-        let client = TethersEngineClient::new(engine_path);
+        let client =
+            TethersEngineClient::from_env().expect("TETHERS_ENGINE_PATH must be set for live test");
+        assert!(
+            client.engine_path.exists(),
+            "engine binary must exist at {}",
+            client.engine_path.display()
+        );
 
         let input = PreviewInput {
             evaluation_id: "live-test-eval-001".into(),
@@ -370,7 +617,7 @@ mod tests {
         let request = build_preview_request(&input);
 
         let response = client
-            .evaluate_timeout(&request)
+            .evaluate(&request)
             .await
             .expect("live evaluate should succeed");
 
