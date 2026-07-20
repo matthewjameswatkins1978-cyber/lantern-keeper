@@ -17,12 +17,16 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(source_routes::create_source),
         )
         .route(
-            "/api/v1/sources/{source_id}",
-            axum::routing::get(source_routes::get_source),
+            "/api/v1/sources/outline",
+            axum::routing::get(source_routes::get_source_outline),
         )
         .route(
             "/api/v1/sources/history",
             axum::routing::get(source_routes::get_source_history),
+        )
+        .route(
+            "/api/v1/sources/{source_id}",
+            axum::routing::get(source_routes::get_source),
         )
         .layer(RequestBodyLimitLayer::new(SOURCE_CREATE_BODY_LIMIT));
 

@@ -156,6 +156,8 @@ pub struct ProjectShowEpisodeEntry {
     /// Present only when the Source has a newer revision.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_source_id: Option<String>,
+    #[serde(skip)]
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Full Project inspection view.

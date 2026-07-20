@@ -191,3 +191,197 @@ async fn source_survives_fresh_connection() {
     assert_eq!(gr.status(), StatusCode::OK);
     assert_eq!(bv(gr.into_body()).await["content"], content);
 }
+
+// ── LK-057 Source outline live tests ──────────────────────────────────────
+
+#[tokio::test]
+async fn outline_returns_200_with_current_headings() {
+    if skip() {
+        return;
+    }
+    let repo = cr().await;
+    let repo = Arc::new(repo);
+    let app = ca(repo.clone());
+    let content = "# Top\n\nintro\n\n## Child\n\nchild text\n\n# Sibling\n";
+    let crr = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/api/v1/sources")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"title": "/d/outline-live.md", "kind": "markdown", "content": content})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(crr.status(), StatusCode::CREATED);
+    let sid = bv(crr.into_body()).await["source_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let hr = app
+        .oneshot(
+            Request::builder()
+                .method(http::Method::GET)
+                .uri("/api/v1/sources/outline?kind=markdown&title=/d/outline-live.md")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(hr.status(), StatusCode::OK);
+    let body = bv(hr.into_body()).await;
+    assert_eq!(body["source_id"], sid);
+    assert_eq!(body["kind"], "markdown");
+    assert!(body["created_at"].is_string());
+
+    let headings = body["headings"].as_array().unwrap();
+    assert_eq!(headings.len(), 3);
+    assert_eq!(headings[0]["level"], 1);
+    assert_eq!(headings[0]["title"], "Top");
+    assert_eq!(headings[1]["level"], 2);
+    assert_eq!(headings[1]["title"], "Child");
+    assert_eq!(headings[2]["level"], 1);
+    assert_eq!(headings[2]["title"], "Sibling");
+}
+
+#[tokio::test]
+async fn outline_after_revision_returns_latest_revision_id() {
+    if skip() {
+        return;
+    }
+    let repo = cr().await;
+    let repo = Arc::new(repo);
+    let app = ca(repo.clone());
+
+    // First capture
+    let r1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/api/v1/sources")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"title": "/d/evolving-outline.md", "kind": "markdown", "content": "# V1\n\nold"})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r1.status(), StatusCode::CREATED);
+    let v1_id = bv(r1.into_body()).await["source_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // Second capture — revised content
+    let r2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/api/v1/sources")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"title": "/d/evolving-outline.md", "kind": "markdown", "content": "# V2\n\nnew"})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r2.status(), StatusCode::CREATED);
+    let v2_id = bv(r2.into_body()).await["source_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(v2_id, v1_id);
+
+    // Outline must return the latest (v2) ID, not the historical v1
+    let hr = app
+        .oneshot(
+            Request::builder()
+                .method(http::Method::GET)
+                .uri("/api/v1/sources/outline?kind=markdown&title=/d/evolving-outline.md")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(hr.status(), StatusCode::OK);
+    let body = bv(hr.into_body()).await;
+    assert_eq!(
+        body["source_id"], v2_id,
+        "outline must report current revision ID"
+    );
+}
+
+#[tokio::test]
+async fn outline_unknown_source_returns_404() {
+    if skip() {
+        return;
+    }
+    let repo = cr().await;
+    let app = ca(Arc::new(repo));
+    let hr = app
+        .oneshot(
+            Request::builder()
+                .method(http::Method::GET)
+                .uri("/api/v1/sources/outline?kind=markdown&title=/never-captured.md")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(hr.status(), StatusCode::NOT_FOUND);
+    let body = bv(hr.into_body()).await;
+    assert_eq!(body["code"], "source_not_found");
+}
+
+#[tokio::test]
+async fn outline_non_markdown_source_returns_422() {
+    if skip() {
+        return;
+    }
+    let repo = cr().await;
+    let repo = Arc::new(repo);
+    let app = ca(repo.clone());
+
+    let r = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/api/v1/sources")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"title": "/d/plain-outline.txt", "kind": "plain_text", "content": "Just text"})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::CREATED);
+
+    let hr = app
+        .oneshot(
+            Request::builder()
+                .method(http::Method::GET)
+                .uri("/api/v1/sources/outline?kind=plain_text&title=/d/plain-outline.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(hr.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = bv(hr.into_body()).await;
+    assert_eq!(body["code"], "source_not_markdown");
+}

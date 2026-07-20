@@ -372,8 +372,16 @@ impl ProjectService {
                 source_title: source.title().as_str().to_owned(),
                 source_kind: kind_str.to_owned(),
                 latest_source_id,
+                created_at: episode.created_at(),
             });
         }
+
+        // Deterministic ordering: created_at ASC, then episode_id ASC.
+        episodes.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.episode_id.cmp(&b.episode_id))
+        });
 
         Ok(ProjectShowResponse {
             project_id: project.id().as_str().to_owned(),

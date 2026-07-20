@@ -12,6 +12,7 @@ use thiserror::Error;
 
 pub mod memory_path;
 pub mod source;
+pub mod source_outline;
 
 pub use memory_path::{
     Episode, EpisodeError, EpisodeMarkerLink, EpisodeProjectLink, EpisodeTitle, Marker,
@@ -22,6 +23,7 @@ pub use source::{
     find_all_matches, NewSource, Source, SourceContent, SourceError, SourceFingerprint, SourceId,
     SourceKind, SourceRepository, SourceRepositoryError, SourceTitle, StoreSourceResult,
 };
+pub use source_outline::{parse_outline, Heading, MarkdownOutline};
 
 /// Lighting service version.
 pub const LIGHTING_VERSION: &str = env!("CARGO_PKG_VERSION");

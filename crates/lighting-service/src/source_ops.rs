@@ -14,6 +14,7 @@ use lighting_core::{
 use crate::source_dto::{
     ApiError, CreateSourceResponse, SourceHistoryItem, SourceHistoryResponse, SourceResponse,
 };
+use crate::source_outline_dto::SourceOutlineResponse;
 
 /// Application-level error when Source operations fail.
 #[derive(Debug, thiserror::Error)]
@@ -22,12 +23,18 @@ pub enum SourceOperationError {
     Unavailable,
     #[error("repository operation failed")]
     Repository(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("source is not Markdown")]
+    NotMarkdown,
 }
 
 impl From<SourceOperationError> for ApiError {
     fn from(error: SourceOperationError) -> Self {
         match error {
             SourceOperationError::Unavailable => ApiError::storage_unavailable(),
+            SourceOperationError::NotMarkdown => ApiError {
+                code: "source_not_markdown".to_owned(),
+                message: "source is not Markdown".to_owned(),
+            },
             SourceOperationError::Repository(_) => ApiError::internal_error(),
         }
     }
@@ -164,6 +171,37 @@ impl SourceService {
             .map_err(|e| SourceOperationError::Repository(e.into()))?;
 
         Ok(source.as_ref().map(SourceResponse::from_domain))
+    }
+
+    pub async fn get_outline(
+        &self,
+        kind: SourceKind,
+        title: &str,
+    ) -> Result<Option<SourceOutlineResponse>, SourceOperationError> {
+        let title_obj = SourceTitle::new(title).map_err(|_| {
+            SourceOperationError::Repository(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid title for outline lookup",
+            )))
+        })?;
+
+        let source = self
+            .repo
+            .get_current(kind, &title_obj)
+            .await
+            .map_err(|e| SourceOperationError::Repository(e.into()))?;
+
+        let source = match source {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        if source.kind() != SourceKind::Markdown {
+            return Err(SourceOperationError::NotMarkdown);
+        }
+
+        let outline = lighting_core::parse_outline(source.content().as_str());
+        Ok(Some(SourceOutlineResponse::from_source(&source, &outline)))
     }
 }
 
