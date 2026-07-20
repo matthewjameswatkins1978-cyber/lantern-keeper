@@ -66,6 +66,19 @@ The `lighting source-add`, `lighting source-history`, `lighting project-add-file
 
 Real-use / hackathon presentation evidence. Run the documented workflow end-to-end, capture the output, and produce concrete demonstration material that proves Lantern Keeper's working memory loop for the hackathon vertical slice.
 
+## Tethers Preview Integration (Preview-Only)
+
+- `lighting_service::tethers_preview` — typed request/response DTOs matching
+  the frozen Tethers 0.1 JSON protocol.
+- `lighting_service::tethers_engine_client` — async client that spawns the
+  OCaml Tethers engine, sends a newline-delimited JSON request, and returns a
+  typed `TethersResponse`.
+- The connection is **preview-only**: it evaluates a `lantern.project_result_preview_requested`
+  event and returns a plan, but does **not** execute Actions, access storage, or
+  write to Lantern Keeper.
+- Engine binary is configured via `TETHERS_ENGINE_PATH`; evaluation times out
+  after 10 seconds by default with child-process termination and reaping.
+
 ## Next Verified Step
 
 Make a checkpoint commit/PR that excludes local runtime state and unrelated
