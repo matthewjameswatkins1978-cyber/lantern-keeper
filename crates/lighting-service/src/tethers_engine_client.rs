@@ -88,6 +88,9 @@ pub struct TethersEngineClient {
     /// Only populated via `#[cfg(test)] TethersEngineClient::fixed(…)`.
     #[cfg(test)]
     fixed_response: Option<TethersResponse>,
+    /// Only populated via `#[cfg(test)] TethersEngineClient::fixed_error(…)`.
+    #[cfg(test)]
+    fixed_evaluate_error: Option<String>,
 }
 
 impl TethersEngineClient {
@@ -99,6 +102,8 @@ impl TethersEngineClient {
             timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
             #[cfg(test)]
             fixed_response: None,
+            #[cfg(test)]
+            fixed_evaluate_error: None,
         }
     }
 
@@ -112,6 +117,20 @@ impl TethersEngineClient {
             engine_args: Vec::new(),
             timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
             fixed_response: Some(response),
+            fixed_evaluate_error: None,
+        }
+    }
+
+    /// Construct a client whose `evaluate()` always returns the given error.
+    /// Only available in tests.
+    #[cfg(test)]
+    pub(crate) fn fixed_error(err: TethersEngineError) -> Self {
+        Self {
+            engine_path: PathBuf::new(),
+            engine_args: Vec::new(),
+            timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+            fixed_response: None,
+            fixed_evaluate_error: Some(err.to_string()),
         }
     }
 
@@ -122,6 +141,7 @@ impl TethersEngineClient {
             engine_args,
             timeout,
             fixed_response: None,
+            fixed_evaluate_error: None,
         }
     }
 
@@ -152,6 +172,12 @@ impl TethersEngineClient {
         &self,
         request: &TethersRequest,
     ) -> Result<TethersResponse, TethersEngineError> {
+        #[cfg(test)]
+        if let Some(ref message) = self.fixed_evaluate_error {
+            return Err(TethersEngineError::Io(std::io::Error::other(
+                message.clone(),
+            )));
+        }
         #[cfg(test)]
         if let Some(ref response) = self.fixed_response {
             return Ok(response.clone());

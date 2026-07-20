@@ -85,6 +85,14 @@ pub async fn preview(
     // 3. Obtain engine client from state (test seam) or from_env.
     let client = if let Some(ref client) = state.tethers_client {
         client.clone()
+    } else if let Some((status_code, ref code, ref message)) = state.tethers_env_error {
+        return error_response(
+            StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            ApiError {
+                code: code.clone(),
+                message: message.clone(),
+            },
+        );
     } else {
         match TethersEngineClient::from_env() {
             Ok(c) => c,

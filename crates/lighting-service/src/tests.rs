@@ -118,6 +118,7 @@ mod router_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
+            tethers_env_error: None,
         };
         build_router(state)
     }
@@ -544,6 +545,7 @@ mod router_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
+            tethers_env_error: None,
         };
         build_router(state)
     }
@@ -794,6 +796,7 @@ mod router_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
+            tethers_env_error: None,
         };
         build_router(state)
     }
@@ -1747,6 +1750,7 @@ mod project_add_file_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
+            tethers_env_error: None,
         };
         build_router(state)
     }
@@ -2059,6 +2063,7 @@ mod project_add_file_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: Some(tethers_client),
+            tethers_env_error: None,
         };
         build_router(state)
     }
@@ -2368,5 +2373,271 @@ mod project_add_file_tests {
         assert_eq!(trail[0]["sequence"], 1);
         assert_eq!(trail[1]["sequence"], 2);
         assert!(trail[0]["sequence"].as_u64().unwrap() < trail[1]["sequence"].as_u64().unwrap());
+    }
+
+    #[tokio::test]
+    async fn preview_route_is_registered_for_post() {
+        let stub = Arc::new(FullStub::new());
+        let project_id = create_test_project(&stub, "RouteRegProject").await;
+
+        let matched = crate::tethers_preview::TethersResponse {
+            protocol_version: "0.1".into(),
+            evaluation_id: Some("eval-rr-1".into()),
+            event_id: Some("evt-rr-1".into()),
+            tether_id: Some("t-rr-1".into()),
+            tether_version: Some("v-rr-1".into()),
+            status: crate::tethers_preview::TethersStatus::Matched,
+            plan: None,
+            trail: None,
+            error: None,
+        };
+
+        let client = crate::tethers_engine_client::TethersEngineClient::fixed(matched);
+        let app = tethers_full_app(stub, client);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri(format!("/api/v1/projects/{project_id}/tethers/preview"))
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "task": "LK-50",
+                            "changed_files": 1,
+                            "evaluation_id": "eval-rr-1",
+                            "event_id": "evt-rr-1"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = body_as_json(response.into_body()).await;
+        assert_eq!(body["status"], "matched");
+    }
+
+    #[tokio::test]
+    async fn preview_route_rejects_wrong_method() {
+        let stub = Arc::new(FullStub::new());
+        let project_id = create_test_project(&stub, "WrongMethodProject").await;
+        let app = full_app(stub);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::GET)
+                    .uri(format!("/api/v1/projects/{project_id}/tethers/preview"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn missing_engine_configuration_is_503() {
+        let stub = Arc::new(FullStub::new());
+        let project_id = create_test_project(&stub, "MissingEngineProject").await;
+
+        let source_repo: Arc<dyn SourceRepository> = stub.clone();
+        let memory_repo: Arc<dyn MemoryPathRepository> = stub;
+        let source_service = SourceService::new(source_repo.clone());
+        let project_service = ProjectService::new(memory_repo, source_repo);
+        let state = AppState {
+            ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            source_service: Some(source_service),
+            project_service: Some(project_service),
+            marker_service: None,
+            episode_service: None,
+            association_service: None,
+            retrieval_service: None,
+            project_retrieval_service: None,
+            tethers_client: None,
+            tethers_env_error: Some((
+                503,
+                "tethers_unavailable".into(),
+                "Tethers engine is not configured".into(),
+            )),
+        };
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri(format!("/api/v1/projects/{project_id}/tethers/preview"))
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "task": "LK-51",
+                            "changed_files": 1,
+                            "evaluation_id": "eval-me-2",
+                            "event_id": "evt-me-2"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: Value = body_as_json(response.into_body()).await;
+        assert_eq!(body["code"], "tethers_unavailable");
+    }
+
+    #[tokio::test]
+    async fn engine_failure_is_sanitised_502() {
+        let stub = Arc::new(FullStub::new());
+        let project_id = create_test_project(&stub, "EngineFailProject").await;
+
+        let engine_err = crate::tethers_engine_client::TethersEngineError::NonZeroExit {
+            code: 37,
+            stderr: "raw stderr output with /absolute/path/to/engine\nand OS error details".into(),
+            stderr_truncated: false,
+        };
+        let client = crate::tethers_engine_client::TethersEngineClient::fixed_error(engine_err);
+        let app = tethers_full_app(stub, client);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri(format!("/api/v1/projects/{project_id}/tethers/preview"))
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "task": "LK-52",
+                            "changed_files": 1,
+                            "evaluation_id": "eval-ef-1",
+                            "event_id": "evt-ef-1"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let body: Value = body_as_json(response.into_body()).await;
+        assert_eq!(body["code"], "tethers_engine_error");
+
+        let message = body["message"].as_str().unwrap();
+        // Must not contain absolute engine path
+        assert!(
+            !message.contains("/absolute/path/to/engine"),
+            "response must not leak engine path, got: {message}"
+        );
+        // Must not contain raw stderr
+        assert!(
+            !message.contains("raw stderr"),
+            "response must not leak raw stderr, got: {message}"
+        );
+        // Must not contain OS error details
+        assert!(
+            !message.contains("OS error"),
+            "response must not leak OS error details, got: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_project_preserves_404() {
+        let stub = Arc::new(FullStub::new());
+        // Do not create a Project — a valid UUID will still 404.
+
+        let matched = crate::tethers_preview::TethersResponse {
+            protocol_version: "0.1".into(),
+            evaluation_id: Some("eval-up-1".into()),
+            event_id: Some("evt-up-1".into()),
+            tether_id: None,
+            tether_version: None,
+            status: crate::tethers_preview::TethersStatus::Matched,
+            plan: None,
+            trail: None,
+            error: None,
+        };
+        let client = crate::tethers_engine_client::TethersEngineClient::fixed(matched);
+
+        let source_repo: Arc<dyn SourceRepository> = stub.clone();
+        let memory_repo: Arc<dyn MemoryPathRepository> = stub;
+        let source_service = SourceService::new(source_repo.clone());
+        let project_service = ProjectService::new(memory_repo, source_repo);
+        let state = AppState {
+            ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            source_service: Some(source_service),
+            project_service: Some(project_service),
+            marker_service: None,
+            episode_service: None,
+            association_service: None,
+            retrieval_service: None,
+            project_retrieval_service: None,
+            tethers_client: Some(client),
+            tethers_env_error: None,
+        };
+        let app = build_router(state);
+
+        // A valid UUID that does not exist in the stub
+        let unknown_id = "a0a0a0a0-a0a0-a0a0-a0a0-a0a0a0a0a0a0";
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri(format!("/api/v1/projects/{unknown_id}/tethers/preview"))
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "task": "LK-53",
+                            "changed_files": 1,
+                            "evaluation_id": "eval-up-1",
+                            "event_id": "evt-up-1"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body: Value = body_as_json(response.into_body()).await;
+        assert_eq!(body["code"], "project_not_found");
+    }
+
+    #[tokio::test]
+    async fn invalid_project_id_preserves_400() {
+        let stub = Arc::new(FullStub::new());
+        let app = full_app(stub);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri("/api/v1/projects/%20%20/tethers/preview")
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "task": "LK-54",
+                            "changed_files": 1,
+                            "evaluation_id": "eval-ip-1",
+                            "event_id": "evt-ip-1"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body: Value = body_as_json(response.into_body()).await;
+        assert_eq!(body["code"], "invalid_project_id");
     }
 }

@@ -20,6 +20,10 @@ pub struct AppState {
     pub retrieval_service: Option<MarkerRetrievalService>,
     pub project_retrieval_service: Option<ProjectRetrievalService>,
     pub tethers_client: Option<TethersEngineClient>,
+    /// Test-only seam: when `Some`, the handler skips `from_env()` and
+    /// returns the error response described by (status_code, error_code,
+    /// error_message).  In production this is always `None`.
+    pub tethers_env_error: Option<(u16, String, String)>,
 }
 
 impl AppState {
@@ -34,6 +38,7 @@ impl AppState {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
+            tethers_env_error: None,
         }
     }
 
