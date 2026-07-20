@@ -4,6 +4,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 use crate::{
     episode_association_routes, episode_routes, marker_retrieval_routes, marker_routes,
     project_retrieval_routes, project_routes, routes, source_routes, state::AppState,
+    tethers_routes,
 };
 
 /// Maximum accepted request body size for Source creation (1 MiB).
@@ -47,6 +48,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/v1/projects/{project_id}/add-file",
             axum::routing::post(project_routes::add_file),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/tethers/preview",
+            axum::routing::post(tethers_routes::preview),
         );
 
     let marker_routes = Router::new()

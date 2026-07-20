@@ -11,7 +11,7 @@ use serde_json::Value;
 /// Tethers 0.1 evaluation status.
 ///
 /// The engine returns exactly one of these three status values.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum TethersStatus {
     Matched,
@@ -68,7 +68,7 @@ pub struct CapabilitySchema {
 /// - `matched` — identifiers, plan, trail
 /// - `not_matched` — identifiers, no plan, trail
 /// - `error` — minimal envelope (protocol_version + status + error only)
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct TethersResponse {
     pub protocol_version: String,
@@ -95,7 +95,7 @@ pub struct TethersResponse {
 }
 
 /// A proposed Action Plan.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct Plan {
     pub id: String,
@@ -104,7 +104,7 @@ pub struct Plan {
 }
 
 /// One ordered Action within a Plan.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct PlannedAction {
     pub action_id: String,
@@ -116,7 +116,7 @@ pub struct PlannedAction {
 }
 
 /// One entry in the evaluation Trail.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TrailEntry {
     pub sequence: u64,
     pub phase: String,
@@ -126,7 +126,7 @@ pub struct TrailEntry {
 }
 
 /// Error payload.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TethersError {
     pub code: String,
     pub message: String,

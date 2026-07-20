@@ -25,6 +25,7 @@ pub mod source_routes;
 pub mod state;
 pub mod tethers_engine_client;
 pub mod tethers_preview;
+pub mod tethers_routes;
 
 #[cfg(test)]
 mod tests;

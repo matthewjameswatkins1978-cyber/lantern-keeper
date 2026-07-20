@@ -78,6 +78,13 @@ Real-use / hackathon presentation evidence. Run the documented workflow end-to-e
   write to Lantern Keeper.
 - Engine binary is configured via `TETHERS_ENGINE_PATH`; evaluation times out
   after 10 seconds by default with child-process termination and reaping.
+- **Preview endpoint:** `POST /api/v1/projects/{project_id}/tethers/preview`
+  accepts `{task, changed_files, evaluation_id, event_id}`, validates the
+  Project via ProjectService, interacts with the Tethers engine, and returns
+  the complete typed response (matched, not_matched, or error) — without
+  executing any Actions.
+- `TETHERS_ENGINE_PATH` is optional until the endpoint is used; Lantern Keeper
+  starts normally without it.
 
 ## Next Verified Step
 
