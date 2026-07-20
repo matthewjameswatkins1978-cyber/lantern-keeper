@@ -152,7 +152,7 @@ fn fence_info(trimmed: &str) -> Option<(char, usize)> {
     if count >= 3 {
         let rest = &bytes[count..];
         if rest.iter().all(|b| b.is_ascii_whitespace())
-            || rest.first().map_or(true, |b| b.is_ascii_whitespace())
+            || rest.first().is_none_or(|b| b.is_ascii_whitespace())
         {
             return Some((ch as char, count));
         }
@@ -162,7 +162,7 @@ fn fence_info(trimmed: &str) -> Option<(char, usize)> {
 }
 
 fn compute_ranges(content: &str, headings: Vec<RawHeading>) -> Vec<Heading> {
-    let content_len = content.as_bytes().len();
+    let content_len = content.len();
     let mut result = Vec::with_capacity(headings.len());
     for (i, raw) in headings.iter().enumerate() {
         let end = find_section_end(&headings, i, content_len);
