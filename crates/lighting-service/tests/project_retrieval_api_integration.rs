@@ -54,6 +54,7 @@ async fn app(d: &str) -> Router {
             Arc::clone(&mr),
             Arc::clone(&sr),
         )),
+        tethers_client: None,
     })
 }
 async fn app_default() -> Router {

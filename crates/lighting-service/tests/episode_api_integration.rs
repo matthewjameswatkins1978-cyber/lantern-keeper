@@ -42,6 +42,7 @@ async fn app() -> Router {
         association_service: None,
         retrieval_service: None,
         project_retrieval_service: None,
+        tethers_client: None,
     };
     build_router(st)
 }
@@ -146,6 +147,7 @@ async fn episode_survives_fresh_connection_with_exact_excerpt() {
         association_service: None,
         retrieval_service: None,
         project_retrieval_service: None,
+        tethers_client: None,
     });
     let content = "Persistence test content line\nSecond line here\n";
     let sid = cs(&a1, content).await;
@@ -188,6 +190,7 @@ async fn episode_survives_fresh_connection_with_exact_excerpt() {
         association_service: None,
         retrieval_service: None,
         project_retrieval_service: None,
+        tethers_client: None,
     });
     let gr = a2
         .oneshot(

@@ -4,6 +4,7 @@ use anyhow::{bail, Context};
 use clap::{Parser, Subcommand};
 use lighting_cli::{default_service_url, run_cli_command, validate_service_url, CliCommand};
 use lighting_service::source_ops::SourceService;
+use lighting_service::tethers_engine_client::{TethersEngineClient, TethersEngineError};
 use lighting_service::{
     build_router, AppState, EpisodeAssociationService, EpisodeService, MarkerRetrievalService,
     MarkerService, ProjectRetrievalService, ProjectService,
@@ -284,6 +285,13 @@ async fn serve() -> anyhow::Result<()> {
         MarkerRetrievalService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
     let project_retrieval_service =
         ProjectRetrievalService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
+    let tethers_client = match TethersEngineClient::from_env() {
+        Ok(client) => Some(client),
+        Err(TethersEngineError::MissingEnginePath) => None,
+        Err(error) => {
+            return Err(error).context("failed to configure Tethers engine client");
+        }
+    };
     let app_state = AppState {
         ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         source_service: Some(source_service),
@@ -293,6 +301,7 @@ async fn serve() -> anyhow::Result<()> {
         association_service: Some(association_service),
         retrieval_service: Some(retrieval_service),
         project_retrieval_service: Some(project_retrieval_service),
+        tethers_client,
     };
     app_state.mark_ready();
 

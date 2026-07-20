@@ -118,7 +118,6 @@ mod router_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
-            tethers_env_error: None,
         };
         build_router(state)
     }
@@ -545,7 +544,6 @@ mod router_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
-            tethers_env_error: None,
         };
         build_router(state)
     }
@@ -796,7 +794,6 @@ mod router_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
-            tethers_env_error: None,
         };
         build_router(state)
     }
@@ -1750,7 +1747,6 @@ mod project_add_file_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
-            tethers_env_error: None,
         };
         build_router(state)
     }
@@ -2063,7 +2059,6 @@ mod project_add_file_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: Some(tethers_client),
-            tethers_env_error: None,
         };
         build_router(state)
     }
@@ -2459,11 +2454,6 @@ mod project_add_file_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
-            tethers_env_error: Some((
-                503,
-                "tethers_unavailable".into(),
-                "Tethers engine is not configured".into(),
-            )),
         };
         let app = build_router(state);
 
@@ -2579,7 +2569,6 @@ mod project_add_file_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: Some(client),
-            tethers_env_error: None,
         };
         let app = build_router(state);
 

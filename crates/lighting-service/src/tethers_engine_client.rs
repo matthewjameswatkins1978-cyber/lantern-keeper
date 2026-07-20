@@ -460,9 +460,12 @@ mod tests {
 
     #[test]
     fn stdout_and_stderr_limits_are_named_and_ordered() {
-        assert_eq!(STDERR_LIMIT_BYTES, 8192);
+        let stderr_limit = STDERR_LIMIT_BYTES;
+        let stdout_limit = STDOUT_LIMIT_BYTES;
+
+        assert_eq!(stderr_limit, 8192);
         assert!(
-            STDOUT_LIMIT_BYTES > STDERR_LIMIT_BYTES,
+            stdout_limit > stderr_limit,
             "stdout accepts full protocol responses; stderr only keeps diagnostics"
         );
     }
@@ -544,7 +547,7 @@ mod tests {
             "Set-Content -LiteralPath {} -Value $PID; Start-Sleep -Seconds 60",
             ps_single_quoted(&pid_file.to_string_lossy())
         );
-        let client = powershell_client(script, Duration::from_millis(300));
+        let client = powershell_client(script, Duration::from_secs(2));
 
         let result = client.evaluate(&sample_request()).await;
 

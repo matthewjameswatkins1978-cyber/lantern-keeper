@@ -43,6 +43,7 @@ async fn app_with_source() -> Router {
         association_service: None,
         retrieval_service: None,
         project_retrieval_service: None,
+        tethers_client: None,
     };
     build_router(st)
 }
@@ -67,6 +68,7 @@ async fn app() -> Router {
         association_service: None,
         retrieval_service: None,
         project_retrieval_service: None,
+        tethers_client: None,
     };
     build_router(st)
 }
@@ -175,6 +177,7 @@ async fn project_survives_fresh_connection() {
         association_service: None,
         retrieval_service: None,
         project_retrieval_service: None,
+        tethers_client: None,
     });
     let pr = a1
         .oneshot(
@@ -210,6 +213,7 @@ async fn project_survives_fresh_connection() {
         association_service: None,
         retrieval_service: None,
         project_retrieval_service: None,
+        tethers_client: None,
     });
     let gr = a2
         .oneshot(

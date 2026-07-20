@@ -51,6 +51,7 @@ async fn full_app() -> Router {
             Arc::clone(&sr),
         )),
         project_retrieval_service: None,
+        tethers_client: None,
     })
 }
 async fn body_json(body: Body) -> Value {

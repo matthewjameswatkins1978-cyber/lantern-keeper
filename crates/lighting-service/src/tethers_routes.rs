@@ -12,7 +12,6 @@ use lighting_core::ProjectId;
 
 use crate::source_dto::ApiError;
 use crate::state::AppState;
-use crate::tethers_engine_client::{TethersEngineClient, TethersEngineError};
 use crate::tethers_preview::{build_preview_request, PreviewInput, TethersResponse};
 
 // ── Request DTO ───────────────────────────────────────────────────
@@ -83,37 +82,16 @@ pub async fn preview(
     let request = build_preview_request(&input);
 
     // 3. Obtain engine client from state (test seam) or from_env.
-    let client = if let Some(ref client) = state.tethers_client {
-        client.clone()
-    } else if let Some((status_code, ref code, ref message)) = state.tethers_env_error {
-        return error_response(
-            StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-            ApiError {
-                code: code.clone(),
-                message: message.clone(),
-            },
-        );
-    } else {
-        match TethersEngineClient::from_env() {
-            Ok(c) => c,
-            Err(TethersEngineError::MissingEnginePath) => {
-                return error_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    ApiError {
-                        code: "tethers_unavailable".into(),
-                        message: "Tethers engine is not configured".into(),
-                    },
-                );
-            }
-            Err(e) => {
-                return error_response(
-                    StatusCode::BAD_GATEWAY,
-                    ApiError {
-                        code: "tethers_engine_error".into(),
-                        message: format!("{e}"),
-                    },
-                );
-            }
+    let client = match &state.tethers_client {
+        Some(client) => client.clone(),
+        None => {
+            return error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                ApiError {
+                    code: "tethers_unavailable".into(),
+                    message: "Tethers engine is not configured".into(),
+                },
+            );
         }
     };
 

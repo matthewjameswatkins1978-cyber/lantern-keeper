@@ -35,6 +35,7 @@ async fn app() -> Router {
         association_service: None,
         retrieval_service: None,
         project_retrieval_service: None,
+        tethers_client: None,
     };
     build_router(st)
 }
