@@ -2,6 +2,13 @@
 
 This page documents Lantern Keeper's working workflow for capturing a file, attaching it to a Project, revising and re-capturing it, inspecting revision history, and producing a Project handoff.
 
+Status: implemented proof workflow. The joint canonical architecture in
+[`architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md`](architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md)
+keeps this Source/Episode/Project proof as foundation work, but the forward
+durable memory model is Project, Source, Episode, Memory and Link. Existing
+Markers are a proof-era retrieval aid; they are not a separate required durable
+concept for the next memory-foundation milestone.
+
 ## Prerequisites
 
 SurrealDB 3.2.1+ running on `ws://127.0.0.1:8000`, plus Lighting serving on `http://127.0.0.1:4317`:

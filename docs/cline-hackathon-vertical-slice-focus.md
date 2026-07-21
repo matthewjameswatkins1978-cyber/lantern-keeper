@@ -1,5 +1,10 @@
 # Hackathon Focus: Vertical Slice
 
+Status: historical sprint focus. The source-backed memory loop has been
+completed; future joint Tethers/Lantern Keeper architecture and build order are
+governed by
+[`architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md`](architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md).
+
 For the next few days, our priority is not to build every feature. Our priority is to prove the idea.
 
 The architecture remains the long-term architecture. We are not creating throwaway code or demo hacks that compromise the foundations.

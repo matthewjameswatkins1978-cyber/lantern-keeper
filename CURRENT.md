@@ -2,11 +2,19 @@
 
 ## Phase
 
-Hackathon vertical slice: complete source-backed shared-memory loop.
+Joint Tethers/Lantern Keeper foundation: preserve the completed
+source-backed memory loop and prepare Lantern Keeper's minimum memory
+foundation for later Tethers runtime integration.
 
 ## Current Task
 
-Checkpoint 2: freeze the working proof and prepare a Git/GitHub checkpoint.
+Install the canonical joint architecture, keep the existing proof honest, and
+prepare the next Lantern Keeper task: a minimal Project/Source/Episode/Memory/
+Link foundation and first small capability surface for the later Tethers
+runtime slice.
+
+Canonical architecture:
+[`docs/architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md`](docs/architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md)
 
 ## Verified Workflow
 
@@ -64,7 +72,27 @@ The `lighting source-add`, `lighting source-history`, `lighting project-add-file
 
 ## Next Phase
 
-Real-use / hackathon presentation evidence. Run the documented workflow end-to-end, capture the output, and produce concrete demonstration material that proves Lantern Keeper's working memory loop for the hackathon vertical slice.
+Minimum memory foundation and first capability surface. Lantern Keeper should
+not implement Tethers runtime logic; it should expose a small set of public
+capabilities that the Tethers runtime can later plan and call.
+
+Immediate Lantern Keeper work:
+
+1. Inspect the existing SurrealDB schema and repository traits against the five
+   durable concepts: Project, Source, Episode, Memory, and Link.
+2. Define the smallest durable `Memory` representation and state model needed
+   for `active`, `superseded`, and `archived` memory outcomes, with provenance
+   back to Source/Episode evidence.
+3. Define the first public capability/API surface around
+   `lantern.context.retrieve`, `lantern.episode.record`,
+   `lantern.memory.propose`, `lantern.memory.get`, and
+   `lantern.memory.search`, without exposing raw database writes.
+4. Keep retrieval bounded and mechanical: project/state filters, exact IDs and
+   terms, full-text/recent/graph candidates, deterministic ranking, stable
+   tie-breaks, and a fixed context-pack shape before any optional AI reranking
+   or embeddings.
+5. Keep Minimalist, Living Memory, and Archivist as configuration profiles over
+   one pipeline, not separate implementations.
 
 ## Tethers Preview Integration (Preview-Only)
 
@@ -88,5 +116,6 @@ Real-use / hackathon presentation evidence. Run the documented workflow end-to-e
 
 ## Next Verified Step
 
-Make a checkpoint commit/PR that excludes local runtime state and unrelated
-evidence folders, then write the hackathon description around this working loop.
+Commit the documentation reconciliation, excluding unrelated local scratch
+files. Do not begin memory-foundation implementation in this documentation
+task.

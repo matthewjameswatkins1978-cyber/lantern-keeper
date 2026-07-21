@@ -3,6 +3,13 @@
 Lantern Keeper is a local-first shared memory project for future ChatGPT and
 Codex workflows.
 
+The joint architectural contract and build foundation for Lantern Keeper and
+Tethers is
+[`docs/architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md`](docs/architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md).
+It defines the accepted target architecture: Lantern Keeper remembers, Tethers
+coordinates, AI interprets through explicit capabilities, and Matthew remains
+the final authority.
+
 Lighting is the local service inside Lantern Keeper. This repository contains
 the smallest runnable proof for the first vertical slice:
 
@@ -19,6 +26,11 @@ Markdown Source
 This is the hackathon proof: Lantern Keeper preserves exact project knowledge,
 retrieves the right source-backed context for Codex, and records completed work
 back into the same durable Project memory.
+
+The proof is not the complete target memory system. Lantern Keeper remains the
+memory system, not the workflow engine; Tethers will coordinate Lantern Keeper
+through public Lantern Keeper capabilities rather than embedding Tethers runtime
+logic inside Lantern Keeper.
 
 ## Current Status
 
@@ -50,8 +62,12 @@ Implemented now:
 
 Not implemented yet:
 
-- Embeddings, AI processing, MCP, cloud services, GUI, task automation, or
-  importer work
+- Tethers runtime execution through Lantern Keeper capabilities
+- Memory proposal, judgement, merging, strengthening, superseding, and archival
+  state transitions
+- Bounded ranked retrieval with the final context-pack shape
+- Embeddings, AI processing, MCP provider work, cloud services, GUI, task
+  automation, or importer work
 - Automatic conversation ingestion
 - Automatic episode detection
 - Universal importers, ranking, recommendations, or broad graph expansion
@@ -465,4 +481,5 @@ available. Do not invent or reconstruct it.
 
 ## Roadmap
 
-See `docs/ROADMAP.md` for the ten-job MVP sequence.
+See `docs/ROADMAP.md` for the current Done / Next / Later queue. The older
+ten-job hackathon MVP sequence is preserved as completed historical context.

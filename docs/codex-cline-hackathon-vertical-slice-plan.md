@@ -1,5 +1,12 @@
 # Lantern Keeper - Hackathon Vertical-Slice Plan
 
+Status: historical sprint plan. The workflow it describes has been completed
+as the source-backed Project memory loop. Future architecture and build order
+are governed by
+[`architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md`](architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md)
+and the current Done / Next / Later queue in
+[`ROADMAP.md`](ROADMAP.md).
+
 ## Mission
 
 For the next few days, we are proving one complete, believable Lantern Keeper loop:
@@ -127,7 +134,7 @@ Do not bundle unrelated evidence folders or local state into commits.
 
 ### LK-018 - Codex Handoff CLI
 
-Current next task, if not already complete:
+Historical next task, now complete in the working source-backed memory loop:
 
 ```text
 lighting project-handoff <project-id>
@@ -217,7 +224,7 @@ Requirements:
 
 Time limit: 10 minutes for script work. If the work is larger, split it rather than extending the limit.
 
-### Checkpoint 2 - Hackathon proof
+### Checkpoint 2 - Hackathon proof (historical)
 
 After the full loop works:
 
