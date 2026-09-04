@@ -1,497 +1,178 @@
 # Lantern Keeper
 
-Lantern Keeper is a local-first shared memory project for ChatGPT, Codex and
-other AI workflows.
-
-## Recovered baseline — 12 September 2026
-
-The repository's clean working baseline is the former
-`agent/lighting-source-api` implementation, now being prepared on `master`.
-It proves a durable Source → Episode → Project retrieval loop with exact
-provenance and revision-safe history. The canonical Memory reconciliation
-engine, MCP boundary, Basic Memory bridge and Lucy-native takeover remain the
-next implementation stage.
-
-The first restart gate is deliberately boring: Rust 1.98.1 formatting,
-compilation, Clippy and tests must remain green before Memory work begins.
-
-The joint architectural contract and build foundation for Lantern Keeper and
-Tethers is
-[`docs/architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md`](docs/architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md).
-It defines the accepted target architecture: Lantern Keeper remembers, Tethers
-coordinates, AI interprets through explicit capabilities, and Matthew remains
-the final authority.
-
-Lighting is the local service inside Lantern Keeper. This repository contains
-the smallest runnable proof for the first vertical slice:
-
-```text
-Markdown Source
--> Episode
--> Marker + Project links
--> deterministic retrieval with exact Source excerpts
--> Codex handoff
--> recorded result writeback
--> updated Project handoff
-```
-
-This is the hackathon proof: Lantern Keeper preserves exact project knowledge,
-retrieves the right source-backed context for Codex, and records completed work
-back into the same durable Project memory.
-
-The proof is not the complete target memory system. Lantern Keeper remains the
-memory system, not the workflow engine; Tethers will coordinate Lantern Keeper
-through public Lantern Keeper capabilities rather than embedding Tethers runtime
-logic inside Lantern Keeper.
-
-## Current Status
-
-Implemented now:
-
-- Rust Cargo workspace with the intended inward dependency direction.
-- `lighting` binary with `version` and `serve` subcommands.
-- Localhost-only HTTP service with:
-  - `GET /health/live` — returns `{ "alive": true }`
-  - `GET /health/ready` — returns 200 only after SurrealDB connection and schema migration
-  - `GET /api/v1/version` — returns service name, project, and version
-  - `POST /api/v1/sources` — stores a Source; returns 201 (stored) or 200 (duplicate)
-  - `GET /api/v1/sources/{source_id}` — returns exact Source by ID
-  - `POST /api/v1/projects/{project_id}/record-result` — records a result file as Source-backed Project memory
-  - `POST /api/v1/retrieval/projects` — returns a deterministic Codex handoff context package
-- `lighting-core` with the `Source` domain, `SourceRepository` trait, and no
-  SurrealDB or HTTP dependency.
-- `lighting-store-surreal` with `SurrealSourceRepository`, schema migration V1,
-  and isolated integration tests against a real SurrealDB engine.
-- `lighting-service` with application-layer Source operations, HTTP routes,
-  request validation, request-size limiting, and honest readiness.
-- Automated tests for service routes that do not need SurrealDB (stub-based).
-- Live SurrealDB API integration tests with strict DB isolation.
-- CLI commands for Source add/show, marker retrieval, Project handoff, and
-  Project result writeback.
-- Full-loop local demo using public CLI/API paths only.
-- `scripts/validate.ps1` to run formatting, Clippy, tests, and `lighting version`.
-- Configuration example in `config/example.toml`.
+Lantern Keeper is a local-first, AI-first shared memory layer for Matthew and
+Lucy. The AI notices useful information, records derived understanding with
+provenance, retrieves bounded working context, and preserves corrections as
+history. Matthew can correct or protect memory, but ordinary organisation
+should not require manual filing.
 
-Not implemented yet:
+Lighting is the Rust service in this repository. The first useful loop is:
 
-- Tethers runtime execution through Lantern Keeper capabilities
-- Memory proposal, judgement, merging, strengthening, superseding, and archival
-  state transitions
-- Bounded ranked retrieval with the final context-pack shape
-- Embeddings, AI processing, MCP provider work, cloud services, GUI, task
-  automation, or importer work
-- Automatic conversation ingestion
-- Automatic episode detection
-- Universal importers, ranking, recommendations, or broad graph expansion
+    Matthew/Lucy observation
+    -> derived Living Memory with source references
+    -> lexical/project-scoped recall
+    -> compact working context
+    -> provenance and supersession remain inspectable
 
-## Prerequisites
+Source and ledger records are evidence: what was supplied or happened. Memory
+records are derived understanding: what Lantern currently considers useful.
+Derived understanding may change; source evidence is not silently rewritten.
+The joint Tethers architecture remains documented in
+docs/architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md. Tethers is
+out of scope for this foundation pass.
 
-- Rust 1.98.1 stable toolchain with Cargo, rustfmt, and Clippy.
-- Visual Studio Build Tools with the MSVC C++ toolchain (Windows).
-- SurrealDB 3.2.1 or later.
+## Current implemented scope
 
-The committed lockfile currently resolves the Rust SurrealDB client to 3.2.1.
-The native Windows helper scripts use a project-local SurrealDB data directory.
-SurrealDB 3.3 beta compatibility is a separate experiment and is not part of
-this baseline.
+- Rust 1.98.1, edition 2024, repository-pinned by rust-toolchain.toml.
+- SurrealDB 3.3.0-beta.3, exactly pinned in Cargo.toml.
+- Embedded, versioned SurrealKV is the normal local store:
+  .lighting-data/surrealkv, with sync=every.
+- Remote WebSocket SurrealDB remains an explicit test/development option via
+  LIGHTING_STORAGE=remote-surreal.
+- Existing Source, Project, Episode, Marker and relation storage.
+- Living Memory records with fact, decision, preference, instruction, lesson,
+  gotcha, open_loop, workflow, summary and entity kinds.
+- Provenance fields for derived_from, supersedes, contradicts and supports.
+- Semantic temporal fields: recorded_at, known_at, valid_from, valid_until and
+  superseded_at. SurrealKV MVCC history is additional physical history, not a
+  replacement for these fields.
+- CLI and HTTP operations to remember, recall, build context and supersede.
+- Inspectable retrieval traces in recall responses.
+- Engine-independent export to manifest.json and NDJSON files.
+- Embedded SurrealKV qualification and Living Memory integration tests.
+- A small LanternBench v1 fixture in bench/lanternbench-v1.json.
 
-## Build And Check
+Retrieval is deliberately a first slice, not a completed cognitive system. It
+currently uses phrase matching, project/status filters, importance, confidence
+and recency. BM25, vector search, entity/graph signals, persisted traces,
+activation, conflict analysis, gardening, automatic conversation capture and
+MCP are later work.
 
-```powershell
-cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
-```
+## Requirements
 
-## Test
+- Windows with the MSVC C++ build tools, or an equivalent Rust development
+  environment.
+- rustup with Rust 1.98.1, rustfmt and Clippy. The repository toolchain file
+  selects this automatically.
+- No SurrealDB process is required for the normal embedded path.
 
-Run all tests with a live SurrealDB 3.2.1 instance on `ws://127.0.0.1:8000`:
+## Build and test
 
-```powershell
-cargo test --workspace
-```
+    cargo check --workspace --all-targets --all-features --locked
+    cargo test --workspace --locked
+    cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
-Start SurrealDB locally before running the integration tests:
+The embedded storage lanes are:
 
-```powershell
-.\scripts\start-surreal.ps1
-```
+    cargo test -p lighting-store-surreal --test memory_repository --locked
+    cargo test -p lighting-store-surreal --test surrealkv_qualification --locked
 
-Run tests without a live database:
+The existing remote integration tests are opt-in. Start the pinned local
+SurrealDB test server with scripts/start-surreal.ps1, set
+LIGHTING_STORAGE=remote-surreal, and run the relevant integration test. To
+skip those tests explicitly:
 
-```powershell
-cmd /v /c "set LIGHTING_SKIP_INTEGRATION_TESTS=1&& cargo test --workspace"
-```
+    cmd /v /c "set LIGHTING_SKIP_INTEGRATION_TESTS=1&& cargo test --workspace --locked"
 
-The `cmd /v /c` form is required on Windows so the environment variable is
-set in the same process that runs Cargo.
+On this Windows repository, the historical source tree contains CRLF files
+that the current rustfmt reports as newline-style differences. Formatting
+new or modified Rust code is still required; do not convert the legacy tree
+wholesale merely to make that diagnostic disappear.
 
-Run only the source repository integration tests:
+## Local configuration and service
 
-```powershell
-cargo test --package lighting-store-surreal --test source_repository -- --test-threads=1
-```
+Copy .env.example to .env if you want local overrides:
 
-Run only the live API integration tests:
+    Copy-Item .env.example .env
 
-```powershell
-cargo test --package lighting-service --test source_api_integration -- --test-threads=1
-```
+The embedded defaults are sufficient:
 
-The integration tests create a fresh database in a `lighting_test` namespace
-for each test run and are executed single-threaded so they do not collide.
+    LIGHTING_STORAGE=embedded-surrealkv
+    LIGHTING_SURREAL_PATH=.lighting-data/surrealkv
 
-## Configuration
+Optional remote settings remain in .env.example for the development server.
+Credentials are only used for the remote backend. Do not commit .env.
 
-Copy `config/example.toml` to `config/local.toml` and edit values for your
-workstation. Do not commit files containing secrets.
+Start Lighting:
 
-Create a `.env` file from `.env.example`:
+    cargo run -p lighting -- serve
 
-```powershell
-Copy-Item .env.example .env
-```
+The service binds to 127.0.0.1:4317 by default. Readiness is reported only
+after the store and all schema migrations are ready:
 
-The `.env` file contains SurrealDB credentials and Lighting bind settings.
-Defaults in `.env.example` work out of the box with `scripts/start-surreal.ps1`.
+    Invoke-RestMethod http://127.0.0.1:4317/health/ready
 
-## Start SurrealDB
+## Memory operations
 
-```powershell
-.\scripts\start-surreal.ps1
-```
+Remember a derived memory. Repeat --derived-from, --supports,
+--supersedes or --contradicts for multiple references:
 
-SurrealDB starts on `ws://127.0.0.1:8000` with credentials root/root.
+    cargo run -p lighting -- remember "Matthew prefers evidence-linked context." --kind preference --importance 0.9 --derived-from source:conversation-001 --json
 
-Check SurrealDB status:
+Recall active memories:
 
-```powershell
-.\scripts\check-surreal.ps1
-```
+    cargo run -p lighting -- recall --phrase "evidence-linked" --json
 
-## Start Lighting
+Build a bounded working packet:
 
-Print the version:
+    cargo run -p lighting -- context --query "Continue with Lantern Keeper" --json
 
-```powershell
-cargo run -p lighting -- version
-```
+Retain a correction as history:
 
-Start the local service (requires a running SurrealDB):
+    cargo run -p lighting -- memory-supersede MEMORY_ID --json
 
-```powershell
-cargo run -p lighting -- serve
-```
+The equivalent HTTP endpoints are:
 
-Default service address:
+    POST /api/v1/memories
+    POST /api/v1/memories/recall
+    POST /api/v1/memories/context
+    POST /api/v1/memories/{memory_id}/supersede
 
-```text
-127.0.0.1:4317
-```
+JSON is the machine-facing contract. A no-match recall returns an explicit
+abstention message and an empty result set; candidates are not treated as
+proof merely because they exist.
 
-Override with:
+## Portable backup
 
-```powershell
-$env:LIGHTING_HOST = "127.0.0.1"
-$env:LIGHTING_PORT = "4317"
-```
+Export logical records without depending on the SurrealKV binary format:
 
-Lighting rejects non-localhost bind addresses.
+    cargo run -p lighting -- export backup
 
-## Check The Service
+Stop the Lighting service before running this command on Windows; the active
+embedded store holds a file lock. The service can be restarted afterwards.
 
-### Readiness
+The export contains:
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:4317/health/ready
-```
+    backup/manifest.json
+    backup/ledger.ndjson
+    backup/memories.ndjson
+    backup/relations.ndjson
+    backup/projects.ndjson
 
-Expected response when storage is connected:
+Each NDJSON record includes its logical table name and JSON-converted record.
+This is a portable escape hatch, not yet a restore command. The original
+.lighting-data directory is not removed by export or migration.
 
-```json
-{ "ready": true, "reason": "durable Source storage is ready" }
-```
+## Existing source/project loop
 
-When SurrealDB is not connected, the endpoint returns 503 with
-`"storage is not configured"`.
+The original exact-source loop remains available:
 
-### Liveness
+    cargo run -p lighting -- source add README.md
+    cargo run -p lighting -- source show SOURCE_ID
+    cargo run -p lighting -- project create "Lantern Keeper"
+    cargo run -p lighting -- project-handoff PROJECT_ID
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:4317/health/live
-```
+Sources remain authoritative evidence; Episodes and Markers point into them.
+The old remote-server demonstration scripts remain available as an explicit
+remote test path and are not required for ordinary local memory use.
 
-Expected response:
+## Architecture and research notes
 
-```json
-{ "alive": true }
-```
+- docs/architecture/LANTERN_FOUNDATION_DECISIONS.md records the exact
+  modernisation decisions and current boundaries.
+- docs/SURREALKV_QUALIFICATION.md records the workload-oriented qualification.
+- bench/lanternbench-v1.json is the initial deterministic benchmark fixture.
 
-### Version
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:4317/api/v1/version
-```
-
-Expected response:
-
-```json
-{
-  "service": "Lighting",
-  "project": "Lantern Keeper",
-  "version": "0.1.0"
-}
-```
-
-## Marker API
-
-### Create a Marker
-
-```powershell
-$body = @{ text = "human network cable" } | ConvertTo-Json
-Invoke-RestMethod -Uri http://127.0.0.1:4317/api/v1/markers -Method Post -Body $body -ContentType "application/json"
-```
-
-Expected response (new Marker, HTTP 201):
-
-```json
-{
-  "marker_id": "<uuid>",
-  "display_text": "human network cable",
-  "lookup_key": "human network cable",
-  "created_at": "2026-07-18T13:00:00Z"
-}
-```
-
-Expected response (normalised duplicate, HTTP 200): same body as above, same ID.
-
-### Get a Marker by ID
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:4317/api/v1/markers/<marker_id>
-```
-
-Expected response (HTTP 200): same Marker shape as above.
-
-### Lookup a Marker by Phrase
-
-```powershell
-Invoke-RestMethod "http://127.0.0.1:4317/api/v1/markers/lookup?text=HUMAN+network+cable"
-```
-
-Lookup normalises casing and whitespace. Expected response (HTTP 200): the matching Marker, or 404 if none found.
-
-## Source API
-
-### Post a Small Markdown Source
-
-```powershell
-$body = @{
-  title   = "Lantern Keeper handbook"
-  kind    = "markdown"
-  content = "# Lantern Keeper`n`nA local-first shared memory project."
-} | ConvertTo-Json
-
-$response = Invoke-RestMethod -Uri http://127.0.0.1:4317/api/v1/sources -Method Post -Body $body -ContentType "application/json"
-$response | ConvertTo-Json
-```
-
-Expected response (new Source):
-
-```json
-{
-  "outcome": "stored",
-  "source_id": "<uuid>"
-}
-```
-
-HTTP status: 201.
-
-Expected response (exact duplicate):
-
-```json
-{
-  "outcome": "duplicate",
-  "source_id": "<same uuid>"
-}
-```
-
-HTTP status: 200.
-
-### Retrieve a Source by ID
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:4317/api/v1/sources/<source_id>
-```
-
-Expected response:
-
-```json
-{
-  "source_id": "<uuid>",
-  "title": "Lantern Keeper handbook",
-  "kind": "markdown",
-  "content": "# Lantern Keeper\n\nA local-first shared memory project.",
-  "fingerprint": "<sha256 hex>",
-  "created_at": "2026-07-18T13:00:00Z"
-}
-```
-
-### Error Responses
-
-All errors use a stable shape:
-
-```json
-{
-  "code": "invalid_source",
-  "message": "Source title must not be empty"
-}
-```
-
-Common error codes: `invalid_source`, `invalid_source_id`, `source_not_found`,
-`storage_unavailable`, `internal_error`, `payload_too_large`.
-`invalid_marker`, `invalid_marker_id`, `invalid_lookup`, `marker_not_found`.
-Project retrieval can also return `project_not_found` or `source_unavailable`.
-
-Source content, credentials, and raw database error text are never included in
-error responses or logs.
-
-## Project Retrieval And Codex Handoff
-
-Project retrieval turns linked memory records into a compact context package for
-an AI coding agent:
-
-```powershell
-$body = @{ project_id = "<project_id>" } | ConvertTo-Json
-Invoke-RestMethod -Uri http://127.0.0.1:4317/api/v1/retrieval/projects -Method Post -Body $body -ContentType "application/json"
-```
-
-Expected response shape:
-
-```json
-{
-  "project": {
-    "project_id": "<uuid>",
-    "name": "Lantern Keeper First Proof",
-    "status": "active",
-    "created_at": "2026-07-18T13:00:00Z"
-  },
-  "episodes": [
-    {
-      "episode_id": "<uuid>",
-      "title": "The Human Relay Problem",
-      "source_id": "<uuid>",
-      "start_byte": 30,
-      "end_byte": 320,
-      "excerpt": "When a person copies context...",
-      "why_matched": "Episode is linked to Project \"Lantern Keeper First Proof\"."
-    }
-  ],
-  "context_package": {
-    "format": "markdown",
-    "audience": "codex",
-    "content": "# Codex Handoff Context\n..."
-  },
-  "warnings": []
-}
-```
-
-If a linked Episode points at a missing authoritative Source, the endpoint
-returns HTTP 409 with `code: "source_unavailable"` instead of silently omitting
-the Episode or returning partial context.
-
-The `context_package` is a deterministic Codex-oriented rendering of retrieved
-authoritative excerpts and provenance metadata. It is not an AI-generated
-summary, recommendation, or narrative.
-
-## CLI Commands
-
-All commands below use the unified `lighting` executable (port 4317 by default).
-
-### Health Check
-
-```powershell
-cargo run -p lighting -- health
-cargo run -p lighting -- health --json
-```
-
-### Add a Source
-
-```powershell
-cargo run -p lighting -- source add README.md
-cargo run -p lighting -- source add notes.txt --title "My Notes" --kind plain_text
-cargo run -p lighting -- source add handbook.md --json
-```
-
-### Show a Source
-
-```powershell
-cargo run -p lighting -- source show <source_id>
-cargo run -p lighting -- source show <source_id> --json
-```
-
-## First Proof Demonstration
-
-Run the complete first-proof demonstration after starting SurrealDB and Lighting:
-
-```powershell
-.\scripts\start-surreal.ps1
-.\scripts\run-first-proof-local.ps1
-```
-
-The script seeds a harmless local development demonstration that walks through:
-
-```
-fixtures/first-proof.md
--> Source -> Episode -> Project + Marker
--> retrieve -> Codex handoff context
--> local result file -> project-record-result
--> updated Project handoff
-```
-
-It is safe to rerun; objects are reused via stored IDs in
-`.local/full-loop-demo-v2.json`, and the result writeback is idempotent. No data
-is uploaded or deleted.
-
-The four-step proof for the hackathon slice is:
-
-```powershell
-.\scripts\start-surreal.ps1
-.\scripts\run-first-proof-local.ps1
-cargo run -p lighting -- project-handoff <project-id>
-cargo run -p lighting -- project-record-result <project-id> .local\full-loop-result.md --title "First Proof Result"
-```
-
-## Full Validation
-
-```powershell
-.\scripts\validate.ps1
-```
-
-Or run each step manually:
-
-```powershell
-.\scripts\start-surreal.ps1
-cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo run -p lighting -- version
-```
-
-## Naming
-
-Project: Lantern Keeper
-
-Service: Lighting
-
-Default bind address: `127.0.0.1:4317`
-
-## Engineering Handbook
-
-The `LK handbook.txt` file was not found in or beside the project workspace.
-Place it at `docs/Lantern-Keeper-Engineering-Handbook.md` when it becomes
-available. Do not invent or reconstruct it.
-
-## Roadmap
-
-See `docs/ROADMAP.md` for the current Done / Next / Later queue. The older
-ten-job hackathon MVP sequence is preserved as completed historical context.
+Deferred deliberately: GUI, cloud deployment, accounts, broad ontology,
+universal ingestion, provider connectors, MCP handlers, vector/BM25 fusion,
+automatic gardening and autonomous rewriting of source history.

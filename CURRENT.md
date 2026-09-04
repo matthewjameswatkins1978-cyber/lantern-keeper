@@ -1,54 +1,53 @@
 # Lantern Keeper - Current Phase
 
-**Baseline reset:** 12 September 2026
+## Foundation modernisation and first useful memory loop
 
-**Canonical trunk:** `master`
+The authoritative pre-memory Luna baseline is preserved at commit
+407c52934de8fe4c583c7ed549e51d1de45c7ce3 under tag
+lantern-pre-memory-checkpoint. This implementation runs in the separate
+foundation/lantern-pre-memory worktree; the original dirty checkout remains
+untouched.
 
-**Recovered implementation:** `407c529` (`agent/lighting-source-api`)
+## Delivered in this pass
 
-## Phase
+- Rust 1.98.1 stable, edition 2024, rustfmt and Clippy pinned in
+  rust-toolchain.toml.
+- Direct and transitive dependencies refreshed with Cargo.lock committed in
+  the modernisation commit, with SurrealDB exactly pinned to 3.3.0-beta.3.
+- Embedded versioned SurrealKV is the default local backend with sync=every.
+  Remote WebSocket storage remains opt-in for existing integration tests.
+- Existing Source/Project/Episode/Marker data remains logically addressable;
+  no .lighting-data store existed in the preserved baseline, so there was no
+  meaningful local database migration to perform.
+- A portable export command writes manifest.json plus ledger, memory,
+  relation and project NDJSON files.
+- A small Memory Ledger/Living Memory substrate supports derived content,
+  provenance references, temporal fields, confidence, importance and explicit
+  supersession.
+- CLI and HTTP capture, recall, context and supersede operations.
+- Initial embedded qualification and memory repository integration tests.
+- LanternBench v1 fixture and architecture/qualification documentation.
 
-Joint Tethers/Lantern Keeper foundation: preserve the completed
-source-backed memory loop and prepare Lantern Keeper's minimum memory
-foundation for later Tethers runtime integration.
+## Retrieval boundary
 
-## Current Task
+The first retrieval slice is intentionally inspectable: phrase matching,
+project/status filters, importance, confidence and known-at ordering. Recall
+returns a trace containing query, channel and candidate/selected IDs. An empty
+result is an explicit abstention.
 
-Install the canonical joint architecture, keep the existing proof honest, and
-prepare the next Lantern Keeper task: a minimal Project/Source/Episode/Memory/
-Link foundation and first small capability surface for the later Tethers
-runtime slice.
+Not yet implemented: BM25/vector/graph fusion, persisted retrieval traces,
+activation metadata, automated contradiction resolution, the gardener,
+automatic conversation ingestion, MCP, and a benchmark runner. These are
+deliberate follow-up work, not silently implied by the current code.
 
-Canonical architecture:
-[`docs/architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md`](docs/architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md)
+## Verification
 
-## Verified Workflow
+The exact qualification lane passes:
 
-Lantern Keeper now proves one complete loop through the real system:
+    cargo test -p lighting-store-surreal --test memory_repository --locked
+    cargo test -p lighting-store-surreal --test surrealkv_qualification --locked
 
-```text
-Capture project knowledge
--> store it as canonical Source-backed memory
--> retrieve Project context
--> format a Codex handoff
--> record the completed result as canonical memory
--> retrieve the updated Project handoff
-```
-
-## Implemented Now
-
-- Exact Source storage and retrieval with fingerprint duplicate detection.
-- Episodes as UTF-8-safe byte ranges into authoritative Sources.
-- Projects and Markers stored through the memory-path repository.
-- Episode-to-Project and Episode-to-Marker links through native SurrealDB relation tables.
-- Marker-led retrieval with exact excerpts and deterministic provenance.
-- Project-led retrieval with a deterministic Codex `context_package`.
-- `lighting project-handoff <project-id>` for paste-ready Codex context.
-- `lighting project-record-result <project-id> <result-file> --title "..."`
-  for writing completed work back into the same Project.
-- A full local proof script that demonstrates the loop using public CLI/API paths.
-
-## Validation
+The workspace compile lane passes:
 
 The clean restart validation now passes in the recovery environment with Rust
 1.98.1 and SurrealDB integration deliberately skipped:
@@ -130,3 +129,7 @@ Immediate Lantern Keeper work:
 Confirm the Windows checkout contains no newer local-only work, then begin the
 canonical Memory model and reconciliation slice. Do not treat the existing
 `memory_path` module as the canonical Memory entity.
+    cargo check --workspace --all-targets --all-features --locked
+
+Full test and Clippy results belong in the final acceptance report after the
+remaining cleanup pass.

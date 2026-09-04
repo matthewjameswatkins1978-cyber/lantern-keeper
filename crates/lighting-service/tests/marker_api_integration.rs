@@ -1,10 +1,10 @@
+use axum::Router;
 use axum::body::Body;
 use axum::http::{self, Request, StatusCode};
-use axum::Router;
 use lighting_service::marker_ops::MarkerService;
-use lighting_service::{build_router, AppState};
+use lighting_service::{AppState, build_router};
 use lighting_store_surreal::{StoreConfig, SurrealMemoryPathRepository, SurrealStore};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -21,6 +21,7 @@ async fn app() -> Router {
     dotenvy::dotenv().ok();
     let d = db();
     let mut c = StoreConfig::from_env();
+    c.storage = "remote-surreal".to_owned();
     c.namespace = "lighting_test".to_owned();
     c.database = d;
     let s = SurrealStore::connect(&c).await.expect("c");
@@ -36,6 +37,7 @@ async fn app() -> Router {
         retrieval_service: None,
         project_retrieval_service: None,
         tethers_client: None,
+        memory_service: None,
     };
     build_router(st)
 }
