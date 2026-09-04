@@ -175,7 +175,8 @@ fn decode_event(record: Object) -> Result<LedgerEvent, SurrealLedgerError> {
                 .map(|record| record_key_to_string(&record.key))
         })
         .ok_or(SurrealLedgerError::Decode)?;
-    let role = parse_role(&required::<String>(&fields, "role")?).ok_or(SurrealLedgerError::Decode)?;
+    let role =
+        parse_role(&required::<String>(&fields, "role")?).ok_or(SurrealLedgerError::Decode)?;
     let event = LedgerEvent {
         event_id,
         source: required(&fields, "source")?,

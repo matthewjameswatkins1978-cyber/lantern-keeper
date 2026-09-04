@@ -94,10 +94,8 @@ pub enum LedgerRepositoryError {
 
 #[async_trait::async_trait]
 pub trait LedgerEventRepository: Send + Sync {
-    async fn ingest(
-        &self,
-        event: LedgerEvent,
-    ) -> Result<LedgerIngestResult, LedgerRepositoryError>;
+    async fn ingest(&self, event: LedgerEvent)
+    -> Result<LedgerIngestResult, LedgerRepositoryError>;
 
     async fn list(&self, source: Option<&str>) -> Result<Vec<LedgerEvent>, LedgerRepositoryError>;
 }
@@ -130,6 +128,9 @@ mod tests {
         assert_eq!(event.validate(), Ok(()));
         let mut invalid = event;
         invalid.idempotency_key.clear();
-        assert_eq!(invalid.validate(), Err(LedgerEventError::IdempotencyKeyBlank));
+        assert_eq!(
+            invalid.validate(),
+            Err(LedgerEventError::IdempotencyKeyBlank)
+        );
     }
 }
