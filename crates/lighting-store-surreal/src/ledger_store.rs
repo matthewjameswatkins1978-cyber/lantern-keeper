@@ -101,7 +101,7 @@ impl LedgerEventRepository for SurrealLedgerRepository {
             .bind(("raw_payload", event.raw_payload.clone()))
             .bind((
                 "metadata",
-                serde_json::to_string(&event.metadata).map_err(|error| operation(error))?,
+                serde_json::to_string(&event.metadata).map_err(operation)?,
             ))
             .await
             .map_err(|error| operation(SurrealLedgerError::Query(error)))?
@@ -134,7 +134,7 @@ impl LedgerEventRepository for SurrealLedgerRepository {
             .into_iter()
             .map(decode_event)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| operation(error))
+            .map_err(operation)
     }
 }
 

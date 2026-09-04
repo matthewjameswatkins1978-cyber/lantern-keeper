@@ -12,7 +12,10 @@ cloud services come later.
 - Exact SurrealDB 3.3.0-beta.3 dependency with embedded versioned SurrealKV
   as the normal local backend.
 - Portable logical export and workload-oriented SurrealKV qualification.
-- First durable Living Memory model with temporal and supersession fields.
+- First durable Living Memory model with temporal/as-of queries, explicit
+  evolution relationships and bounded lineage.
+- Append-only host-neutral ledger events, raw payload retention, replay-safe
+  JSON ingestion, and executable LanternBench v1 runner.
 - CLI/HTTP remember, recall, context and supersede operations.
 - Inspectable first retrieval trace and LanternBench v1 fixture.
 
@@ -33,9 +36,9 @@ replication, shadow use and reversible cutover.
 
 ## Next implementation
 
-Build one real Matthew/Lucy history ingestion path and measure it with a
-benchmark runner. The next slice should preserve the current source/derived
-boundary and add:
+Replace the representative JSON fixture with a real Matthew/Lucy history
+export and qualify restart-safe progress. The next slice should preserve the
+current source/derived boundary and add:
 
 1. conversation and turn records in the Memory Ledger;
 2. persisted retrieval traces and activation metadata;

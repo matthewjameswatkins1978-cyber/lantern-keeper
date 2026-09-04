@@ -45,35 +45,36 @@ pub struct LedgerEvent {
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)] // Field-specific validation errors are clearer at the API boundary.
 pub enum LedgerEventError {
     #[error("ledger event ID must not be blank")]
-    BlankEventId,
+    EventIdBlank,
     #[error("ledger event source must not be blank")]
-    BlankSource,
+    SourceBlank,
     #[error("ledger event actor must not be blank")]
-    BlankActor,
+    ActorBlank,
     #[error("ledger event content must not be blank")]
-    BlankContent,
+    ContentBlank,
     #[error("ledger event idempotency key must not be blank")]
-    BlankIdempotencyKey,
+    IdempotencyKeyBlank,
 }
 
 impl LedgerEvent {
     pub fn validate(&self) -> Result<(), LedgerEventError> {
         if self.event_id.trim().is_empty() {
-            return Err(LedgerEventError::BlankEventId);
+            return Err(LedgerEventError::EventIdBlank);
         }
         if self.source.trim().is_empty() {
-            return Err(LedgerEventError::BlankSource);
+            return Err(LedgerEventError::SourceBlank);
         }
         if self.actor.trim().is_empty() {
-            return Err(LedgerEventError::BlankActor);
+            return Err(LedgerEventError::ActorBlank);
         }
         if self.content.trim().is_empty() {
-            return Err(LedgerEventError::BlankContent);
+            return Err(LedgerEventError::ContentBlank);
         }
         if self.idempotency_key.trim().is_empty() {
-            return Err(LedgerEventError::BlankIdempotencyKey);
+            return Err(LedgerEventError::IdempotencyKeyBlank);
         }
         Ok(())
     }
@@ -129,6 +130,6 @@ mod tests {
         assert_eq!(event.validate(), Ok(()));
         let mut invalid = event;
         invalid.idempotency_key.clear();
-        assert_eq!(invalid.validate(), Err(LedgerEventError::BlankIdempotencyKey));
+        assert_eq!(invalid.validate(), Err(LedgerEventError::IdempotencyKeyBlank));
     }
 }

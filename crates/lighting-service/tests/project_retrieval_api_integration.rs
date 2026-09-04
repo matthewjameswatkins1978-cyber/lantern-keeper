@@ -57,6 +57,7 @@ async fn app(d: &str) -> Router {
         )),
         tethers_client: None,
         memory_service: None,
+        ledger_service: None,
     })
 }
 async fn app_default() -> Router {

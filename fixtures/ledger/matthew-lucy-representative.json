@@ -1,0 +1,58 @@
+{
+  "events": [
+    {
+      "event_id": "lucy:representative:001",
+      "source": "lucy",
+      "external_id": "representative-001",
+      "session_id": "representative-session-001",
+      "conversation_id": "matthew-lucy-representative",
+      "turn_id": "001",
+      "actor": "matthew",
+      "role": "user",
+      "content": "Matthew prefers evidence-linked, concise working context.",
+      "observed_at": "2026-09-04T09:00:00Z",
+      "received_at": "2026-09-04T09:00:01Z",
+      "reply_to": null,
+      "project_hint": "lantern-keeper",
+      "idempotency_key": "lucy:representative:001",
+      "raw_payload": "{\"role\":\"user\",\"content\":\"Matthew prefers evidence-linked, concise working context.\"}",
+      "metadata": { "fixture": "representative", "confidence": "high" }
+    },
+    {
+      "event_id": "lucy:representative:002",
+      "source": "lucy",
+      "external_id": "representative-002",
+      "session_id": "representative-session-001",
+      "conversation_id": "matthew-lucy-representative",
+      "turn_id": "002",
+      "actor": "matthew",
+      "role": "user",
+      "content": "Use embedded versioned SurrealKV as the normal local store; retain the source ledger as authoritative evidence.",
+      "observed_at": "2026-09-04T09:01:00Z",
+      "received_at": "2026-09-04T09:01:01Z",
+      "reply_to": "lucy:representative:001",
+      "project_hint": "lantern-keeper",
+      "idempotency_key": "lucy:representative:002",
+      "raw_payload": "{\"role\":\"user\",\"content\":\"Use embedded versioned SurrealKV as the normal local store; retain the source ledger as authoritative evidence.\"}",
+      "metadata": { "fixture": "representative", "kind": "decision" }
+    },
+    {
+      "event_id": "lucy:representative:003",
+      "source": "lucy",
+      "external_id": "representative-003",
+      "session_id": "representative-session-001",
+      "conversation_id": "matthew-lucy-representative",
+      "turn_id": "003",
+      "actor": "matthew",
+      "role": "user",
+      "content": "The watchdog command existing does not prove a live scheduler is invoking it.",
+      "observed_at": "2026-09-04T09:02:00Z",
+      "received_at": "2026-09-04T09:02:01Z",
+      "reply_to": "lucy:representative:002",
+      "project_hint": "lantern-keeper",
+      "idempotency_key": "lucy:representative:003",
+      "raw_payload": "{\"role\":\"user\",\"content\":\"The watchdog command existing does not prove a live scheduler is invoking it.\"}",
+      "metadata": { "fixture": "representative", "kind": "gotcha" }
+    }
+  ]
+}

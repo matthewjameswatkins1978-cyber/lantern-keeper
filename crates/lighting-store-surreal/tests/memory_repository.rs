@@ -4,7 +4,9 @@ use std::path::PathBuf;
 
 use chrono::{TimeZone, Utc};
 use lighting_core::{Memory, MemoryKind, MemoryRepository, MemorySearchQuery, NewMemory};
-use lighting_store_surreal::{StoreConfig, SurrealMemoryRepository, SurrealStore};
+use lighting_store_surreal::{
+    StoreConfig, SurrealLedgerRepository, SurrealMemoryRepository, SurrealStore,
+};
 use lighting_store_surreal::{SurrealMemoryPathRepository, SurrealSourceRepository};
 use uuid::Uuid;
 
@@ -41,6 +43,7 @@ async fn stores_recalls_and_supersedes_memory_without_losing_history()
         .await?;
     let repository = SurrealMemoryRepository::new(store.clone());
     repository.migrate().await?;
+    SurrealLedgerRepository::new(store.clone()).migrate().await?;
 
     let now = Utc::now();
     let memory = Memory::new(NewMemory {

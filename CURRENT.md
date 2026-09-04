@@ -22,23 +22,27 @@ untouched.
 - A portable export command writes manifest.json plus ledger, memory,
   relation and project NDJSON files.
 - A small Memory Ledger/Living Memory substrate supports derived content,
-  provenance references, temporal fields, confidence, importance and explicit
-  supersession.
+  provenance references, optional observation time, as-of queries, explicit
+  evolution relationships and bounded multi-hop lineage.
+- Host-neutral append-only ledger events with raw-payload retention, HTTP
+  ingestion and replay-safe `ledger-ingest` CLI support.
 - CLI and HTTP capture, recall, context and supersede operations.
 - Initial embedded qualification and memory repository integration tests.
-- LanternBench v1 fixture and architecture/qualification documentation.
+- Executable LanternBench v1 runner, representative event fixture, and
+  architecture/qualification documentation.
 
 ## Retrieval boundary
 
 The first retrieval slice is intentionally inspectable: phrase matching,
-project/status filters, importance, confidence and known-at ordering. Recall
-returns a trace containing query, channel and candidate/selected IDs. An empty
-result is an explicit abstention.
+project/status/as-of filters, importance, confidence and known-at ordering.
+Recall returns a trace containing query, channel and candidate/selected IDs. An
+empty result is an explicit abstention.
 
 Not yet implemented: BM25/vector/graph fusion, persisted retrieval traces,
-activation metadata, automated contradiction resolution, the gardener,
-automatic conversation ingestion, MCP, and a benchmark runner. These are
-deliberate follow-up work, not silently implied by the current code.
+activation metadata, automated contradiction resolution, proposals/gardening,
+native host conversation adapters, watermark cursors, restore validation, and
+MCP. These are deliberate follow-up work, not silently implied by the current
+code.
 
 ## Verification
 
@@ -131,5 +135,5 @@ canonical Memory model and reconciliation slice. Do not treat the existing
 `memory_path` module as the canonical Memory entity.
     cargo check --workspace --all-targets --all-features --locked
 
-Full test and Clippy results belong in the final acceptance report after the
-remaining cleanup pass.
+The workspace Clippy gate and skip-remote workspace test lane also pass; the
+exact packet-level result is recorded in docs/AMBIENT_MEMORY_QUALIFICATION.md.
