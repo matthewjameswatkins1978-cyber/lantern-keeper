@@ -38,6 +38,7 @@ async fn app() -> Router {
         project_retrieval_service: None,
         tethers_client: None,
         memory_service: None,
+        ledger_service: None,
     };
     build_router(st)
 }

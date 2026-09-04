@@ -8,6 +8,7 @@ use lighting_service::tethers_engine_client::{TethersEngineClient, TethersEngine
 use lighting_service::{
     AppState, EpisodeAssociationService, EpisodeService, MarkerRetrievalService, MarkerService,
     MemoryService, ProjectRetrievalService, ProjectService, build_router,
+    LedgerService,
 };
 use lighting_store_surreal::{
     ExportSummary, StoreConfig, SurrealMemoryPathRepository, SurrealMemoryRepository,
@@ -141,6 +142,10 @@ fn main() -> anyhow::Result<()> {
         Command::MemorySupersede { memory_id, json } => {
             let url = cli.service_url.unwrap_or_else(default_service_url);
             run_cli_command(&url, CliCommand::MemorySupersede { memory_id, json })
+        }
+        Command::LedgerIngest { path, json } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(&url, CliCommand::LedgerIngest { path, json })
         }
         Command::Export { output } => {
             init_tracing();
@@ -318,6 +323,12 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Ingest one event or an events JSON array into the append-only ledger.
+    LedgerIngest {
+        path: std::path::PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
     /// Export logical records to an engine-independent backup directory.
     Export {
         /// Destination directory for manifest.json and NDJSON files.
@@ -441,6 +452,8 @@ async fn serve() -> anyhow::Result<()> {
     let project_retrieval_service =
         ProjectRetrievalService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
     let memory_service = MemoryService::new(Arc::clone(&memory_repo));
+    let ledger_repo = SurrealLedgerRepository::new(store.clone());
+    let ledger_service = LedgerService::new(Arc::new(ledger_repo));
     let tethers_client = match TethersEngineClient::from_env() {
         Ok(client) => Some(client),
         Err(TethersEngineError::MissingEnginePath) => None,
@@ -459,6 +472,7 @@ async fn serve() -> anyhow::Result<()> {
         project_retrieval_service: Some(project_retrieval_service),
         tethers_client,
         memory_service: Some(memory_service),
+        ledger_service: Some(ledger_service),
     };
     app_state.mark_ready();
 

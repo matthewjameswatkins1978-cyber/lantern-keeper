@@ -91,6 +91,7 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
         CliCommand::MemorySupersede { memory_id, json } => {
             cmd_memory_supersede(&client, &memory_id, json)
         }
+        CliCommand::LedgerIngest { path, json } => cmd_ledger_ingest(&client, &path, json),
         CliCommand::ProjectHandoff { project_id, json } => {
             cmd_project_handoff(&client, &project_id, json)
         }
@@ -216,6 +217,12 @@ pub enum CliCommand {
     /// Mark a Memory as superseded while retaining its history.
     MemorySupersede {
         memory_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Ingest one event or an {"events": [...]} / [...] JSON export into the source ledger.
+    LedgerIngest {
+        path: PathBuf,
         #[arg(long)]
         json: bool,
     },
@@ -904,6 +911,38 @@ struct RememberInput<'a> {
     supports: Vec<String>,
     agent: &'a str,
     json: bool,
+}
+
+fn cmd_ledger_ingest(client: &HttpClient, path: &Path, json: bool) -> anyhow::Result<()> {
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("failed to read ledger event file {}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .with_context(|| format!("ledger event file is not valid JSON: {}", path.display()))?;
+    let events = match value {
+        serde_json::Value::Array(events) => events,
+        serde_json::Value::Object(mut object) => object
+            .remove("events")
+            .and_then(|events| events.as_array().cloned())
+            .ok_or_else(|| anyhow::anyhow!("ledger JSON object must contain an events array"))?,
+        _ => bail!("ledger JSON must be an event array or an object containing events"),
+    };
+    let mut results = Vec::new();
+    for event in events {
+        let response = client
+            .post_json("/api/v1/ledger/events", &event)
+            .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+        results.push(HttpClient::handle_response(response)?);
+    }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&results)?);
+    } else {
+        let duplicates = results
+            .iter()
+            .filter(|result| result["duplicate"].as_bool().unwrap_or(false))
+            .count();
+        println!("Ledger events accepted: {} (duplicates: {duplicates})", results.len());
+    }
+    Ok(())
 }
 
 fn cmd_remember(client: &HttpClient, input: RememberInput<'_>) -> anyhow::Result<()> {

@@ -32,21 +32,25 @@ out of scope for this foundation pass.
 - Existing Source, Project, Episode, Marker and relation storage.
 - Living Memory records with fact, decision, preference, instruction, lesson,
   gotcha, open_loop, workflow, summary and entity kinds.
-- Provenance fields for derived_from, supersedes, contradicts and supports.
+- Provenance/evolution fields for derived_from, updates, extends, supersedes,
+  contradicts and supports, plus bounded multi-hop lineage.
 - Semantic temporal fields: recorded_at, known_at, valid_from, valid_until and
-  superseded_at. SurrealKV MVCC history is additional physical history, not a
-  replacement for these fields.
+  superseded_at, with optional observed_at and as-of retrieval. SurrealKV MVCC
+  history is additional physical history, not a replacement for these fields.
+- Append-only, replay-safe host-neutral `ledger_event` records, a JSON event
+  ingestion endpoint, and `ledger-ingest` CLI support. A representative fixture
+  is in fixtures/ledger/matthew-lucy-representative.json.
 - CLI and HTTP operations to remember, recall, build context and supersede.
 - Inspectable retrieval traces in recall responses.
 - Engine-independent export to manifest.json and NDJSON files.
 - Embedded SurrealKV qualification and Living Memory integration tests.
-- A small LanternBench v1 fixture in bench/lanternbench-v1.json.
+- An executable LanternBench v1 runner in bench/run-lanternbench.ps1.
 
 Retrieval is deliberately a first slice, not a completed cognitive system. It
-currently uses phrase matching, project/status filters, importance, confidence
-and recency. BM25, vector search, entity/graph signals, persisted traces,
-activation, conflict analysis, gardening, automatic conversation capture and
-MCP are later work.
+currently uses phrase matching, project/status/as-of filters, importance,
+confidence and recency. BM25, vector search, entity/graph signals, persisted
+traces, activation, conflict analysis, proposal/gardening, automatic host
+capture and MCP are later work.
 
 ## Requirements
 
@@ -121,12 +125,18 @@ Retain a correction as history:
 
     cargo run -p lighting -- memory-supersede MEMORY_ID --json
 
+Ingest a host-neutral JSON export (an array or `{ "events": [...] }` object).
+Re-running the same file is safe because each event has an idempotency key:
+
+    cargo run -p lighting -- ledger-ingest fixtures/ledger/matthew-lucy-representative.json --json
+
 The equivalent HTTP endpoints are:
 
     POST /api/v1/memories
     POST /api/v1/memories/recall
     POST /api/v1/memories/context
     POST /api/v1/memories/{memory_id}/supersede
+    POST /api/v1/ledger/events
 
 JSON is the machine-facing contract. A no-match recall returns an explicit
 abstention message and an empty result set; candidates are not treated as
@@ -150,7 +160,8 @@ The export contains:
     backup/projects.ndjson
 
 Each NDJSON record includes its logical table name and JSON-converted record.
-This is a portable escape hatch, not yet a restore command. The original
+This is a portable escape hatch; restore validation is still a separate
+qualification lane. The original
 .lighting-data directory is not removed by export or migration.
 
 ## Existing source/project loop
@@ -171,7 +182,11 @@ remote test path and are not required for ordinary local memory use.
 - docs/architecture/LANTERN_FOUNDATION_DECISIONS.md records the exact
   modernisation decisions and current boundaries.
 - docs/SURREALKV_QUALIFICATION.md records the workload-oriented qualification.
-- bench/lanternbench-v1.json is the initial deterministic benchmark fixture.
+- docs/architecture/MEMORY_MODEL_AUDIT.md records model decisions and gaps.
+- docs/architecture/LEDGER_EVENT_MODEL.md defines the evidence boundary.
+- docs/architecture/AMBIENT_MEMORY_LIFECYCLE.md defines host-neutral lifecycle
+  hooks and replay boundaries.
+- bench/lanternbench-v1.json and docs/LANTERNBENCH.md define the benchmark.
 
 Deferred deliberately: GUI, cloud deployment, accounts, broad ontology,
 universal ingestion, provider connectors, MCP handlers, vector/BM25 fusion,

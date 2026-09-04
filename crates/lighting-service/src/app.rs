@@ -3,7 +3,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::{
     episode_association_routes, episode_routes, marker_retrieval_routes, marker_routes,
-    memory_routes, project_retrieval_routes, project_routes, routes, source_routes,
+    ledger_routes, memory_routes, project_retrieval_routes, project_routes, routes, source_routes,
     state::AppState, tethers_routes,
 };
 
@@ -71,6 +71,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/memories/{memory_id}/supersede",
             axum::routing::post(memory_routes::supersede),
         );
+    let ledger_routes = Router::new().route(
+        "/api/v1/ledger/events",
+        axum::routing::post(ledger_routes::ingest),
+    );
 
     let marker_routes = Router::new()
         .route(
@@ -94,6 +98,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(project_routes)
         .merge(marker_routes)
         .merge(memory_routes)
+        .merge(ledger_routes)
         .merge(
             Router::new()
                 .route(

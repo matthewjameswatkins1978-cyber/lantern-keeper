@@ -118,7 +118,8 @@ mod router_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
-            memory_service: None,
+        memory_service: None,
+        ledger_service: None,
         };
         build_router(state)
     }
@@ -546,6 +547,7 @@ mod router_tests {
             project_retrieval_service: None,
             tethers_client: None,
             memory_service: None,
+            ledger_service: None,
         };
         build_router(state)
     }
@@ -797,6 +799,7 @@ mod router_tests {
             project_retrieval_service: None,
             tethers_client: None,
             memory_service: None,
+            ledger_service: None,
         };
         build_router(state)
     }
@@ -1749,6 +1752,7 @@ mod project_add_file_tests {
             project_retrieval_service: None,
             tethers_client: None,
             memory_service: None,
+            ledger_service: None,
         };
         build_router(state)
     }
@@ -2062,6 +2066,7 @@ mod project_add_file_tests {
             project_retrieval_service: None,
             tethers_client: Some(tethers_client),
             memory_service: None,
+            ledger_service: None,
         };
         build_router(state)
     }
@@ -2458,6 +2463,7 @@ mod project_add_file_tests {
             project_retrieval_service: None,
             tethers_client: None,
             memory_service: None,
+            ledger_service: None,
         };
         let app = build_router(state);
 
@@ -2574,6 +2580,7 @@ mod project_add_file_tests {
             project_retrieval_service: None,
             tethers_client: Some(client),
             memory_service: None,
+            ledger_service: None,
         };
         let app = build_router(state);
 

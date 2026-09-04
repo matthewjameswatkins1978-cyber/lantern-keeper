@@ -1,7 +1,7 @@
 {
   "format": "lanternbench-v1",
   "description": "Small deterministic seed suite for the Matthew and Lucy memory loop.",
-  "status": "fixture-only",
+  "status": "executable-fixture",
   "cases": [
     {
       "id": "capture_provenance",

@@ -5,6 +5,7 @@ use crate::episode_ops::EpisodeService;
 use crate::marker_ops::MarkerService;
 use crate::marker_retrieval_ops::MarkerRetrievalService;
 use crate::memory_ops::MemoryService;
+use crate::ledger_ops::LedgerService;
 use crate::project_ops::ProjectService;
 use crate::project_retrieval_ops::ProjectRetrievalService;
 use crate::source_ops::SourceService;
@@ -22,6 +23,7 @@ pub struct AppState {
     pub project_retrieval_service: Option<ProjectRetrievalService>,
     pub tethers_client: Option<TethersEngineClient>,
     pub memory_service: Option<MemoryService>,
+    pub ledger_service: Option<LedgerService>,
 }
 
 impl AppState {
@@ -37,6 +39,7 @@ impl AppState {
             project_retrieval_service: None,
             tethers_client: None,
             memory_service: None,
+            ledger_service: None,
         }
     }
 
