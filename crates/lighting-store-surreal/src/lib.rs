@@ -7,6 +7,7 @@ pub mod connection;
 pub mod export;
 pub mod memory_path_store;
 pub mod memory_store;
+pub mod ledger_store;
 pub mod schema;
 pub mod source_store;
 
@@ -15,4 +16,5 @@ pub use connection::{StoreError, SurrealStore};
 pub use export::{ExportError, ExportSummary};
 pub use memory_path_store::SurrealMemoryPathRepository;
 pub use memory_store::SurrealMemoryRepository;
+pub use ledger_store::SurrealLedgerRepository;
 pub use source_store::SurrealSourceRepository;

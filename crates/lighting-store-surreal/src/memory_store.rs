@@ -68,10 +68,13 @@ impl MemoryRepository for SurrealMemoryRepository {
                     importance: $importance,
                     recorded_at: $recorded_at,
                     known_at: $known_at,
+                    observed_at: $observed_at,
                     valid_from: $valid_from,
                     valid_until: $valid_until,
                     superseded_at: $superseded_at,
                     derived_from: $derived_from,
+                    updates: $updates,
+                    extends: $extends,
                     supersedes: $supersedes,
                     contradicts: $contradicts,
                     supports: $supports,
@@ -91,10 +94,13 @@ impl MemoryRepository for SurrealMemoryRepository {
             .bind(("importance", memory.importance))
             .bind(("recorded_at", memory.recorded_at))
             .bind(("known_at", memory.known_at))
+            .bind(("observed_at", memory.observed_at))
             .bind(("valid_from", memory.valid_from))
             .bind(("valid_until", memory.valid_until))
             .bind(("superseded_at", memory.superseded_at))
             .bind(("derived_from", memory.derived_from.clone()))
+            .bind(("updates", memory.updates.clone()))
+            .bind(("extends", memory.extends.clone()))
             .bind(("supersedes", memory.supersedes.clone()))
             .bind(("contradicts", memory.contradicts.clone()))
             .bind(("supports", memory.supports.clone()))
@@ -135,8 +141,11 @@ impl MemoryRepository for SurrealMemoryRepository {
         query: &MemorySearchQuery,
     ) -> Result<Vec<Memory>, MemoryRepositoryError> {
         let mut sql = String::from("SELECT * FROM memory WHERE 1 = 1");
-        if !query.include_inactive {
+        if !query.include_inactive && query.as_of.is_none() {
             sql.push_str(" AND status = 'active'");
+        }
+        if query.as_of.is_some() {
+            sql.push_str(" AND valid_from <= $as_of AND (valid_until IS NONE OR valid_until > $as_of)");
         }
         if query.project_id.is_some() {
             sql.push_str(" AND project_id = $project_id");
@@ -152,6 +161,9 @@ impl MemoryRepository for SurrealMemoryRepository {
         }
         if let Some(phrase) = &query.phrase {
             request = request.bind(("phrase", phrase.clone()));
+        }
+        if let Some(as_of) = query.as_of {
+            request = request.bind(("as_of", as_of));
         }
 
         let records: Vec<Object> = request
@@ -190,6 +202,41 @@ impl MemoryRepository for SurrealMemoryRepository {
             .ok_or(MemoryRepositoryError::NotFound)
             .and_then(|record| decode_memory(record).map_err(Into::into))
     }
+
+    async fn lineage(
+        &self,
+        id: &MemoryId,
+        max_depth: usize,
+    ) -> Result<Vec<Memory>, MemoryRepositoryError> {
+        let mut result = Vec::new();
+        let mut frontier = vec![(id.clone(), 0usize)];
+        let mut visited = std::collections::HashSet::new();
+
+        while let Some((current, depth)) = frontier.pop() {
+            if depth > max_depth || !visited.insert(current.to_string()) {
+                continue;
+            }
+            let Some(memory) = self.get(&current).await? else {
+                continue;
+            };
+            let references = memory
+                .derived_from
+                .iter()
+                .chain(memory.updates.iter())
+                .chain(memory.extends.iter())
+                .chain(memory.supersedes.iter())
+                .chain(memory.contradicts.iter())
+                .chain(memory.supports.iter());
+            for reference in references {
+                if let Ok(memory_id) = MemoryId::new(reference.clone()) {
+                    frontier.push((memory_id, depth + 1));
+                }
+            }
+            result.push(memory);
+        }
+
+        Ok(result)
+    }
 }
 
 fn decode_memory(record: Object) -> Result<Memory, SurrealMemoryError> {
@@ -219,10 +266,13 @@ fn decode_memory(record: Object) -> Result<Memory, SurrealMemoryError> {
         importance: required::<f32>(&fields, "importance")?,
         recorded_at: required_datetime(&fields, "recorded_at")?,
         known_at: required_datetime(&fields, "known_at")?,
+        observed_at: optional_datetime(&fields, "observed_at")?,
         valid_from: required_datetime(&fields, "valid_from")?,
         valid_until: optional_datetime(&fields, "valid_until")?,
         superseded_at: optional_datetime(&fields, "superseded_at")?,
         derived_from: required::<Vec<String>>(&fields, "derived_from")?,
+        updates: optional::<Vec<String>>(&fields, "updates")?.unwrap_or_default(),
+        extends: optional::<Vec<String>>(&fields, "extends")?.unwrap_or_default(),
         supersedes: required::<Vec<String>>(&fields, "supersedes")?,
         contradicts: required::<Vec<String>>(&fields, "contradicts")?,
         supports: required::<Vec<String>>(&fields, "supports")?,
@@ -283,10 +333,13 @@ DEFINE FIELD IF NOT EXISTS confidence ON memory TYPE float;
 DEFINE FIELD IF NOT EXISTS importance ON memory TYPE float;
 DEFINE FIELD IF NOT EXISTS recorded_at ON memory TYPE datetime;
 DEFINE FIELD IF NOT EXISTS known_at ON memory TYPE datetime;
+DEFINE FIELD IF NOT EXISTS observed_at ON memory TYPE option<datetime>;
 DEFINE FIELD IF NOT EXISTS valid_from ON memory TYPE datetime;
 DEFINE FIELD IF NOT EXISTS valid_until ON memory TYPE option<datetime>;
 DEFINE FIELD IF NOT EXISTS superseded_at ON memory TYPE option<datetime>;
 DEFINE FIELD IF NOT EXISTS derived_from ON memory TYPE array;
+DEFINE FIELD IF NOT EXISTS updates ON memory TYPE array;
+DEFINE FIELD IF NOT EXISTS extends ON memory TYPE array;
 DEFINE FIELD IF NOT EXISTS supersedes ON memory TYPE array;
 DEFINE FIELD IF NOT EXISTS contradicts ON memory TYPE array;
 DEFINE FIELD IF NOT EXISTS supports ON memory TYPE array;
@@ -297,7 +350,7 @@ DEFINE INDEX IF NOT EXISTS memory_kind ON memory FIELDS kind;
 UPSERT __lighting_schema:bootstrap CONTENT {
     project: "Lantern Keeper",
     service: "Lighting",
-    schema_version: 4,
+    schema_version: 5,
     updated_at: time::now()
 };
 "#;

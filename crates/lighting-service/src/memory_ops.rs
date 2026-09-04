@@ -67,9 +67,12 @@ impl MemoryService {
             importance: request.importance,
             recorded_at: now,
             known_at: now,
+            observed_at: request.observed_at,
             valid_from: now,
             valid_until: None,
             derived_from: request.derived_from,
+            updates: request.updates,
+            extends: request.extends,
             supersedes: request.supersedes,
             contradicts: request.contradicts,
             supports: request.supports,
@@ -85,6 +88,7 @@ impl MemoryService {
         project_id: Option<String>,
         phrase: Option<String>,
         include_inactive: bool,
+        as_of: Option<chrono::DateTime<Utc>>,
     ) -> Result<RecallResponse, MemoryOperationError> {
         let project_id = project_id
             .map(ProjectId::new)
@@ -97,6 +101,7 @@ impl MemoryService {
             project_id,
             phrase: phrase.clone(),
             include_inactive,
+            as_of,
         };
         let memories = self
             .repo
@@ -126,7 +131,7 @@ impl MemoryService {
         project_id: Option<String>,
         query: Option<String>,
     ) -> Result<ContextResponse, MemoryOperationError> {
-        let recall = self.recall(project_id, query, false).await?;
+        let recall = self.recall(project_id, query, false, None).await?;
         let mut sections = [
             ("CURRENT STATE", Vec::new()),
             ("IMPORTANT DECISIONS", Vec::new()),
