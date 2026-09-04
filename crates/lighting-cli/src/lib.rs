@@ -930,7 +930,9 @@ fn cmd_ledger_ingest(client: &HttpClient, path: &Path, json: bool) -> anyhow::Re
     for event in events {
         let response = client
             .post_json("/api/v1/ledger/events", &event)
-            .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+            .map_err(|e| {
+                anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve")
+            })?;
         results.push(HttpClient::handle_response(response)?);
     }
     if json {
@@ -940,7 +942,10 @@ fn cmd_ledger_ingest(client: &HttpClient, path: &Path, json: bool) -> anyhow::Re
             .iter()
             .filter(|result| result["duplicate"].as_bool().unwrap_or(false))
             .count();
-        println!("Ledger events accepted: {} (duplicates: {duplicates})", results.len());
+        println!(
+            "Ledger events accepted: {} (duplicates: {duplicates})",
+            results.len()
+        );
     }
     Ok(())
 }

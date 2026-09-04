@@ -2,7 +2,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use lighting_service::{build_router, AppState};
+use lighting_service::{AppState, build_router};
 use serde_json::Value;
 use tower::ServiceExt;
 

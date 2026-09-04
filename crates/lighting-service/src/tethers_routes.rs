@@ -2,17 +2,17 @@
 //!
 //! POST /api/v1/projects/{project_id}/tethers/preview
 
+use axum::Json;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use serde::Deserialize;
 
 use lighting_core::ProjectId;
 
 use crate::source_dto::ApiError;
 use crate::state::AppState;
-use crate::tethers_preview::{build_preview_request, PreviewInput, TethersResponse};
+use crate::tethers_preview::{PreviewInput, TethersResponse, build_preview_request};
 
 // ── Request DTO ───────────────────────────────────────────────────
 

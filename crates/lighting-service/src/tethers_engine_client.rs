@@ -535,8 +535,9 @@ mod tests {
 
     #[cfg(windows)]
     fn process_is_running(pid: u32) -> bool {
-        let script =
-            format!("if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}");
+        let script = format!(
+            "if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}"
+        );
         StdCommand::new("powershell.exe")
             .args([
                 "-NoProfile",

@@ -42,7 +42,10 @@ impl SurrealStore {
             .map_err(ExportError::Filesystem)?;
 
         let groups: [(&str, &[&str]); 3] = [
-            ("ledger.ndjson", &["source", "episode", "marker", "ledger_event"]),
+            (
+                "ledger.ndjson",
+                &["source", "episode", "marker", "ledger_event"],
+            ),
             ("projects.ndjson", &["project"]),
             (
                 "relations.ndjson",

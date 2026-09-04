@@ -145,7 +145,9 @@ impl MemoryRepository for SurrealMemoryRepository {
             sql.push_str(" AND status = 'active'");
         }
         if query.as_of.is_some() {
-            sql.push_str(" AND valid_from <= $as_of AND (valid_until IS NONE OR valid_until > $as_of)");
+            sql.push_str(
+                " AND valid_from <= $as_of AND (valid_until IS NONE OR valid_until > $as_of)",
+            );
         }
         if query.project_id.is_some() {
             sql.push_str(" AND project_id = $project_id");

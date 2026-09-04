@@ -589,17 +589,17 @@ mod tests {
     fn range_splitting_multibyte_utf8_is_rejected() {
         // 'é' = U+00E9 = 0xC3 0xA9 (two bytes)
         let c = content("café"); // bytes: c a f 0xC3 0xA9 = 5 bytes
-                                 // start=0, end=3 splits between 'f' (byte 2) and first byte of 'é'
-                                 // That IS valid — end=3 is after 'f', start of 'é'.
-                                 // But start=3, end=4 is start at 0xC3 (continuation of 'é') — that should pass actually,
-                                 // because start at the leading byte of a multi-byte char IS valid.
-                                 // The invalid case is end=4 splitting the 'é': bytes 3,4 = 0xC3,0xA9. end=4 is after
-                                 // the second byte, which is a continuation byte start — that's actually also valid.
-                                 // The real invalid case: end in the MIDDLE of a multi-byte char. Let's try end=4 for 5-byte
-                                 // content "café": bytes[4] = 0xA9, so start 3 end 4 should be "é" — valid.
-                                 // Let's try start=3 end=4 — result is "é" — VALID.
-                                 // The problem: start AT a continuation byte. Let's try start=4 on "café" — start=4
-                                 // is byte 0xA9 which is a continuation byte — INVALID.
+        // start=0, end=3 splits between 'f' (byte 2) and first byte of 'é'
+        // That IS valid — end=3 is after 'f', start of 'é'.
+        // But start=3, end=4 is start at 0xC3 (continuation of 'é') — that should pass actually,
+        // because start at the leading byte of a multi-byte char IS valid.
+        // The invalid case is end=4 splitting the 'é': bytes 3,4 = 0xC3,0xA9. end=4 is after
+        // the second byte, which is a continuation byte start — that's actually also valid.
+        // The real invalid case: end in the MIDDLE of a multi-byte char. Let's try end=4 for 5-byte
+        // content "café": bytes[4] = 0xA9, so start 3 end 4 should be "é" — valid.
+        // Let's try start=3 end=4 — result is "é" — VALID.
+        // The problem: start AT a continuation byte. Let's try start=4 on "café" — start=4
+        // is byte 0xA9 which is a continuation byte — INVALID.
         assert_eq!(
             SourceRange::new(source_id(), 4, 5, &c),
             Err(SourceRangeError::InvalidUtf8Start { start: 4 })

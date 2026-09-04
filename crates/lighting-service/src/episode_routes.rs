@@ -1,8 +1,8 @@
 //! HTTP handlers for the Episode API.
 
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::Json;
 
 use lighting_core::EpisodeId;
 
@@ -27,7 +27,7 @@ pub async fn create_episode(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -69,7 +69,7 @@ pub async fn get_episode(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -82,7 +82,7 @@ pub async fn get_episode(
                     code: "invalid_episode_id".to_owned(),
                     message: "Episode ID must not be empty".to_owned(),
                 },
-            )
+            );
         }
     };
 
