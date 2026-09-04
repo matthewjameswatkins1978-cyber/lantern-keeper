@@ -3,8 +3,8 @@ use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::{
     episode_association_routes, episode_routes, marker_retrieval_routes, marker_routes,
-    project_retrieval_routes, project_routes, routes, source_routes, state::AppState,
-    tethers_routes,
+    memory_routes, project_retrieval_routes, project_routes, routes, source_routes,
+    state::AppState, tethers_routes,
 };
 
 /// Maximum accepted request body size for Source creation (1 MiB).
@@ -54,6 +54,24 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(tethers_routes::preview),
         );
 
+    let memory_routes = Router::new()
+        .route(
+            "/api/v1/memories",
+            axum::routing::post(memory_routes::remember),
+        )
+        .route(
+            "/api/v1/memories/recall",
+            axum::routing::post(memory_routes::recall),
+        )
+        .route(
+            "/api/v1/memories/context",
+            axum::routing::post(memory_routes::context),
+        )
+        .route(
+            "/api/v1/memories/{memory_id}/supersede",
+            axum::routing::post(memory_routes::supersede),
+        );
+
     let marker_routes = Router::new()
         .route(
             "/api/v1/markers",
@@ -75,6 +93,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(source_routes)
         .merge(project_routes)
         .merge(marker_routes)
+        .merge(memory_routes)
         .merge(
             Router::new()
                 .route(

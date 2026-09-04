@@ -1,0 +1,49 @@
+{
+  "format": "lanternbench-v1",
+  "description": "Small deterministic seed suite for the Matthew and Lucy memory loop.",
+  "status": "fixture-only",
+  "cases": [
+    {
+      "id": "capture_provenance",
+      "category": "provenance",
+      "query": "Why does Matthew prefer evidence-linked context?",
+      "expected": {
+        "kind": "preference",
+        "required_source": "source:conversation-001",
+        "abstain": false
+      }
+    },
+    {
+      "id": "supersession",
+      "category": "temporal",
+      "query": "What is the current state of a superseded memory?",
+      "expected": {
+        "required_status": "superseded",
+        "historical_record_retained": true
+      }
+    },
+    {
+      "id": "unknown_question",
+      "category": "abstention",
+      "query": "What was Matthew's favourite moon on 14 March 1997?",
+      "expected": {
+        "abstain": true
+      }
+    },
+    {
+      "id": "context_sections",
+      "category": "context_assembly",
+      "query": "Continue with Lantern Keeper",
+      "expected": {
+        "required_sections": [
+          "CURRENT STATE",
+          "IMPORTANT DECISIONS",
+          "RELEVANT FACTS",
+          "LESSONS / GOTCHAS",
+          "OPEN LOOPS"
+        ],
+        "raw_history_dump": false
+      }
+    }
+  ]
+}

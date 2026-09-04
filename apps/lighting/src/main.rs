@@ -1,16 +1,17 @@
 use std::{env, net::SocketAddr, sync::Arc};
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
-use lighting_cli::{default_service_url, run_cli_command, validate_service_url, CliCommand};
+use lighting_cli::{CliCommand, default_service_url, run_cli_command, validate_service_url};
 use lighting_service::source_ops::SourceService;
 use lighting_service::tethers_engine_client::{TethersEngineClient, TethersEngineError};
 use lighting_service::{
-    build_router, AppState, EpisodeAssociationService, EpisodeService, MarkerRetrievalService,
-    MarkerService, ProjectRetrievalService, ProjectService,
+    AppState, EpisodeAssociationService, EpisodeService, MarkerRetrievalService, MarkerService,
+    MemoryService, ProjectRetrievalService, ProjectService, build_router,
 };
 use lighting_store_surreal::{
-    StoreConfig, SurrealMemoryPathRepository, SurrealSourceRepository, SurrealStore,
+    ExportSummary, StoreConfig, SurrealMemoryPathRepository, SurrealMemoryRepository,
+    SurrealSourceRepository, SurrealStore,
 };
 use tokio::net::TcpListener;
 use tracing::info;
@@ -31,7 +32,11 @@ fn main() -> anyhow::Result<()> {
                 .enable_all()
                 .build()
                 .context("failed to create tokio runtime")?;
-            rt.block_on(serve())
+            rt.block_on(async {
+                tokio::spawn(serve())
+                    .await
+                    .context("Lighting service task panicked")?
+            })
         }
         Command::Version => {
             println!("Lighting {} (Lantern Keeper)", env!("CARGO_PKG_VERSION"));
@@ -69,6 +74,85 @@ fn main() -> anyhow::Result<()> {
         Command::Retrieve { phrase, json } => {
             let url = cli.service_url.unwrap_or_else(default_service_url);
             run_cli_command(&url, CliCommand::Retrieve { phrase, json })
+        }
+        Command::Remember {
+            content,
+            kind,
+            project_id,
+            confidence,
+            importance,
+            derived_from,
+            supersedes,
+            contradicts,
+            supports,
+            agent,
+            json,
+        } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(
+                &url,
+                CliCommand::Remember {
+                    content,
+                    kind,
+                    project_id,
+                    confidence,
+                    importance,
+                    derived_from,
+                    supersedes,
+                    contradicts,
+                    supports,
+                    agent,
+                    json,
+                },
+            )
+        }
+        Command::Recall {
+            project_id,
+            phrase,
+            include_inactive,
+            json,
+        } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(
+                &url,
+                CliCommand::Recall {
+                    project_id,
+                    phrase,
+                    include_inactive,
+                    json,
+                },
+            )
+        }
+        Command::Context {
+            project_id,
+            query,
+            json,
+        } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(
+                &url,
+                CliCommand::Context {
+                    project_id,
+                    query,
+                    json,
+                },
+            )
+        }
+        Command::MemorySupersede { memory_id, json } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(&url, CliCommand::MemorySupersede { memory_id, json })
+        }
+        Command::Export { output } => {
+            init_tracing();
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("failed to create tokio runtime")?;
+            rt.block_on(async {
+                tokio::spawn(export_data(output))
+                    .await
+                    .context("Lighting export task panicked")?
+            })
         }
         Command::ProjectHandoff { project_id, json } => {
             let url = cli.service_url.unwrap_or_else(default_service_url);
@@ -184,6 +268,61 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Record a derived, provenance-bearing Memory.
+    Remember {
+        content: String,
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        project_id: Option<String>,
+        #[arg(long, default_value_t = 0.8)]
+        confidence: f32,
+        #[arg(long, default_value_t = 0.5)]
+        importance: f32,
+        #[arg(long)]
+        derived_from: Vec<String>,
+        #[arg(long)]
+        supersedes: Vec<String>,
+        #[arg(long)]
+        contradicts: Vec<String>,
+        #[arg(long)]
+        supports: Vec<String>,
+        #[arg(long, default_value = "lucy")]
+        agent: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Recall active Memory records.
+    Recall {
+        #[arg(long)]
+        project_id: Option<String>,
+        #[arg(long)]
+        phrase: Option<String>,
+        #[arg(long)]
+        include_inactive: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Build a compact working context from active Memory records.
+    Context {
+        #[arg(long)]
+        project_id: Option<String>,
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Mark a Memory as superseded while retaining its history.
+    MemorySupersede {
+        memory_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export logical records to an engine-independent backup directory.
+    Export {
+        /// Destination directory for manifest.json and NDJSON files.
+        output: std::path::PathBuf,
+    },
     /// Produce a Codex-ready handoff for a Project.
     ProjectHandoff {
         /// Project ID (UUID).
@@ -274,8 +413,17 @@ async fn serve() -> anyhow::Result<()> {
 
     info!("Memory-path schema migrations applied successfully");
 
+    let memory_repo = SurrealMemoryRepository::new(store.clone());
+    memory_repo
+        .migrate()
+        .await
+        .context("failed to apply Living Memory schema migration")?;
+
+    info!("Living Memory schema migration applied successfully");
+
     let source_repo: Arc<dyn lighting_core::SourceRepository> = Arc::new(repo);
     let mp_repo: Arc<dyn lighting_core::MemoryPathRepository> = Arc::new(mp_repo);
+    let memory_repo: Arc<dyn lighting_core::MemoryRepository> = Arc::new(memory_repo);
     let source_service = SourceService::new(Arc::clone(&source_repo));
     let project_service = ProjectService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
     let marker_service = MarkerService::new(Arc::clone(&mp_repo));
@@ -285,6 +433,7 @@ async fn serve() -> anyhow::Result<()> {
         MarkerRetrievalService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
     let project_retrieval_service =
         ProjectRetrievalService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
+    let memory_service = MemoryService::new(Arc::clone(&memory_repo));
     let tethers_client = match TethersEngineClient::from_env() {
         Ok(client) => Some(client),
         Err(TethersEngineError::MissingEnginePath) => None,
@@ -302,6 +451,7 @@ async fn serve() -> anyhow::Result<()> {
         retrieval_service: Some(retrieval_service),
         project_retrieval_service: Some(project_retrieval_service),
         tethers_client,
+        memory_service: Some(memory_service),
     };
     app_state.mark_ready();
 
@@ -314,6 +464,35 @@ async fn serve() -> anyhow::Result<()> {
         .await
         .context("Lighting server failed")?;
 
+    Ok(())
+}
+
+async fn export_data(output: std::path::PathBuf) -> anyhow::Result<()> {
+    let store_config = StoreConfig::from_env();
+    let store = SurrealStore::connect(&store_config)
+        .await
+        .context("failed to connect to the configured Lantern store")?;
+    store
+        .initialise_schema()
+        .await
+        .context("failed to initialise the base Lantern schema")?;
+    SurrealSourceRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the Source schema")?;
+    SurrealMemoryPathRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the project/memory-path schema")?;
+    SurrealMemoryRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the Living Memory schema")?;
+    let summary: ExportSummary = store
+        .export_to(&output)
+        .await
+        .context("failed to export Lantern records")?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
     Ok(())
 }
 

@@ -1,18 +1,18 @@
 //! Live SurrealDB integration tests for project-scoped retrieval.
 
+use axum::Router;
 use axum::body::Body;
 use axum::http::{self, Request, StatusCode};
-use axum::Router;
 use lighting_service::episode_ops::EpisodeService;
 use lighting_service::marker_ops::MarkerService;
 use lighting_service::marker_retrieval_ops::MarkerRetrievalService;
 use lighting_service::project_retrieval_ops::ProjectRetrievalService;
 use lighting_service::source_ops::SourceService;
-use lighting_service::{build_router, AppState, EpisodeAssociationService, ProjectService};
+use lighting_service::{AppState, EpisodeAssociationService, ProjectService, build_router};
 use lighting_store_surreal::{
     StoreConfig, SurrealMemoryPathRepository, SurrealSourceRepository, SurrealStore,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -30,6 +30,7 @@ fn db() -> String {
 async fn app(d: &str) -> Router {
     dotenvy::dotenv().ok();
     let mut c = StoreConfig::from_env();
+    c.storage = "remote-surreal".to_owned();
     c.namespace = "lighting_test".to_owned();
     c.database = d.to_string();
     let s = SurrealStore::connect(&c).await.expect("connect");
@@ -55,6 +56,7 @@ async fn app(d: &str) -> Router {
             Arc::clone(&sr),
         )),
         tethers_client: None,
+        memory_service: None,
     })
 }
 async fn app_default() -> Router {
@@ -271,9 +273,10 @@ async fn project_retrieval_returns_exact_authoritative_excerpts() {
     );
 
     // --- why_matched uses project name ---
-    assert!(eps
-        .iter()
-        .all(|e| e["why_matched"].as_str().unwrap().contains("Test Project")));
+    assert!(
+        eps.iter()
+            .all(|e| e["why_matched"].as_str().unwrap().contains("Test Project"))
+    );
 }
 
 #[tokio::test]
@@ -327,10 +330,12 @@ async fn record_result_is_idempotent_and_appears_in_project_handoff() {
     assert_eq!(ep["start_byte"], 0);
     assert_eq!(ep["end_byte"], content_len);
     assert_eq!(ep["excerpt"], content);
-    assert!(ep["why_matched"]
-        .as_str()
-        .unwrap()
-        .contains("Writeback Project"));
+    assert!(
+        ep["why_matched"]
+            .as_str()
+            .unwrap()
+            .contains("Writeback Project")
+    );
 
     let handoff = body["context_package"]["content"].as_str().unwrap();
     assert!(handoff.contains(&episode_id));
@@ -455,6 +460,7 @@ async fn project_retrieval_with_missing_authoritative_source_returns_safe_409() 
         .unwrap();
     // Delete the Source from the isolated database
     let mut sc = StoreConfig::from_env();
+    sc.storage = "remote-surreal".to_owned();
     sc.namespace = "lighting_test".to_owned();
     sc.database = db_name;
     let test_store = SurrealStore::connect(&sc).await.expect("connect");

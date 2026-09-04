@@ -10,20 +10,25 @@ use std::{fmt, str::FromStr};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod memory;
 pub mod memory_path;
 pub mod source;
 pub mod source_outline;
 
+pub use memory::{
+    Memory, MemoryError, MemoryKind, MemoryRepository, MemoryRepositoryError, MemorySearchQuery,
+    MemoryStatus, NewMemory,
+};
 pub use memory_path::{
     Episode, EpisodeError, EpisodeMarkerLink, EpisodeProjectLink, EpisodeTitle, Marker,
     MarkerError, MemoryPathRepository, MemoryPathRepositoryError, Project, ProjectError,
     ProjectLinkKind, ProjectName, ProjectStatus, SourceRange, SourceRangeError, StoreMarkerResult,
 };
 pub use source::{
-    find_all_matches, NewSource, Source, SourceContent, SourceError, SourceFingerprint, SourceId,
-    SourceKind, SourceRepository, SourceRepositoryError, SourceTitle, StoreSourceResult,
+    NewSource, Source, SourceContent, SourceError, SourceFingerprint, SourceId, SourceKind,
+    SourceRepository, SourceRepositoryError, SourceTitle, StoreSourceResult, find_all_matches,
 };
-pub use source_outline::{parse_outline, Heading, MarkdownOutline};
+pub use source_outline::{Heading, MarkdownOutline, parse_outline};
 
 /// Lighting service version.
 pub const LIGHTING_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -80,6 +85,7 @@ identifier_type!(EpisodeId);
 identifier_type!(MarkerId);
 identifier_type!(ProjectId);
 identifier_type!(TopicId);
+identifier_type!(MemoryId);
 
 #[cfg(test)]
 mod tests {

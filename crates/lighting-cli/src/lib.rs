@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use clap::Subcommand;
 use serde::Deserialize;
 
@@ -43,6 +43,54 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             cmd_source_history(&client, &path, kind, json)
         }
         CliCommand::Retrieve { phrase, json } => cmd_retrieve(&client, &phrase, json),
+        CliCommand::Remember {
+            content,
+            kind,
+            project_id,
+            confidence,
+            importance,
+            derived_from,
+            supersedes,
+            contradicts,
+            supports,
+            agent,
+            json,
+        } => cmd_remember(
+            &client,
+            RememberInput {
+                content: &content,
+                kind: &kind,
+                project_id: project_id.as_deref(),
+                confidence,
+                importance,
+                derived_from,
+                supersedes,
+                contradicts,
+                supports,
+                agent: &agent,
+                json,
+            },
+        ),
+        CliCommand::Recall {
+            project_id,
+            phrase,
+            include_inactive,
+            json,
+        } => cmd_recall(
+            &client,
+            project_id.as_deref(),
+            phrase.as_deref(),
+            include_inactive,
+            json,
+        ),
+        CliCommand::Context {
+            project_id,
+            query,
+            json,
+        } => cmd_context(&client, project_id.as_deref(), query.as_deref(), json),
+        CliCommand::MemorySupersede { memory_id, json } => {
+            cmd_memory_supersede(&client, &memory_id, json)
+        }
         CliCommand::ProjectHandoff { project_id, json } => {
             cmd_project_handoff(&client, &project_id, json)
         }
@@ -116,6 +164,58 @@ pub enum CliCommand {
         /// The remembered phrase to look up.
         phrase: String,
         /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record a derived, provenance-bearing Memory.
+    Remember {
+        /// Memory content supplied by the agent.
+        content: String,
+        /// One of fact, decision, preference, instruction, lesson, gotcha, open_loop, workflow, summary, entity.
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        project_id: Option<String>,
+        #[arg(long, default_value_t = 0.8)]
+        confidence: f32,
+        #[arg(long, default_value_t = 0.5)]
+        importance: f32,
+        #[arg(long)]
+        derived_from: Vec<String>,
+        #[arg(long)]
+        supersedes: Vec<String>,
+        #[arg(long)]
+        contradicts: Vec<String>,
+        #[arg(long)]
+        supports: Vec<String>,
+        #[arg(long, default_value = "lucy")]
+        agent: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Recall active Memory records using lexical/project filters.
+    Recall {
+        #[arg(long)]
+        project_id: Option<String>,
+        #[arg(long)]
+        phrase: Option<String>,
+        #[arg(long)]
+        include_inactive: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Build a compact working context from active Memory records.
+    Context {
+        #[arg(long)]
+        project_id: Option<String>,
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Mark a Memory as superseded while retaining its history.
+    MemorySupersede {
+        memory_id: String,
         #[arg(long)]
         json: bool,
     },
@@ -792,6 +892,131 @@ fn cmd_retrieve(client: &HttpClient, phrase: &str, json: bool) -> anyhow::Result
     Ok(())
 }
 
+struct RememberInput<'a> {
+    content: &'a str,
+    kind: &'a str,
+    project_id: Option<&'a str>,
+    confidence: f32,
+    importance: f32,
+    derived_from: Vec<String>,
+    supersedes: Vec<String>,
+    contradicts: Vec<String>,
+    supports: Vec<String>,
+    agent: &'a str,
+    json: bool,
+}
+
+fn cmd_remember(client: &HttpClient, input: RememberInput<'_>) -> anyhow::Result<()> {
+    if input.content.trim().is_empty() {
+        bail!("memory content must not be blank");
+    }
+    let mut request = serde_json::json!({
+        "content": input.content,
+        "kind": input.kind,
+        "confidence": input.confidence,
+        "importance": input.importance,
+        "derived_from": input.derived_from,
+        "supersedes": input.supersedes,
+        "contradicts": input.contradicts,
+        "supports": input.supports,
+        "agent": input.agent,
+    });
+    if let Some(project_id) = input.project_id {
+        request["project_id"] = serde_json::json!(project_id);
+    }
+
+    let response = client
+        .post_json("/api/v1/memories", &request)
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if input.json {
+        println!("{}", serde_json::to_string_pretty(&body).unwrap());
+    } else {
+        let memory = body
+            .get("memory")
+            .ok_or_else(|| anyhow::anyhow!("unexpected API response: {body}"))?;
+        println!("Memory ID : {}", memory["id"]);
+        println!("Kind      : {}", memory["kind"]);
+        println!("Status    : {}", memory["status"]);
+        println!("Content   : {}", memory["content"]);
+        println!("Agent     : {}", memory["agent"]);
+        println!("Confidence: {}", memory["confidence"]);
+        println!("Recorded  : {}", memory["recorded_at"]);
+    }
+    Ok(())
+}
+
+fn cmd_recall(
+    client: &HttpClient,
+    project_id: Option<&str>,
+    phrase: Option<&str>,
+    include_inactive: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let body = serde_json::json!({
+        "project_id": project_id,
+        "phrase": phrase,
+        "include_inactive": include_inactive,
+    });
+    let response = client
+        .post_json("/api/v1/memories/recall", &body)
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body).unwrap());
+        return Ok(());
+    }
+    if body["abstained"].as_bool().unwrap_or(false) {
+        println!("I do not have reliable memory of this.");
+        if let Some(reason) = body["reason"].as_str() {
+            println!("{reason}");
+        }
+        return Ok(());
+    }
+    for memory in body["memories"].as_array().into_iter().flatten() {
+        println!(
+            "- [{} | {} | confidence {}] {}",
+            memory["kind"], memory["status"], memory["confidence"], memory["content"]
+        );
+    }
+    Ok(())
+}
+
+fn cmd_context(
+    client: &HttpClient,
+    project_id: Option<&str>,
+    query: Option<&str>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let body = serde_json::json!({"project_id": project_id, "query": query});
+    let response = client
+        .post_json("/api/v1/memories/context", &body)
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body).unwrap());
+    } else if let Some(context) = body["context"].as_str() {
+        print!("{context}");
+    }
+    Ok(())
+}
+
+fn cmd_memory_supersede(client: &HttpClient, memory_id: &str, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .post_json(
+            &format!("/api/v1/memories/{memory_id}/supersede"),
+            &serde_json::json!({}),
+        )
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body).unwrap());
+    } else {
+        println!("Memory superseded: {memory_id}");
+    }
+    Ok(())
+}
+
 fn cmd_project_handoff(client: &HttpClient, project_id: &str, json: bool) -> anyhow::Result<()> {
     // Validate UUID locally before any HTTP request.
     if uuid::Uuid::parse_str(project_id).is_err() {
@@ -1299,10 +1524,12 @@ mod tests {
         let client = HttpClient::new("http://127.0.0.1:1");
         let result = cmd_retrieve(&client, "   ", false);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("must not be blank"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("must not be blank")
+        );
     }
 
     #[test]
