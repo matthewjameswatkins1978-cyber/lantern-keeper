@@ -43,7 +43,9 @@ async fn stores_recalls_and_supersedes_memory_without_losing_history()
         .await?;
     let repository = SurrealMemoryRepository::new(store.clone());
     repository.migrate().await?;
-    SurrealLedgerRepository::new(store.clone()).migrate().await?;
+    SurrealLedgerRepository::new(store.clone())
+        .migrate()
+        .await?;
 
     let now = Utc::now();
     let memory = Memory::new(NewMemory {
@@ -116,7 +118,8 @@ async fn stores_recalls_and_supersedes_memory_without_losing_history()
 }
 
 #[tokio::test]
-async fn historical_queries_and_lineage_preserve_evolution() -> Result<(), Box<dyn std::error::Error>> {
+async fn historical_queries_and_lineage_preserve_evolution()
+-> Result<(), Box<dyn std::error::Error>> {
     let path = test_path();
     let config = embedded_config(path.clone());
     let store = SurrealStore::connect(&config).await?;

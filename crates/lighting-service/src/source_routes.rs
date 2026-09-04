@@ -1,6 +1,6 @@
 //! HTTP handlers for the Source API.
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 
 use lighting_core::{SourceId, SourceKind};
 
@@ -20,7 +20,7 @@ pub async fn create_source(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -64,7 +64,7 @@ pub async fn get_source(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -107,7 +107,7 @@ pub async fn get_source_history(
                     code: "invalid_source".to_owned(),
                     message: "query parameter 'kind' is required".to_owned(),
                 },
-            )
+            );
         }
     };
     let title = match params.get("title") {
@@ -119,7 +119,7 @@ pub async fn get_source_history(
                     code: "invalid_source".to_owned(),
                     message: "query parameter 'title' is required".to_owned(),
                 },
-            )
+            );
         }
     };
     if title.trim().is_empty() {
@@ -137,7 +137,7 @@ pub async fn get_source_history(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -151,7 +151,7 @@ pub async fn get_source_history(
                     code: "invalid_source".to_owned(),
                     message: format!("unsupported source kind: {kind_raw}"),
                 },
-            )
+            );
         }
     };
 
@@ -190,7 +190,7 @@ pub async fn get_source_outline(
                     code: "invalid_source".to_owned(),
                     message: "query parameter 'kind' is required".to_owned(),
                 },
-            )
+            );
         }
     };
     let title = match params.get("title") {
@@ -202,7 +202,7 @@ pub async fn get_source_outline(
                     code: "invalid_source".to_owned(),
                     message: "query parameter 'title' is required".to_owned(),
                 },
-            )
+            );
         }
     };
     if title.trim().is_empty() {
@@ -220,7 +220,7 @@ pub async fn get_source_outline(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -234,7 +234,7 @@ pub async fn get_source_outline(
                     code: "invalid_source".to_owned(),
                     message: format!("unsupported source kind: {kind_raw}"),
                 },
-            )
+            );
         }
     };
 

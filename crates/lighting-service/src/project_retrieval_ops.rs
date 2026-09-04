@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use lighting_core::{find_all_matches, MemoryPathRepository, ProjectId, SourceRepository};
+use lighting_core::{MemoryPathRepository, ProjectId, SourceRepository, find_all_matches};
 
 use crate::project_retrieval_dto::{
     ProjectContextPackage, ProjectRetrievalResponse, ProjectRetrievedEpisode, ProjectSummary,

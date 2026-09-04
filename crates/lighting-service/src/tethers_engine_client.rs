@@ -366,7 +366,7 @@ fn join_error_to_io(error: JoinError) -> TethersEngineError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tethers_preview::{build_preview_request, PreviewInput, TethersStatus};
+    use crate::tethers_preview::{PreviewInput, TethersStatus, build_preview_request};
     use std::fs;
     use std::process::Command as StdCommand;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -525,8 +525,9 @@ mod tests {
     }
 
     fn process_is_running(pid: u32) -> bool {
-        let script =
-            format!("if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}");
+        let script = format!(
+            "if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}"
+        );
         StdCommand::new("powershell.exe")
             .args([
                 "-NoProfile",

@@ -1,8 +1,8 @@
 //! HTTP handler for project-scoped retrieval.
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 
 use crate::project_retrieval_dto::ProjectRetrievalRequest;
 use crate::source_dto::ApiError;
@@ -25,7 +25,7 @@ pub async fn retrieve_by_project(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 

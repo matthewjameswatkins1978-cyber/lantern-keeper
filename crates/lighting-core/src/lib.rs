@@ -10,19 +10,19 @@ use std::{fmt, str::FromStr};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod ledger;
 pub mod memory;
 pub mod memory_path;
-pub mod ledger;
 pub mod source;
 pub mod source_outline;
 
+pub use ledger::{
+    LedgerEvent, LedgerEventError, LedgerEventRepository, LedgerIngestResult,
+    LedgerRepositoryError, LedgerRole,
+};
 pub use memory::{
     Memory, MemoryError, MemoryKind, MemoryRepository, MemoryRepositoryError, MemorySearchQuery,
     MemoryStatus, NewMemory,
-};
-pub use ledger::{
-    LedgerEvent, LedgerEventError, LedgerEventRepository, LedgerIngestResult, LedgerRepositoryError,
-    LedgerRole,
 };
 pub use memory_path::{
     Episode, EpisodeError, EpisodeMarkerLink, EpisodeProjectLink, EpisodeTitle, Marker,

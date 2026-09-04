@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use lighting_core::{find_all_matches, Marker, MemoryPathRepository, SourceRepository};
+use lighting_core::{Marker, MemoryPathRepository, SourceRepository, find_all_matches};
 
 use crate::marker_retrieval_dto::{MarkerMatch, MarkerRetrievalResponse, RetrievedEpisode};
 use crate::source_dto::ApiError;

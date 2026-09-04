@@ -6,13 +6,12 @@ use lighting_cli::{CliCommand, default_service_url, run_cli_command, validate_se
 use lighting_service::source_ops::SourceService;
 use lighting_service::tethers_engine_client::{TethersEngineClient, TethersEngineError};
 use lighting_service::{
-    AppState, EpisodeAssociationService, EpisodeService, MarkerRetrievalService, MarkerService,
-    MemoryService, ProjectRetrievalService, ProjectService, build_router,
-    LedgerService,
+    AppState, EpisodeAssociationService, EpisodeService, LedgerService, MarkerRetrievalService,
+    MarkerService, MemoryService, ProjectRetrievalService, ProjectService, build_router,
 };
 use lighting_store_surreal::{
-    ExportSummary, StoreConfig, SurrealMemoryPathRepository, SurrealMemoryRepository,
-    SurrealSourceRepository, SurrealStore, SurrealLedgerRepository,
+    ExportSummary, StoreConfig, SurrealLedgerRepository, SurrealMemoryPathRepository,
+    SurrealMemoryRepository, SurrealSourceRepository, SurrealStore,
 };
 use tokio::net::TcpListener;
 use tracing::info;

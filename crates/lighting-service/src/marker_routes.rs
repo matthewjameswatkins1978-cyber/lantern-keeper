@@ -1,8 +1,8 @@
 //! HTTP handlers for the Marker API.
 
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::Json;
 
 use lighting_core::MarkerId;
 
@@ -27,7 +27,7 @@ pub async fn create_marker(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -69,7 +69,7 @@ pub async fn get_marker(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -82,7 +82,7 @@ pub async fn get_marker(
                     code: "invalid_marker_id".to_owned(),
                     message: "Marker ID must not be empty".to_owned(),
                 },
-            )
+            );
         }
     };
 
@@ -121,7 +121,7 @@ pub async fn lookup_marker(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 

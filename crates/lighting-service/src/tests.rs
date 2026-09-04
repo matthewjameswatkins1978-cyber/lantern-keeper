@@ -118,8 +118,8 @@ mod router_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
-        memory_service: None,
-        ledger_service: None,
+            memory_service: None,
+            ledger_service: None,
         };
         build_router(state)
     }

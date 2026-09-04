@@ -1,6 +1,6 @@
 //! HTTP handlers for the Project API.
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 
 use lighting_core::{ProjectId, SourceContent, SourceKind};
 
@@ -24,7 +24,7 @@ pub async fn create_project(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -59,7 +59,7 @@ pub async fn show_project(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -72,7 +72,7 @@ pub async fn show_project(
                     code: "invalid_project_id".to_owned(),
                     message: "Project ID must not be empty".to_owned(),
                 },
-            )
+            );
         }
     };
 
@@ -105,7 +105,7 @@ pub async fn record_result(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -115,7 +115,7 @@ pub async fn record_result(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -128,7 +128,7 @@ pub async fn record_result(
                     code: "invalid_project_id".to_owned(),
                     message: "Project ID must not be empty".to_owned(),
                 },
-            )
+            );
         }
     };
 
@@ -145,7 +145,7 @@ pub async fn record_result(
                     code: "project_not_found".to_owned(),
                     message: "No Project exists with the given ID".to_owned(),
                 },
-            )
+            );
         }
         Err(e) => {
             let api_error: ApiError = e.into();
@@ -167,7 +167,7 @@ pub async fn record_result(
                     code: "invalid_result".to_owned(),
                     message: format!("unsupported kind: {other}"),
                 },
-            )
+            );
         }
     };
 
@@ -195,7 +195,7 @@ pub async fn record_result(
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ApiError::internal_error(),
-            )
+            );
         }
     };
 
@@ -208,7 +208,7 @@ pub async fn record_result(
                     code: "invalid_result".to_owned(),
                     message: "result content must not be empty".to_owned(),
                 },
-            )
+            );
         }
     };
 
@@ -245,7 +245,7 @@ pub async fn list_projects(State(state): State<AppState>) -> (StatusCode, Json<s
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -279,7 +279,7 @@ pub async fn add_file(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -289,7 +289,7 @@ pub async fn add_file(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -302,7 +302,7 @@ pub async fn add_file(
                     code: "invalid_project_id".to_owned(),
                     message: "Project ID must not be empty".to_owned(),
                 },
-            )
+            );
         }
     };
 
@@ -320,7 +320,7 @@ pub async fn add_file(
                     code: "project_not_found".to_owned(),
                     message: "No Project exists with the given ID".to_owned(),
                 },
-            )
+            );
         }
         Err(e) => {
             let api_error: ApiError = e.into();
@@ -342,7 +342,7 @@ pub async fn add_file(
                     code: "invalid_add_file".to_owned(),
                     message: format!("unsupported kind: {other}"),
                 },
-            )
+            );
         }
     };
 
@@ -373,7 +373,7 @@ pub async fn add_file(
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ApiError::internal_error(),
-            )
+            );
         }
     };
 
@@ -386,7 +386,7 @@ pub async fn add_file(
                     code: "invalid_add_file".to_owned(),
                     message: "file content must not be empty".to_owned(),
                 },
-            )
+            );
         }
     };
 
