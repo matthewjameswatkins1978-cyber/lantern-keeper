@@ -6,13 +6,13 @@ members = [
     "crates/lighting-service",
     "crates/lighting-store-surreal",
 ]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://example.invalid/lantern-keeper"
-rust-version = "1.89"
+repository = "https://github.com/matthewjameswatkins1978-cyber/lantern-keeper"
+rust-version = "1.98.1"
 
 [workspace.dependencies]
 anyhow = "1.0"
@@ -24,9 +24,9 @@ dotenvy = "0.15"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-surrealdb = { version = "3.2", default-features = false, features = ["protocol-ws"] }
+surrealdb = { version = "=3.3.0-beta.3", default-features = false, features = ["kv-surrealkv", "protocol-ws"] }
 thiserror = "2.0"
-tokio = { version = "1", features = ["macros", "net", "process", "rt-multi-thread", "signal", "time", "io-util"] }
+tokio = { version = "1", features = ["fs", "macros", "net", "process", "rt-multi-thread", "signal", "time", "io-util"] }
 tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

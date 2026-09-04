@@ -1,14 +1,18 @@
-use std::env;
+use std::{env, path::PathBuf};
 
 use serde::Serialize;
 use thiserror::Error;
 
+const DEFAULT_STORAGE: &str = "embedded-surrealkv";
+const DEFAULT_PATH: &str = ".lighting-data/surrealkv";
 const DEFAULT_ENDPOINT: &str = "ws://127.0.0.1:8000";
 const DEFAULT_NAMESPACE: &str = "lantern_keeper";
 const DEFAULT_DATABASE: &str = "lighting_dev";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoreConfig {
+    pub storage: String,
+    pub path: PathBuf,
     pub endpoint: String,
     pub namespace: String,
     pub database: String,
@@ -18,6 +22,8 @@ pub struct StoreConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct RedactedStoreConfig {
+    pub storage: String,
+    pub path: PathBuf,
     pub endpoint: String,
     pub namespace: String,
     pub database: String,
@@ -27,6 +33,10 @@ pub struct RedactedStoreConfig {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ConfigError {
+    #[error("LIGHTING_STORAGE must be embedded-surrealkv or remote-surreal")]
+    UnsupportedStorage,
+    #[error("LIGHTING_SURREAL_PATH cannot be empty for embedded-surrealkv")]
+    EmptyPath,
     #[error("LIGHTING_SURREAL_ENDPOINT cannot be empty")]
     EmptyEndpoint,
     #[error("LIGHTING_SURREAL_NAMESPACE cannot be empty")]
@@ -40,6 +50,8 @@ pub enum ConfigError {
 impl StoreConfig {
     pub fn from_env() -> Self {
         Self {
+            storage: env_or_default("LIGHTING_STORAGE", DEFAULT_STORAGE),
+            path: PathBuf::from(env_or_default("LIGHTING_SURREAL_PATH", DEFAULT_PATH)),
             endpoint: env_or_default("LIGHTING_SURREAL_ENDPOINT", DEFAULT_ENDPOINT),
             namespace: env_or_default("LIGHTING_SURREAL_NAMESPACE", DEFAULT_NAMESPACE),
             database: env_or_default("LIGHTING_SURREAL_DATABASE", DEFAULT_DATABASE),
@@ -50,6 +62,8 @@ impl StoreConfig {
 
     pub fn redacted(&self) -> RedactedStoreConfig {
         RedactedStoreConfig {
+            storage: self.storage.clone(),
+            path: self.path.clone(),
             endpoint: self.endpoint.clone(),
             namespace: self.namespace.clone(),
             database: self.database.clone(),
@@ -59,6 +73,17 @@ impl StoreConfig {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if !matches!(
+            self.storage.as_str(),
+            "embedded-surrealkv" | "remote-surreal"
+        ) {
+            return Err(ConfigError::UnsupportedStorage);
+        }
+
+        if self.storage == "embedded-surrealkv" && self.path.as_os_str().is_empty() {
+            return Err(ConfigError::EmptyPath);
+        }
+
         if self.endpoint.trim().is_empty() {
             return Err(ConfigError::EmptyEndpoint);
         }
@@ -84,6 +109,10 @@ impl StoreConfig {
             .or_else(|| self.endpoint.strip_prefix("wss://"))
             .unwrap_or(&self.endpoint)
     }
+
+    pub fn uses_embedded_surrealkv(&self) -> bool {
+        self.storage == "embedded-surrealkv"
+    }
 }
 
 fn env_or_default(name: &str, default: &str) -> String {
@@ -104,11 +133,15 @@ mod tests {
     }
 
     fn clear_env() {
-        env::remove_var("LIGHTING_SURREAL_ENDPOINT");
-        env::remove_var("LIGHTING_SURREAL_NAMESPACE");
-        env::remove_var("LIGHTING_SURREAL_DATABASE");
-        env::remove_var("LIGHTING_SURREAL_USERNAME");
-        env::remove_var("LIGHTING_SURREAL_PASSWORD");
+        unsafe {
+            env::remove_var("LIGHTING_STORAGE");
+            env::remove_var("LIGHTING_SURREAL_PATH");
+            env::remove_var("LIGHTING_SURREAL_ENDPOINT");
+            env::remove_var("LIGHTING_SURREAL_NAMESPACE");
+            env::remove_var("LIGHTING_SURREAL_DATABASE");
+            env::remove_var("LIGHTING_SURREAL_USERNAME");
+            env::remove_var("LIGHTING_SURREAL_PASSWORD");
+        }
     }
 
     #[test]
@@ -118,6 +151,8 @@ mod tests {
 
         let config = StoreConfig::from_env();
 
+        assert_eq!(config.storage, "embedded-surrealkv");
+        assert_eq!(config.path, PathBuf::from(".lighting-data/surrealkv"));
         assert_eq!(config.endpoint, "ws://127.0.0.1:8000");
         assert_eq!(config.namespace, "lantern_keeper");
         assert_eq!(config.database, "lighting_dev");
@@ -128,6 +163,8 @@ mod tests {
     #[test]
     fn redacts_password_completely() {
         let config = StoreConfig {
+            storage: "remote-surreal".to_owned(),
+            path: PathBuf::from(".lighting-data/surrealkv"),
             endpoint: "ws://127.0.0.1:8000".to_owned(),
             namespace: "lantern_keeper".to_owned(),
             database: "lighting_dev".to_owned(),

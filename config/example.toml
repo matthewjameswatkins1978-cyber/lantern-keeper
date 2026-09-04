@@ -9,9 +9,12 @@ port = 4317
 [service.log]
 level = "info"
 
-# SurrealDB placeholders for later jobs.
-# Storage is not configured in LK-001.
+# The normal local path is embedded, versioned SurrealKV. The current
+# application reads these settings from environment variables; this file is
+# retained as a human-readable configuration reference.
 [storage.surreal]
+storage = "embedded-surrealkv"
+path = ".lighting-data/surrealkv"
 endpoint = "ws://127.0.0.1:8000"
 namespace = "lantern_keeper"
 database = "lighting_dev"
