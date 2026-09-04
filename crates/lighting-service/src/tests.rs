@@ -9,7 +9,7 @@ mod router_tests {
 
     use axum::body::Body;
     use axum::http::{self, Request, StatusCode};
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use tower::ServiceExt;
 
     use lighting_core::{
@@ -18,7 +18,7 @@ mod router_tests {
     };
 
     use crate::source_ops::SourceService;
-    use crate::{build_router, AppState};
+    use crate::{AppState, build_router};
 
     // ---------------------------------------------------------------------------
     // Test helpers
@@ -118,6 +118,7 @@ mod router_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
+            memory_service: None,
         };
         build_router(state)
     }
@@ -544,6 +545,7 @@ mod router_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
+            memory_service: None,
         };
         build_router(state)
     }
@@ -794,6 +796,7 @@ mod router_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
+            memory_service: None,
         };
         build_router(state)
     }
@@ -1122,10 +1125,10 @@ mod marker_revision_tests {
     use std::sync::{Arc, Mutex};
 
     use lighting_core::{
-        find_all_matches, Episode, EpisodeId, EpisodeMarkerLink, EpisodeProjectLink, EpisodeTitle,
-        Marker, MarkerId, MemoryPathRepository, MemoryPathRepositoryError, NewSource, Project,
-        ProjectId, Source, SourceContent, SourceId, SourceKind, SourceRange, SourceRepository,
-        SourceRepositoryError, SourceTitle, StoreMarkerResult, StoreSourceResult,
+        Episode, EpisodeId, EpisodeMarkerLink, EpisodeProjectLink, EpisodeTitle, Marker, MarkerId,
+        MemoryPathRepository, MemoryPathRepositoryError, NewSource, Project, ProjectId, Source,
+        SourceContent, SourceId, SourceKind, SourceRange, SourceRepository, SourceRepositoryError,
+        SourceTitle, StoreMarkerResult, StoreSourceResult, find_all_matches,
     };
 
     use crate::marker_retrieval_ops::MarkerRetrievalService;
@@ -1482,7 +1485,7 @@ mod project_add_file_tests {
 
     use axum::body::Body;
     use axum::http::{self, Request, StatusCode};
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use tower::ServiceExt;
 
     use lighting_core::{
@@ -1493,7 +1496,7 @@ mod project_add_file_tests {
 
     use crate::project_ops::ProjectService;
     use crate::source_ops::SourceService;
-    use crate::{build_router, AppState};
+    use crate::{AppState, build_router};
 
     // ── Stub that supports Source + Project + Episode + linking ──────────
 
@@ -1711,16 +1714,14 @@ mod project_add_file_tests {
             let inner = self.inner.lock().unwrap();
             // Find an episode linked to this project with this source_id
             for link in &inner.project_links {
-                if link.project_id() == project_id {
-                    if let Some(ep) = inner
+                if link.project_id() == project_id
+                    && let Some(ep) = inner
                         .episodes
                         .iter()
                         .find(|e| *e.id() == *link.episode_id())
-                    {
-                        if ep.source_range().source_id() == source_id {
-                            return Ok(Some(ep.clone()));
-                        }
-                    }
+                    && ep.source_range().source_id() == source_id
+                {
+                    return Ok(Some(ep.clone()));
                 }
             }
             Ok(None)
@@ -1747,6 +1748,7 @@ mod project_add_file_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
+            memory_service: None,
         };
         build_router(state)
     }
@@ -2059,6 +2061,7 @@ mod project_add_file_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: Some(tethers_client),
+            memory_service: None,
         };
         build_router(state)
     }
@@ -2454,6 +2457,7 @@ mod project_add_file_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: None,
+            memory_service: None,
         };
         let app = build_router(state);
 
@@ -2569,6 +2573,7 @@ mod project_add_file_tests {
             retrieval_service: None,
             project_retrieval_service: None,
             tethers_client: Some(client),
+            memory_service: None,
         };
         let app = build_router(state);
 

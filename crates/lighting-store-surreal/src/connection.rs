@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use surrealdb::{
-    engine::remote::ws::{Client, Ws},
-    opt::auth::Root,
     Surreal,
+    engine::any::{self, Any},
+    opt::{Config, auth::Root},
 };
 use thiserror::Error;
 use tokio::time::timeout;
@@ -15,7 +15,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct SurrealStore {
-    db: Surreal<Client>,
+    db: Surreal<Any>,
 }
 
 #[derive(Debug, Error)]
@@ -44,26 +44,43 @@ impl SurrealStore {
     pub async fn connect(config: &StoreConfig) -> Result<Self, StoreError> {
         config.validate()?;
 
-        let db = Surreal::new::<Ws>(config.websocket_address())
+        let root = Root {
+            username: config.username.clone(),
+            password: config.password.clone(),
+        };
+        let connection_config = if config.username.is_empty() && config.password.is_empty() {
+            Config::new()
+        } else {
+            Config::new().user(root.clone())
+        };
+        let endpoint = if config.uses_embedded_surrealkv() {
+            format!(
+                "surrealkv://{}?versioned=true&sync=every",
+                config.path.display()
+            )
+        } else {
+            config.endpoint.clone()
+        };
+
+        let db = any::connect((endpoint.clone(), connection_config))
             .await
             .map_err(|source| StoreError::Connect {
-                endpoint: config.endpoint.clone(),
+                endpoint,
                 source: Box::new(source),
             })?;
 
-        if !config.username.is_empty() || !config.password.is_empty() {
-            db.signin(Root {
-                username: config.username.clone(),
-                password: config.password.clone(),
-            })
-            .await
-            .map_err(|source| StoreError::Authenticate(Box::new(source)))?;
+        if !config.uses_embedded_surrealkv()
+            && (!config.username.is_empty() || !config.password.is_empty())
+        {
+            db.signin(root)
+                .await
+                .map_err(|error| StoreError::Authenticate(Box::new(error)))?;
         }
 
         db.use_ns(&config.namespace)
             .use_db(&config.database)
             .await
-            .map_err(|source| StoreError::Select(Box::new(source)))?;
+            .map_err(|error| StoreError::Select(Box::new(error)))?;
 
         Ok(Self { db })
     }
@@ -73,7 +90,7 @@ impl SurrealStore {
             .await
             .map_err(|_| StoreError::HealthTimeout)?
             .map(|_| ())
-            .map_err(|source| StoreError::Health(Box::new(source)))
+            .map_err(|error| StoreError::Health(Box::new(error)))
     }
 
     pub async fn initialise_schema(&self) -> Result<(), StoreError> {
@@ -81,14 +98,14 @@ impl SurrealStore {
             .query(schema::BOOTSTRAP_QUERY)
             .await
             .map(|_| ())
-            .map_err(|source| StoreError::Schema(Box::new(source)))
+            .map_err(|error| StoreError::Schema(Box::new(error)))
     }
 
     /// Executes a raw SurrealQL query against the underlying connection.
     pub fn query<'a>(
         &'a self,
         query: impl Into<std::borrow::Cow<'a, str>>,
-    ) -> surrealdb::method::Query<'a, Client> {
+    ) -> surrealdb::method::Query<'a, Any> {
         self.db.query(query)
     }
 }

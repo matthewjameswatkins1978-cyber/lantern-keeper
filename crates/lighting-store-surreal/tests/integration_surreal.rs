@@ -17,6 +17,7 @@ async fn connects_initialises_schema_and_runs_health_check() {
     dotenvy::dotenv().ok();
 
     let mut config = StoreConfig::from_env();
+    config.storage = "remote-surreal".to_owned();
     config.database = format!("lighting_test_{}", Uuid::new_v4().simple());
 
     let store = SurrealStore::connect(&config)

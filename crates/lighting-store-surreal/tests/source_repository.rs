@@ -2,7 +2,7 @@ use lighting_core::{
     NewSource, Source, SourceContent, SourceId, SourceKind, SourceRepository, SourceTitle,
     StoreSourceResult,
 };
-use lighting_store_surreal::{source_store::SurrealSourceRepository, StoreConfig, SurrealStore};
+use lighting_store_surreal::{StoreConfig, SurrealStore, source_store::SurrealSourceRepository};
 use uuid::Uuid;
 
 fn skip_integration_tests() -> bool {
@@ -23,6 +23,7 @@ fn markdown_source(title: &str, content: &str) -> Source {
 fn test_config() -> StoreConfig {
     dotenvy::dotenv().ok();
     let mut config = StoreConfig::from_env();
+    config.storage = "remote-surreal".to_owned();
     config.namespace = "lighting_test".to_owned();
     config.database = format!("lighting_source_test_{}", Uuid::new_v4().simple());
     config

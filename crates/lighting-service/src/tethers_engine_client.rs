@@ -523,10 +523,10 @@ mod tests {
     #[cfg(windows)]
     async fn read_pid_file(path: &PathBuf) -> u32 {
         for _ in 0..20 {
-            if let Ok(text) = fs::read_to_string(path) {
-                if let Ok(pid) = text.trim().parse::<u32>() {
-                    return pid;
-                }
+            if let Ok(text) = fs::read_to_string(path)
+                && let Ok(pid) = text.trim().parse::<u32>()
+            {
+                return pid;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
