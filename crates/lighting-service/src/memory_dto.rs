@@ -15,6 +15,10 @@ pub struct RememberRequest {
     #[serde(default)]
     pub derived_from: Vec<String>,
     #[serde(default)]
+    pub updates: Vec<String>,
+    #[serde(default)]
+    pub extends: Vec<String>,
+    #[serde(default)]
     pub supersedes: Vec<String>,
     #[serde(default)]
     pub contradicts: Vec<String>,
@@ -22,6 +26,8 @@ pub struct RememberRequest {
     pub supports: Vec<String>,
     #[serde(default = "default_agent")]
     pub agent: String,
+    #[serde(default)]
+    pub observed_at: Option<DateTime<Utc>>,
 }
 
 fn default_confidence() -> f32 {
@@ -49,6 +55,8 @@ pub struct RecallRequest {
     pub phrase: Option<String>,
     #[serde(default)]
     pub include_inactive: bool,
+    #[serde(default)]
+    pub as_of: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize)]

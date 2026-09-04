@@ -51,7 +51,12 @@ pub async fn recall(
         );
     };
     match service
-        .recall(request.project_id, request.phrase, request.include_inactive)
+        .recall(
+            request.project_id,
+            request.phrase,
+            request.include_inactive,
+            request.as_of,
+        )
         .await
     {
         Ok(response) => (StatusCode::OK, Json(serde_json::json!(response))),

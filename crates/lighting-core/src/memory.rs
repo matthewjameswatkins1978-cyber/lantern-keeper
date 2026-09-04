@@ -108,10 +108,15 @@ pub struct Memory {
     pub importance: f32,
     pub recorded_at: DateTime<Utc>,
     pub known_at: DateTime<Utc>,
+    /// When the underlying fact was observed, if the source supplied it.
+    /// `None` is intentional: ingestion must not manufacture observation time.
+    pub observed_at: Option<DateTime<Utc>>,
     pub valid_from: DateTime<Utc>,
     pub valid_until: Option<DateTime<Utc>>,
     pub superseded_at: Option<DateTime<Utc>>,
     pub derived_from: Vec<String>,
+    pub updates: Vec<String>,
+    pub extends: Vec<String>,
     pub supersedes: Vec<String>,
     pub contradicts: Vec<String>,
     pub supports: Vec<String>,
@@ -127,9 +132,12 @@ pub struct NewMemory {
     pub importance: f32,
     pub recorded_at: DateTime<Utc>,
     pub known_at: DateTime<Utc>,
+    pub observed_at: Option<DateTime<Utc>>,
     pub valid_from: DateTime<Utc>,
     pub valid_until: Option<DateTime<Utc>>,
     pub derived_from: Vec<String>,
+    pub updates: Vec<String>,
+    pub extends: Vec<String>,
     pub supersedes: Vec<String>,
     pub contradicts: Vec<String>,
     pub supports: Vec<String>,
@@ -161,10 +169,13 @@ impl Memory {
             importance: input.importance,
             recorded_at: input.recorded_at,
             known_at: input.known_at,
+            observed_at: input.observed_at,
             valid_from: input.valid_from,
             valid_until: input.valid_until,
             superseded_at: None,
             derived_from: input.derived_from,
+            updates: input.updates,
+            extends: input.extends,
             supersedes: input.supersedes,
             contradicts: input.contradicts,
             supports: input.supports,
@@ -178,6 +189,10 @@ pub struct MemorySearchQuery {
     pub project_id: Option<ProjectId>,
     pub phrase: Option<String>,
     pub include_inactive: bool,
+    /// Return memories whose semantic validity interval contains this instant.
+    /// Historical queries intentionally include superseded records when they were
+    /// valid at the requested instant.
+    pub as_of: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Error)]
@@ -201,4 +216,12 @@ pub trait MemoryRepository: Send + Sync {
         id: &MemoryId,
         at: DateTime<Utc>,
     ) -> Result<Memory, MemoryRepositoryError>;
+
+    /// Return the memory and memory-backed ancestors reachable through provenance
+    /// and evolution references, bounded to avoid accidental graph explosions.
+    async fn lineage(
+        &self,
+        id: &MemoryId,
+        max_depth: usize,
+    ) -> Result<Vec<Memory>, MemoryRepositoryError>;
 }

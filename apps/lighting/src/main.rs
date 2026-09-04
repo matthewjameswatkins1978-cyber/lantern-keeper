@@ -11,7 +11,7 @@ use lighting_service::{
 };
 use lighting_store_surreal::{
     ExportSummary, StoreConfig, SurrealMemoryPathRepository, SurrealMemoryRepository,
-    SurrealSourceRepository, SurrealStore,
+    SurrealSourceRepository, SurrealStore, SurrealLedgerRepository,
 };
 use tokio::net::TcpListener;
 use tracing::info;
@@ -421,6 +421,13 @@ async fn serve() -> anyhow::Result<()> {
 
     info!("Living Memory schema migration applied successfully");
 
+    SurrealLedgerRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to apply source-ledger event schema migration")?;
+
+    info!("Source-ledger event schema migration applied successfully");
+
     let source_repo: Arc<dyn lighting_core::SourceRepository> = Arc::new(repo);
     let mp_repo: Arc<dyn lighting_core::MemoryPathRepository> = Arc::new(mp_repo);
     let memory_repo: Arc<dyn lighting_core::MemoryRepository> = Arc::new(memory_repo);
@@ -488,6 +495,10 @@ async fn export_data(output: std::path::PathBuf) -> anyhow::Result<()> {
         .migrate()
         .await
         .context("failed to initialise the Living Memory schema")?;
+    SurrealLedgerRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the source-ledger event schema")?;
     let summary: ExportSummary = store
         .export_to(&output)
         .await
