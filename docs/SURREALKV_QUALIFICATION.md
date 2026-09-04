@@ -29,6 +29,10 @@ proves:
 - ordinary indexed filtering;
 - exact record-count preservation after reopen.
 
+`crates/lighting-store-surreal/tests/ledger_repository.rs` additionally proves
+that host-neutral ledger events retain raw payload, survive a clean reopen, and
+return `Duplicate` for a replay with the same idempotency key.
+
 Run it with:
 
 ```powershell
@@ -51,6 +55,11 @@ The beta line has not yet been qualified for abrupt process termination,
 vector/full-text index behaviour, or a larger synthetic dataset. Those are
 explicit follow-up cases, not silently treated as passed. The export is
 available, but restore tooling and a scheduled backup policy do not yet exist.
+
+In a manual Ctrl-C run on Windows, SurrealKV logged cancelled background tasks
+while shutting down. The committed data reopened correctly, but clean worker
+shutdown is not yet treated as proven and should be revisited in the abrupt
+termination lane.
 
 The credentialed legacy WebSocket integration lane also showed transaction
 conflicts when parallel API test processes selected separate disposable
