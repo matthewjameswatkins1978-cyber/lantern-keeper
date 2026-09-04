@@ -3,9 +3,7 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 use chrono::Utc;
-use lighting_core::{
-    LedgerEvent, LedgerEventRepository, LedgerIngestResult, LedgerRole,
-};
+use lighting_core::{LedgerEvent, LedgerEventRepository, LedgerIngestResult, LedgerRole};
 use lighting_store_surreal::{StoreConfig, SurrealLedgerRepository, SurrealStore};
 use uuid::Uuid;
 
@@ -57,9 +55,18 @@ async fn replay_is_idempotent_and_survives_reopen() -> Result<(), Box<dyn std::e
         store.initialise_schema().await?;
         let repo = SurrealLedgerRepository::new(store);
         repo.migrate().await?;
-        assert!(matches!(repo.ingest(first.clone()).await?, LedgerIngestResult::Stored(_)));
-        assert!(matches!(repo.ingest(duplicate).await?, LedgerIngestResult::Duplicate(_)));
-        assert!(matches!(repo.ingest(second).await?, LedgerIngestResult::Stored(_)));
+        assert!(matches!(
+            repo.ingest(first.clone()).await?,
+            LedgerIngestResult::Stored(_)
+        ));
+        assert!(matches!(
+            repo.ingest(duplicate).await?,
+            LedgerIngestResult::Duplicate(_)
+        ));
+        assert!(matches!(
+            repo.ingest(second).await?,
+            LedgerIngestResult::Stored(_)
+        ));
         assert_eq!(repo.list(Some("lucy")).await?.len(), 2);
     }
 
@@ -76,7 +83,10 @@ async fn replay_is_idempotent_and_survives_reopen() -> Result<(), Box<dyn std::e
         let events = repo.list(Some("lucy")).await?;
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].event_id, "lucy:event-1");
-        assert_eq!(events[0].raw_payload, Some(r#"{"id":"event-1"}"#.to_owned()));
+        assert_eq!(
+            events[0].raw_payload,
+            Some(r#"{"id":"event-1"}"#.to_owned())
+        );
     }
 
     let _ = std::fs::remove_dir_all(path);

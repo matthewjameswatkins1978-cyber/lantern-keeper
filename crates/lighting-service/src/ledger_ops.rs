@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use lighting_core::{LedgerEvent, LedgerEventRepository, LedgerIngestResult, LedgerRepositoryError};
+use lighting_core::{
+    LedgerEvent, LedgerEventRepository, LedgerIngestResult, LedgerRepositoryError,
+};
 
 use crate::source_dto::ApiError;
 
