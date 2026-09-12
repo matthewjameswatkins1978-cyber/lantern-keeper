@@ -9,7 +9,7 @@ foundation/lantern-pre-memory worktree; the original dirty checkout remains
 untouched.
 
 The latest verified implementation checkpoint is commit
-b4cf3756bb7238b26c83a55f1fcd94b2bddb14df on `feature/lantern-full-move`.
+c0b59b6f9108fc2d39166d2462fa7183f49ec161 on `feature/lantern-full-move`.
 
 ## Delivered in this pass
 
@@ -47,6 +47,9 @@ b4cf3756bb7238b26c83a55f1fcd94b2bddb14df on `feature/lantern-full-move`.
   durable registry tables, list/get/create HTTP inspection surfaces, and
   creation traces. Scoped Claims and Beliefs normalize dimension keys and
   known OS aliases before computing their deterministic scope hash.
+- Claim capture resolves exact registered predicate keys and aliases only;
+  unknown candidates remain explicitly unmapped. Claims are listable through
+  the HTTP surface with an unmapped-only filter.
 - `lighting doctor --json` reports the connected server version, schema version,
   storage configuration and an explicit OK/WARNING status without exposing
   credentials.
