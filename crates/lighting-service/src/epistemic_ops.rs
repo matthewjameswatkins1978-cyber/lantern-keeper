@@ -58,16 +58,17 @@ impl EpistemicService {
         request: ClaimRequest,
     ) -> Result<Claim, EpistemicOperationError> {
         let now = Utc::now();
+        let (predicate_key, predicate_candidate, predicate_status) = self
+            .resolve_predicate(request.predicate_key, request.predicate_candidate)
+            .await?;
         let claim = Claim::new(NewClaim {
             episode_id: request.episode_id,
             source_id: request.source_id,
             evidence_span: request.evidence_span,
             subject_key: request.subject_key,
-            predicate_key: request.predicate_key,
-            predicate_candidate: request.predicate_candidate,
-            predicate_status: request
-                .predicate_status
-                .unwrap_or(PredicateStatus::Unmapped),
+            predicate_key,
+            predicate_candidate,
+            predicate_status,
             value: request.value,
             scope: request.scope,
             polarity: request.polarity,
@@ -88,6 +89,16 @@ impl EpistemicService {
         .map_err(map_domain_error)?;
         self.repo
             .store_claim(claim)
+            .await
+            .map_err(map_repository_error)
+    }
+
+    pub async fn list_claims(
+        &self,
+        unmapped_only: bool,
+    ) -> Result<Vec<Claim>, EpistemicOperationError> {
+        self.repo
+            .list_claims(unmapped_only)
             .await
             .map_err(map_repository_error)
     }
@@ -349,6 +360,35 @@ impl EpistemicService {
             .list_dimension_definitions()
             .await
             .map_err(map_repository_error)
+    }
+
+    async fn resolve_predicate(
+        &self,
+        predicate_key: Option<String>,
+        predicate_candidate: Option<String>,
+    ) -> Result<(Option<String>, Option<String>, PredicateStatus), EpistemicOperationError> {
+        let definitions = self
+            .repo
+            .list_predicate_definitions()
+            .await
+            .map_err(map_repository_error)?;
+        let supplied = predicate_key.or(predicate_candidate);
+        let Some(supplied) = supplied else {
+            return Ok((None, None, PredicateStatus::Unmapped));
+        };
+        let normalized =
+            normalize_registry_key(&supplied, "predicate candidate").map_err(map_domain_error)?;
+        if let Some(definition) = definitions.iter().find(|definition| {
+            definition.key == normalized
+                || definition.aliases.iter().any(|alias| alias == &normalized)
+        }) {
+            return Ok((
+                Some(definition.key.clone()),
+                None,
+                PredicateStatus::Resolved,
+            ));
+        }
+        Ok((None, Some(normalized), PredicateStatus::Unmapped))
     }
 
     async fn append_registry_trace(

@@ -103,7 +103,8 @@ pub fn build_router(state: AppState) -> Router {
             Router::new()
                 .route(
                     "/api/v1/claims",
-                    axum::routing::post(epistemic_routes::capture_claim),
+                    axum::routing::post(epistemic_routes::capture_claim)
+                        .get(epistemic_routes::list_claims),
                 )
                 .route(
                     "/api/v1/beliefs",

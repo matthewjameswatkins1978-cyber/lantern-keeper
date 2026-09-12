@@ -521,6 +521,10 @@ pub struct MemoryItemSearch {
 pub trait EpistemicRepository: Send + Sync {
     async fn store_claim(&self, claim: Claim) -> Result<Claim, EpistemicRepositoryError>;
     async fn get_claim(&self, id: &ClaimId) -> Result<Option<Claim>, EpistemicRepositoryError>;
+    async fn list_claims(
+        &self,
+        unmapped_only: bool,
+    ) -> Result<Vec<Claim>, EpistemicRepositoryError>;
     async fn store_belief(&self, belief: Belief) -> Result<Belief, EpistemicRepositoryError>;
     async fn get_belief(&self, id: &BeliefId) -> Result<Option<Belief>, EpistemicRepositoryError>;
     async fn list_beliefs(

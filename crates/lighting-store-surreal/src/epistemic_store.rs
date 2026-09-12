@@ -77,6 +77,34 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .map_err(operation)
     }
 
+    async fn list_claims(
+        &self,
+        unmapped_only: bool,
+    ) -> Result<Vec<Claim>, EpistemicRepositoryError> {
+        let records: Vec<Object> = self
+            .store
+            .query("SELECT * FROM epistemic_claim ORDER BY created_at ASC, id ASC")
+            .await
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?
+            .take(0)
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        records
+            .into_iter()
+            .map(decode)
+            .collect::<Result<Vec<Claim>, _>>()
+            .map(|claims| {
+                if unmapped_only {
+                    claims
+                        .into_iter()
+                        .filter(|claim| claim.predicate_key.is_none())
+                        .collect()
+                } else {
+                    claims
+                }
+            })
+            .map_err(operation)
+    }
+
     async fn store_belief(&self, belief: Belief) -> Result<Belief, EpistemicRepositoryError> {
         let payload = serde_json::to_string(&belief)
             .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;

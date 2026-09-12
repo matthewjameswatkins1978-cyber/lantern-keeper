@@ -41,6 +41,19 @@ pub async fn capture_claim(
     }
 }
 
+pub async fn list_claims(
+    State(state): State<AppState>,
+    Query(query): Query<crate::epistemic_dto::ClaimListQuery>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.list_claims(query.unmapped).await {
+        Ok(claims) => (StatusCode::OK, Json(serde_json::json!({"claims": claims}))),
+        Err(error) => error_response(error),
+    }
+}
+
 pub async fn create_belief(
     State(state): State<AppState>,
     Json(request): Json<BeliefRequest>,

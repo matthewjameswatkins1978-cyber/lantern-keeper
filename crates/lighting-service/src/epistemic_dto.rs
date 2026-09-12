@@ -52,6 +52,12 @@ pub struct ClaimRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ClaimListQuery {
+    #[serde(default)]
+    pub unmapped: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct BeliefRequest {
     pub holder_key: String,
     pub subject_key: String,
