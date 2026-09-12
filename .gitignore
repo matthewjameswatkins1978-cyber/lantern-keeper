@@ -20,3 +20,5 @@ Desktop.ini
 *.swo
 
 /.local/
+/.private-migration/
+/apps/mastra/node_modules/

@@ -52,6 +52,7 @@ async fn full_app() -> Router {
         )),
         project_retrieval_service: None,
         tethers_client: None,
+        memory_service: None,
     })
 }
 async fn body_json(body: Body) -> Value {

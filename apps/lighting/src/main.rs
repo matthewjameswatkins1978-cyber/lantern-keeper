@@ -10,7 +10,8 @@ use lighting_service::{
     MarkerService, ProjectRetrievalService, ProjectService,
 };
 use lighting_store_surreal::{
-    StoreConfig, SurrealMemoryPathRepository, SurrealSourceRepository, SurrealStore,
+    StoreConfig, SurrealMemoryPathRepository, SurrealMemoryRepository, SurrealSourceRepository,
+    SurrealStore,
 };
 use tokio::net::TcpListener;
 use tracing::info;
@@ -117,6 +118,35 @@ fn main() -> anyhow::Result<()> {
                     json,
                 },
             )
+        }
+        Command::ImportBasicMemory {
+            path,
+            dry_run,
+            verify,
+            json,
+        } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(
+                &url,
+                CliCommand::ImportBasicMemory {
+                    path,
+                    dry_run,
+                    verify,
+                    json,
+                },
+            )
+        }
+        Command::Audit { json } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(&url, CliCommand::Audit { json })
+        }
+        Command::MemoryExport { json } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(&url, CliCommand::MemoryExport { json })
+        }
+        Command::MemoryForget { memory_id, json } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(&url, CliCommand::MemoryForget { memory_id, json })
         }
     }
 }
@@ -235,6 +265,36 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Verify or import a private Basic Memory Cloud snapshot.
+    ImportBasicMemory {
+        /// Path to the exported JSON snapshot.
+        path: std::path::PathBuf,
+        /// Validate and report without writing to Lantern.
+        #[arg(long)]
+        dry_run: bool,
+        /// Validate the snapshot and print its deterministic manifest.
+        #[arg(long)]
+        verify: bool,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Audit canonical memory for broken lineage and duplicate current identities.
+    Audit {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export canonical memory, history and provenance as JSON.
+    MemoryExport {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Tombstone a canonical memory while retaining its audit history.
+    MemoryForget {
+        memory_id: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 async fn serve() -> anyhow::Result<()> {
@@ -274,6 +334,13 @@ async fn serve() -> anyhow::Result<()> {
 
     info!("Memory-path schema migrations applied successfully");
 
+    let memory_repo_store = SurrealMemoryRepository::new(store.clone());
+    memory_repo_store
+        .migrate()
+        .await
+        .context("failed to apply canonical memory schema migration")?;
+    info!("Canonical memory schema migration applied successfully");
+
     let source_repo: Arc<dyn lighting_core::SourceRepository> = Arc::new(repo);
     let mp_repo: Arc<dyn lighting_core::MemoryPathRepository> = Arc::new(mp_repo);
     let source_service = SourceService::new(Arc::clone(&source_repo));
@@ -285,6 +352,11 @@ async fn serve() -> anyhow::Result<()> {
         MarkerRetrievalService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
     let project_retrieval_service =
         ProjectRetrievalService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
+    let memory_repo: Arc<dyn lighting_core::MemoryRepository> = Arc::new(memory_repo_store.clone());
+    let memory_service = lighting_service::memory_ops::MemoryService::with_relations(
+        memory_repo,
+        Arc::new(memory_repo_store),
+    );
     let tethers_client = match TethersEngineClient::from_env() {
         Ok(client) => Some(client),
         Err(TethersEngineError::MissingEnginePath) => None,
@@ -302,6 +374,7 @@ async fn serve() -> anyhow::Result<()> {
         retrieval_service: Some(retrieval_service),
         project_retrieval_service: Some(project_retrieval_service),
         tethers_client,
+        memory_service: Some(memory_service),
     };
     app_state.mark_ready();
 

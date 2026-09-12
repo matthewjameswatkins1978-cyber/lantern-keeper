@@ -39,37 +39,47 @@ Before Memory implementation, complete and record:
    to the locked 3.2.1 client if required.
 4. README/CURRENT/ROADMAP reconciliation and a clean `master` baseline.
 
-The repository must not begin the canonical Memory model until these gates are
-understood. The detailed takeover packet defines the later LK-N1 through LK-N18
-sequence, including recovery, reconciliation, retrieval, MCP, Basic Memory
-replication, shadow use and reversible cutover.
+The repository baseline is now understood for the visible remote history, Rust
+1.98.1, the locked SurrealDB 3.2.1 client and the Basic Memory snapshot. The
+unavailable Windows checkout and live database remain explicit external gates.
+The detailed takeover packet defines the later LK-N1 through LK-N18 sequence,
+including recovery, reconciliation, retrieval, MCP, Basic Memory replication,
+shadow use and reversible cutover.
 
-## Next implementation
+## Current implementation slice
 
-Build Lantern Keeper's minimum memory foundation for the later joint runtime
-slice. The first implementation should stay inside Lantern Keeper's memory
-responsibility and expose capabilities to Tethers later, rather than embedding
-Tethers runtime logic.
+The first canonical-memory slice is implemented on the recovery feature branch.
+It stays inside Lantern Keeper's memory responsibility and exposes capabilities
+to Tethers later, rather than embedding Tethers runtime logic.
 
-1. Inspect the actual repository, migrations and service boundaries against the
-   five durable concepts: Project, Source, Episode, Memory and Link.
-2. Add or adapt the smallest durable `Memory` model needed for:
+1. The existing service and migrations cover the five durable concepts:
+   Project, Source, Episode, Memory and Link.
+2. The durable `Memory` model covers:
    - kinds: `fact`, `decision`, `constraint`, `preference`, `idea`, `task`,
      `finding`, `experience`;
    - states: `active`, `superseded`, `archived`;
    - confidence, importance, provenance, reinforcement and supersession data.
-3. Define proposal handling responsibilities for new, reinforcing,
-   correcting, superseding, conflicting and insufficient candidates.
-4. Define the first public service/capability surface:
-   `lantern.context.retrieve`, `lantern.episode.record`,
-   `lantern.memory.propose`, `lantern.memory.get`, and
-   `lantern.memory.search`.
+3. Deterministic proposal handling covers new, reinforcing, superseding,
+   historical, conflicting and ignored candidates; correction remains a
+   reviewed follow-up hardening item.
+4. The first HTTP/JSON-RPC capability surface provides search, context,
+   remember, relations, history, forget, audit and doctor.
 5. Keep retrieval bounded and explainable: project/state filters, exact IDs and
    terms, full-text search, recent Project items, direct graph links,
    deterministic ranking, stable tie-breaking, and fixed context-pack sections.
 6. Treat AI as optional bounded judgement or compression over structured inputs
    and candidate sets. AI never owns storage rules, permissions, provenance or
    state transitions.
+
+## Next gates
+
+1. Run V4 migration, backup/restore, importer idempotency and restart checks
+   against an isolated live SurrealDB service.
+2. Make multi-record reconciliation atomic and add mutation recovery tests.
+3. Run Basic Memory retrieval parity and incremental activity mirroring.
+4. Replace the historical Tethers 0.1 preview adapter with the reviewed 0.7
+   capability binding and add authenticated remote MCP deployment.
+5. Complete Mastra live storage checks and the golden takeover evaluation.
 
 ## Principles
 

@@ -3,8 +3,8 @@ use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::{
     episode_association_routes, episode_routes, marker_retrieval_routes, marker_routes,
-    project_retrieval_routes, project_routes, routes, source_routes, state::AppState,
-    tethers_routes,
+    memory_relation_routes, memory_routes, project_retrieval_routes, project_routes, routes,
+    source_routes, state::AppState, tethers_routes,
 };
 
 /// Maximum accepted request body size for Source creation (1 MiB).
@@ -72,6 +72,43 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health/live", axum::routing::get(routes::live))
         .route("/health/ready", axum::routing::get(routes::ready))
         .route("/api/v1/version", axum::routing::get(routes::version))
+        .route(
+            "/api/v1/memory/remember",
+            axum::routing::post(memory_routes::remember),
+        )
+        .route(
+            "/api/v1/memory/search",
+            axum::routing::get(memory_routes::search),
+        )
+        .route(
+            "/api/v1/memory/context",
+            axum::routing::post(memory_routes::context),
+        )
+        .route(
+            "/api/v1/memory/{memory_id}",
+            axum::routing::get(memory_routes::get).delete(memory_routes::forget),
+        )
+        .route(
+            "/api/v1/memory/{memory_id}/history",
+            axum::routing::get(memory_routes::history),
+        )
+        .route(
+            "/api/v1/memory/doctor",
+            axum::routing::get(memory_routes::doctor),
+        )
+        .route(
+            "/api/v1/memory/audit",
+            axum::routing::get(memory_routes::audit),
+        )
+        .route(
+            "/api/v1/memory/export",
+            axum::routing::get(memory_routes::export),
+        )
+        .route(
+            "/api/v1/memory/relations",
+            axum::routing::post(memory_relation_routes::create).get(memory_relation_routes::list),
+        )
+        .route("/mcp", axum::routing::post(crate::mcp::handle))
         .merge(source_routes)
         .merge(project_routes)
         .merge(marker_routes)

@@ -1,0 +1,19 @@
+{
+  "name": "@lantern-keeper/mastra-runtime",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mastra/core": "1.66.0",
+    "@mastra/memory": "1.29.0",
+    "@surrealdb/mastra-ai": "1.0.0-beta.2",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "5.9.2"
+  }
+}

@@ -9,8 +9,7 @@ port = 4317
 [service.log]
 level = "info"
 
-# SurrealDB placeholders for later jobs.
-# Storage is not configured in LK-001.
+# SurrealDB configuration for the canonical Source and Memory stores.
 [storage.surreal]
 endpoint = "ws://127.0.0.1:8000"
 namespace = "lantern_keeper"

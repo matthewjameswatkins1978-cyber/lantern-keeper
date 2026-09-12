@@ -4,13 +4,13 @@
 
 **Canonical trunk:** `master`
 
-**Recovered implementation:** `407c529` (`agent/lighting-source-api`)
+**Recovered implementation:** `f13523b` (`stage/lantern-clean-restart`), merged to `master` as `a44554b`
 
 ## Phase
 
-Joint Tethers/Lantern Keeper foundation: preserve the completed
-source-backed memory loop and prepare Lantern Keeper's minimum memory
-foundation for later Tethers runtime integration.
+Lantern Keeper full-move foundation: preserve immutable evidence, reconcile
+canonical Memory, import the Basic Memory estate, and expose a Lucy-native
+capability boundary.
 
 ## Current Task
 
@@ -81,29 +81,45 @@ The recovered baseline has been revalidated with Rust 1.98.1: all available non-
 
 The `lighting source-add`, `lighting source-history`, `lighting project-add-file`, `lighting project-handoff`, and `lighting project-record-result` CLI commands compose the complete project-file memory loop documented in `docs/lk-039-project-file-memory-loop.md`.
 
+## New canonical Memory surface
+
+- `lighting-core::Memory` separates evidence from current interpretation.
+- Memory carries scope, kind, state, confidence, importance, valid-time,
+  memory-time, source/episode provenance, supersession, conflicts,
+  reinforcement, derivation lineage, revision and checksum.
+- `lighting-store-surreal::SurrealMemoryRepository` persists versioned payloads
+  and append-only reconciliation events in schema migration V4.
+- `POST /api/v1/memory/remember` reconciles candidates before mutation.
+- `GET /api/v1/memory/search`, `POST /api/v1/memory/context`, memory get/history
+  and doctor routes provide bounded current/history-aware recall.
+- `POST /mcp` exposes `lantern_search`, `lantern_context`,
+  `lantern_remember`, `lantern_relations`, `lantern_forget`, and
+  `lantern_doctor` as semantic tools.
+- `lighting import-basic-memory` verifies a private snapshot and imports each
+  note as immutable Source evidence before promoting a linked candidate.
+
 ## Next Phase
 
-Minimum memory foundation and first capability surface. Lantern Keeper should
-not implement Tethers runtime logic; it should expose a small set of public
-capabilities that the Tethers runtime can later plan and call.
+Complete the migration gates: run against an isolated SurrealDB instance,
+verify backup/restore and idempotency, exercise the importer against the
+snapshot, add live Mastra working-memory checks behind its own namespace,
+bind the reviewed Tethers 0.7 capability policy, and run Basic Memory
+parity/shadow tests. Basic Memory has not been modified or made a second
+canonical store.
 
 Immediate Lantern Keeper work:
 
-1. Inspect the existing SurrealDB schema and repository traits against the five
-   durable concepts: Project, Source, Episode, Memory, and Link.
-2. Define the smallest durable `Memory` representation and state model needed
-   for `active`, `superseded`, and `archived` memory outcomes, with provenance
-   back to Source/Episode evidence.
-3. Define the first public capability/API surface around
-   `lantern.context.retrieve`, `lantern.episode.record`,
-   `lantern.memory.propose`, `lantern.memory.get`, and
-   `lantern.memory.search`, without exposing raw database writes.
-4. Keep retrieval bounded and mechanical: project/state filters, exact IDs and
-   terms, full-text/recent/graph candidates, deterministic ranking, stable
-   tie-breaks, and a fixed context-pack shape before any optional AI reranking
-   or embeddings.
-5. Keep Minimalist, Living Memory, and Archivist as configuration profiles over
-   one pipeline, not separate implementations.
+1. Run Memory V4 migration, backup/restore, import, retry and restart tests
+   against an isolated SurrealDB server.
+2. Harden multi-record reconciliation into a database transaction and add
+   durable event/recovery assertions.
+3. Add Basic Memory incremental activity mirroring and representative parity
+   tests before any final delta or cutover.
+4. Replace the preview Tethers adapter with a reviewed 0.7 capability binding
+   and provide an authenticated remote MCP deployment boundary.
+5. Keep retrieval bounded and mechanical: exact IDs/terms, scope/state/time
+   filters, deterministic ranking and fixed context packages before optional
+   reranking or embeddings.
 
 ## Tethers Preview Integration (Preview-Only)
 

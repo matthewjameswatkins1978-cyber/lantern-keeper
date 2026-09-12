@@ -10,10 +10,16 @@ use std::{fmt, str::FromStr};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod memory;
 pub mod memory_path;
 pub mod source;
 pub mod source_outline;
 
+pub use memory::{
+    reconcile_candidate, Memory, MemoryCandidate, MemoryError, MemoryId, MemoryKind,
+    MemoryRelation, MemoryRelationRepository, MemoryRepository, MemoryRepositoryError, MemoryState,
+    ReconciliationAction, ReconciliationDecision,
+};
 pub use memory_path::{
     Episode, EpisodeError, EpisodeMarkerLink, EpisodeProjectLink, EpisodeTitle, Marker,
     MarkerError, MemoryPathRepository, MemoryPathRepositoryError, Project, ProjectError,

@@ -5,15 +5,13 @@ other AI workflows.
 
 ## Recovered baseline — 12 September 2026
 
-The repository's clean working baseline is the former
-`agent/lighting-source-api` implementation, now being prepared on `master`.
-It proves a durable Source → Episode → Project retrieval loop with exact
-provenance and revision-safe history. The canonical Memory reconciliation
-engine, MCP boundary, Basic Memory bridge and Lucy-native takeover remain the
-next implementation stage.
+The repository's clean working baseline is the recovered former
+`agent/lighting-source-api` implementation, now on `master`. It proves a
+durable Source → Episode → Project loop and now adds the first canonical
+Memory, reconciliation, migration and MCP capability path.
 
 The first restart gate is deliberately boring: Rust 1.98.1 formatting,
-compilation, Clippy and tests must remain green before Memory work begins.
+compilation, Clippy and tests must remain green before further memory work.
 
 The joint architectural contract and build foundation for Lantern Keeper and
 Tethers is
@@ -68,18 +66,36 @@ Implemented now:
 - Live SurrealDB API integration tests with strict DB isolation.
 - CLI commands for Source add/show, marker retrieval, Project handoff, and
   Project result writeback.
+- Canonical Memory records with active, superseded, archived, tombstoned and
+  needs-review states; confidence, salience, temporal validity, provenance,
+  checksums, reinforcement and derivation lineage.
+- Deterministic `NEW`, `REINFORCE`, `SUPERSEDE`, `CONFLICT`, `HISTORICAL` and
+  `IGNORE` reconciliation outcomes.
+- Bounded lexical search and context assembly that separates current truth,
+  history and unresolved memories.
+- HTTP capability routes for `remember`, `search`, `context`, `get`, history
+  `relations`, `export`, `audit`, `forget` and doctor, plus a small JSON-RPC
+  MCP surface at `/mcp`.
+- Repeatable `lighting import-basic-memory <snapshot> --verify` validation and
+  `--dry-run` manifest generation. Import mode preserves each note as Source
+  evidence, promotes recognised observations, and records typed relations in a
+  second pass with unresolved targets retained.
+- Optional `apps/mastra` TypeScript runtime using the official
+  `@surrealdb/mastra-ai` adapter in a separate SurrealDB namespace; it can
+  propose candidates to Lantern but cannot write canonical memory directly.
 - Full-loop local demo using public CLI/API paths only.
 - `scripts/validate.ps1` to run formatting, Clippy, tests, and `lighting version`.
 - Configuration example in `config/example.toml`.
 
-Not implemented yet:
+Not complete yet:
 
 - Tethers runtime execution through Lantern Keeper capabilities
-- Memory proposal, judgement, merging, strengthening, superseding, and archival
-  state transitions
-- Bounded ranked retrieval with the final context-pack shape
-- Embeddings, AI processing, MCP provider work, cloud services, GUI, task
-  automation, or importer work
+- Mastra/`@surrealdb/mastra-ai` working-memory integration
+- Typed relation promotion for every imported Markdown relation
+- Authenticated remote MCP deployment and Tethers 0.7 policy integration
+- Basic Memory write cutover; Basic Memory remains untouched and canonical
+  until the migration parity and recovery gates pass
+- Embeddings, GUI, task automation and speculative cloud infrastructure
 - Automatic conversation ingestion
 - Automatic episode detection
 - Universal importers, ranking, recommendations, or broad graph expansion
@@ -94,6 +110,28 @@ The committed lockfile currently resolves the Rust SurrealDB client to 3.2.1.
 The native Windows helper scripts use a project-local SurrealDB data directory.
 SurrealDB 3.3 beta compatibility is a separate experiment and is not part of
 this baseline.
+
+## Canonical memory API
+
+Lantern's canonical boundary is documented in
+[`docs/architecture/LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md`](docs/architecture/LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md).
+The basic loop is:
+
+```text
+source evidence -> candidate -> deterministic reconciliation -> canonical Memory
+                         \-> provenance, history and audit trail
+```
+
+Basic Memory is a migration source and rollback reference. The private
+snapshot used for migration must stay outside Git. To verify one:
+
+```powershell
+lighting import-basic-memory .private-migration\basic-memory-lantern-2026-09-12.json --verify --json
+```
+
+When a Lantern service and SurrealDB are running, omit `--verify` to import the
+snapshot through the Source and Memory APIs. The command is retryable because
+Source fingerprints and memory identity keys are stable.
 
 ## Build And Check
 

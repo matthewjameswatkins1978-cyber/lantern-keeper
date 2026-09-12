@@ -4,6 +4,7 @@
 //! so that the unified `lighting` binary can use them directly.  The standalone
 //! `lighting-cli` binary still works via a thin `main.rs` shim.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -11,6 +12,8 @@ use std::time::Duration;
 use anyhow::{bail, Context};
 use clap::Subcommand;
 use serde::Deserialize;
+
+pub mod migration;
 
 /// The Lighting service port the CLI connects to by default.
 ///
@@ -64,6 +67,17 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             kind,
             json,
         } => cmd_project_add_file(&client, &project_id, &path, title, kind, json),
+        CliCommand::ImportBasicMemory {
+            path,
+            dry_run,
+            verify,
+            json,
+        } => cmd_import_basic_memory(&client, &path, dry_run, verify, json),
+        CliCommand::Audit { json } => cmd_memory_get(&client, "/api/v1/memory/audit", json),
+        CliCommand::MemoryExport { json } => cmd_memory_get(&client, "/api/v1/memory/export", json),
+        CliCommand::MemoryForget { memory_id, json } => {
+            cmd_memory_forget(&client, &memory_id, json)
+        }
     }
 }
 
@@ -178,6 +192,36 @@ pub enum CliCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Verify or import a private Basic Memory Cloud snapshot.
+    ImportBasicMemory {
+        /// Path to the exported JSON snapshot.
+        path: PathBuf,
+        /// Validate and report without writing to Lantern.
+        #[arg(long)]
+        dry_run: bool,
+        /// Validate the snapshot and print its deterministic manifest.
+        #[arg(long)]
+        verify: bool,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Audit canonical memory for broken lineage and duplicate current identities.
+    Audit {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export canonical memory, history and provenance as JSON.
+    MemoryExport {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Tombstone a canonical memory while retaining its audit history.
+    MemoryForget {
+        memory_id: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +270,14 @@ impl HttpClient {
                 url: url.clone(),
                 source: e,
             })
+    }
+
+    fn delete(&self, path: &str) -> Result<reqwest::blocking::Response, CliError> {
+        let url = format!("{}{path}", self.base_url);
+        self.client
+            .delete(&url)
+            .send()
+            .map_err(|e| CliError::Connection { url, source: e })
     }
 
     fn handle_response(
@@ -561,6 +613,283 @@ fn cmd_source_add(
     }
 
     Ok(())
+}
+
+fn cmd_import_basic_memory(
+    client: &HttpClient,
+    path: &Path,
+    dry_run: bool,
+    verify: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let snapshot = migration::load_snapshot(path)?;
+    let manifest = migration::validate(&snapshot)?;
+    if dry_run || verify {
+        if json {
+            println!("{}", serde_json::to_string_pretty(&manifest)?);
+        } else {
+            println!("Basic Memory snapshot verified");
+            println!("Project       : {}", manifest.source_project);
+            println!("Files         : {}", manifest.file_count);
+            println!("Bytes         : {}", manifest.byte_total);
+            println!("Manifest hash : {}", manifest.manifest_sha256);
+        }
+        return Ok(());
+    }
+
+    let mut imported_sources = 0usize;
+    let mut imported_memories = 0usize;
+    let mut imported_relations = 0usize;
+    let mut unresolved_relations = 0usize;
+    let mut memory_ids_by_ref = HashMap::new();
+    let mut source_ids_by_ref = HashMap::new();
+    for record in &snapshot.records {
+        let title = format!("basic-memory/{}", record.path);
+        let source_body = serde_json::json!({
+            "title": title,
+            "kind": "markdown",
+            "content": record.content,
+        });
+        let source_response = client
+            .post_json("/api/v1/sources", &source_body)
+            .map_err(|e| {
+                anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve")
+            })?;
+        let source_value = HttpClient::handle_response(source_response)?;
+        let source: CreateSourceResponse = serde_json::from_value(source_value)
+            .context("unexpected Source response during Basic Memory import")?;
+        imported_sources += 1;
+        remember_source_ref(&mut source_ids_by_ref, record, &source.source_id);
+
+        let scope = record.path.split('/').next().unwrap_or("basic-memory");
+        let mut memory_body = serde_json::json!({
+            "content": format!("{}\n\n{}", record.title.as_deref().unwrap_or(&record.path), record.content),
+            "scope": scope,
+            "kind": imported_memory_kind(record.note_type.as_deref()),
+            "identity_key": format!("basic-memory:{}", record.permalink.as_deref().unwrap_or(&record.path)),
+            "confidence": 80,
+            "importance": 60,
+            "source_ids": [source.source_id],
+            "actor": "basic-memory-import",
+            "sensitivity": "inherited",
+            "historical": migration::is_historical(&record.content),
+        });
+        if let Some(updated_at) = record.updated_at.as_deref() {
+            memory_body["valid_from"] = serde_json::json!(updated_at);
+        }
+        let memory_response = client
+            .post_json("/api/v1/memory/remember", &memory_body)
+            .map_err(|e| anyhow::Error::msg(e).context("failed to submit imported memory"))?;
+        let memory: MemoryRememberResponse =
+            serde_json::from_value(HttpClient::handle_response(memory_response)?)
+                .context("unexpected Memory response during Basic Memory import")?;
+        imported_memories += 1;
+        if let Some(memory_id) = memory.affected_memory_ids.first() {
+            remember_memory_ref(&mut memory_ids_by_ref, record, memory_id);
+        }
+
+        for observation in migration::parse_observations(&record.content) {
+            let observation_key = format!(
+                "basic-memory:{}#observation:{}",
+                record.permalink.as_deref().unwrap_or(&record.path),
+                short_hash(&format!("{}\n{}", observation.category, observation.text)),
+            );
+            let mut observation_body = serde_json::json!({
+                "content": format!("[{}] {}", observation.category, observation.text),
+                "scope": scope,
+                "kind": imported_memory_kind(Some(&observation.category)),
+                "identity_key": observation_key,
+                "confidence": 80,
+                "importance": 60,
+                "source_ids": [source.source_id],
+                "actor": "basic-memory-import",
+                "sensitivity": "inherited",
+                "historical": migration::is_historical(&record.content),
+            });
+            if let Some(updated_at) = record.updated_at.as_deref() {
+                observation_body["valid_from"] = serde_json::json!(updated_at);
+            }
+            if let Some(memory_id) = memory.affected_memory_ids.first() {
+                observation_body["derived_from"] = serde_json::json!([memory_id]);
+            }
+            let response = client
+                .post_json("/api/v1/memory/remember", &observation_body)
+                .map_err(|e| {
+                    anyhow::Error::msg(e).context("failed to submit imported observation")
+                })?;
+            HttpClient::handle_response(response)?;
+            imported_memories += 1;
+        }
+    }
+
+    // Resolve relations only after every source/note has a stable memory ID.
+    for record in &snapshot.records {
+        let Some(from_memory_id) = lookup_memory_ref(&memory_ids_by_ref, record) else {
+            continue;
+        };
+        for relation in migration::parse_relations(&record.content) {
+            let target_memory_id = memory_ids_by_ref
+                .get(&normalise_ref(&relation.target_ref))
+                .cloned();
+            let relation_body = serde_json::json!({
+                "relation_id": format!(
+                    "basic-memory:{}",
+                    short_hash(&format!("{}\n{}\n{}", from_memory_id, relation.relation_type, relation.target_ref))
+                ),
+                "from_memory_id": from_memory_id,
+                "to_memory_id": target_memory_id,
+                "relation_type": relation.relation_type,
+                "target_ref": relation.target_ref,
+                "source_id": lookup_source_ref(&source_ids_by_ref, record),
+            });
+            let response = client
+                .post_json("/api/v1/memory/relations", &relation_body)
+                .map_err(|e| anyhow::Error::msg(e).context("failed to import typed relation"))?;
+            HttpClient::handle_response(response)?;
+            imported_relations += 1;
+            unresolved_relations += usize::from(target_memory_id.is_none());
+        }
+    }
+
+    let result = serde_json::json!({
+        "project": manifest.source_project,
+        "manifest_sha256": manifest.manifest_sha256,
+        "sources_imported": imported_sources,
+        "memories_submitted": imported_memories,
+        "relations_imported": imported_relations,
+        "unresolved_relations": unresolved_relations,
+        "idempotent": true,
+    });
+    if json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        println!(
+            "Imported {} Basic Memory sources and submitted {} canonical memory candidates.",
+            imported_sources, imported_memories
+        );
+        println!("Manifest hash: {}", manifest.manifest_sha256);
+    }
+    Ok(())
+}
+
+fn cmd_memory_get(client: &HttpClient, path: &str, _json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get(path)
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let value = HttpClient::handle_response(response)?;
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn cmd_memory_forget(client: &HttpClient, memory_id: &str, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .delete(&format!("/api/v1/memory/{memory_id}"))
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let value = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        println!("Memory tombstoned: {memory_id}");
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct MemoryRememberResponse {
+    affected_memory_ids: Vec<String>,
+}
+
+fn normalise_ref(value: &str) -> String {
+    value.trim().to_lowercase()
+}
+
+fn remember_memory_ref(
+    refs: &mut HashMap<String, String>,
+    record: &migration::BasicMemoryRecord,
+    memory_id: &str,
+) {
+    for value in [
+        Some(record.path.as_str()),
+        record.permalink.as_deref(),
+        record.title.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        refs.insert(normalise_ref(value), memory_id.to_owned());
+    }
+    if let Some(stem) = record.path.rsplit('/').next() {
+        refs.insert(
+            normalise_ref(stem.trim_end_matches(".md")),
+            memory_id.to_owned(),
+        );
+    }
+}
+
+fn remember_source_ref(
+    refs: &mut HashMap<String, String>,
+    record: &migration::BasicMemoryRecord,
+    source_id: &str,
+) {
+    for value in [
+        Some(record.path.as_str()),
+        record.permalink.as_deref(),
+        record.title.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        refs.insert(normalise_ref(value), source_id.to_owned());
+    }
+}
+
+fn lookup_memory_ref(
+    refs: &HashMap<String, String>,
+    record: &migration::BasicMemoryRecord,
+) -> Option<String> {
+    [
+        Some(record.path.as_str()),
+        record.permalink.as_deref(),
+        record.title.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|value| refs.get(&normalise_ref(value)).cloned())
+}
+
+fn lookup_source_ref(
+    refs: &HashMap<String, String>,
+    record: &migration::BasicMemoryRecord,
+) -> Option<String> {
+    [
+        Some(record.path.as_str()),
+        record.permalink.as_deref(),
+        record.title.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|value| refs.get(&normalise_ref(value)).cloned())
+}
+
+fn short_hash(value: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(value.as_bytes())
+        .iter()
+        .take(16)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn imported_memory_kind(note_type: Option<&str>) -> &'static str {
+    match note_type.unwrap_or_default().to_lowercase().as_str() {
+        "decision" => "decision",
+        "guide" | "procedure" => "rule",
+        "project" | "task" => "open_loop",
+        "person" | "preference" => "preference",
+        "report" | "finding" | "current" | "history" | "snapshot" => "finding",
+        "creative" | "idea" => "idea",
+        _ => "fact",
+    }
 }
 
 fn cmd_source_show(client: &HttpClient, source_id: &str, json: bool) -> anyhow::Result<()> {

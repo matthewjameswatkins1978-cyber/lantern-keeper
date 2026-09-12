@@ -36,6 +36,7 @@ async fn app() -> Router {
         retrieval_service: None,
         project_retrieval_service: None,
         tethers_client: None,
+        memory_service: None,
     };
     build_router(st)
 }

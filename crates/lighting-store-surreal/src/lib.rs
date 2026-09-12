@@ -5,10 +5,12 @@
 pub mod config;
 pub mod connection;
 pub mod memory_path_store;
+pub mod memory_store;
 pub mod schema;
 pub mod source_store;
 
 pub use config::{RedactedStoreConfig, StoreConfig};
 pub use connection::{StoreError, SurrealStore};
 pub use memory_path_store::SurrealMemoryPathRepository;
+pub use memory_store::SurrealMemoryRepository;
 pub use source_store::SurrealSourceRepository;
