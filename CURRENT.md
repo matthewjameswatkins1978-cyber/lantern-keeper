@@ -8,6 +8,9 @@ lantern-pre-memory-checkpoint. This implementation runs in the separate
 foundation/lantern-pre-memory worktree; the original dirty checkout remains
 untouched.
 
+The latest verified import-accounting implementation is commit
+bbe26b7bd1fb037a6fe22c8c11de0608b873e3e5 on `feature/lantern-full-move`.
+
 ## Delivered in this pass
 
 - Rust 1.98.1 stable, edition 2024, rustfmt and Clippy pinned in
