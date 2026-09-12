@@ -9,7 +9,7 @@ foundation/lantern-pre-memory worktree; the original dirty checkout remains
 untouched.
 
 The latest verified implementation checkpoint is commit
-2bb713932b3508f24f1cc2f1692ba8c053f9089c on `feature/lantern-full-move`.
+c3fa1d4095973b5bce2770fde8b3b8787d15de70 on `feature/lantern-full-move`.
 
 ## Delivered in this pass
 
@@ -56,6 +56,10 @@ The latest verified implementation checkpoint is commit
   belief mutation and evidence-lineage persistence are still follow-up work.
 - Predicate inspection is available through `lighting predicate list`, `get`,
   `aliases` and `unmapped`, backed by the local HTTP API.
+- Dependency relations can now propagate stale state transitively across
+  in-memory belief projections, incrementing `dependency_generation` once per
+  affected belief without recursive model calls. Durable reconciliation and
+  repair-queue persistence remain open.
 - `lighting doctor --json` reports the connected server version, schema version,
   storage configuration and an explicit OK/WARNING status without exposing
   credentials.
