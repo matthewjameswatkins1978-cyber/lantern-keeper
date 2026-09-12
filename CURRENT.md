@@ -30,6 +30,10 @@ untouched.
 - Initial embedded qualification and memory repository integration tests.
 - Executable LanternBench v1 runner, representative event fixture, and
   architecture/qualification documentation.
+- A validated 2026-09-12 Basic Memory Cloud snapshot containing 61 notes,
+  plus a replay-safe `basic-memory-import` command. The checkpoint extends
+  the importer to emit observation and relation evidence, but that extension
+  has not yet been rerun against the local store.
 
 ## Retrieval boundary
 
@@ -38,11 +42,11 @@ project/status/as-of filters, importance, confidence and known-at ordering.
 Recall returns a trace containing query, channel and candidate/selected IDs. An
 empty result is an explicit abstention.
 
-Not yet implemented: BM25/vector/graph fusion, persisted retrieval traces,
-activation metadata, automated contradiction resolution, proposals/gardening,
-native host conversation adapters, watermark cursors, restore validation, and
-MCP. These are deliberate follow-up work, not silently implied by the current
-code.
+Not yet implemented: note-level reconciliation/promotion, BM25/vector/graph
+fusion, persisted retrieval traces, activation metadata, automated
+contradiction resolution, proposals/gardening, native host conversation
+adapters, watermark cursors, restore validation, and MCP. These are deliberate
+follow-up work, not silently implied by the current code.
 
 ## Verification
 

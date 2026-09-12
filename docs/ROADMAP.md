@@ -18,12 +18,15 @@ cloud services come later.
   JSON ingestion, and executable LanternBench v1 runner.
 - CLI/HTTP remember, recall, context and supersede operations.
 - Inspectable first retrieval trace and LanternBench v1 fixture.
+- Lossless Basic Memory snapshot capture and replay-safe Source/ledger import
+  of the complete Lantern project at note level.
 
 ## Next
 
-Replace the representative JSON fixture with a real Matthew/Lucy history
-export and qualify restart-safe progress. The next slice should preserve the
-current source/derived boundary and add:
+Exercise and verify the checkpointed observation/relation second pass, then
+promote the captured Matthew/Lucy Basic Memory source set through a real,
+reviewable reconciliation pass and qualify restart-safe progress. The next
+slice should preserve the current source/derived boundary and add:
 
 1. conversation and turn records in the Memory Ledger;
 2. persisted retrieval traces and activation metadata;
