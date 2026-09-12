@@ -735,6 +735,46 @@ pub fn reconcile_claim(
     }
 }
 
+/// Mark dependent belief projections stale transitively through canonical
+/// dependency relations. `in_id` is the upstream belief and `out_id` is the
+/// dependent projection. The traversal is bounded by the supplied relation
+/// set and never invokes a model or invents a repair.
+pub fn propagate_stale_beliefs(
+    beliefs: &mut [Belief],
+    relations: &[GraphRelation],
+    upstream_id: &str,
+    reason: &str,
+    at: DateTime<Utc>,
+) -> Vec<String> {
+    let mut pending = vec![upstream_id.to_owned()];
+    let mut visited = std::collections::BTreeSet::new();
+    let mut stale_ids = Vec::new();
+    while let Some(upstream) = pending.pop() {
+        if !visited.insert(upstream.clone()) {
+            continue;
+        }
+        for relation in relations.iter().filter(|relation| {
+            relation.in_id == upstream
+                && matches!(
+                    relation.relation_type.as_str(),
+                    "depends_on" | "derived_from"
+                )
+        }) {
+            if let Some(belief) = beliefs
+                .iter_mut()
+                .find(|belief| belief.id.as_str() == relation.out_id)
+            {
+                if !belief.stale {
+                    belief.mark_stale(reason, at);
+                    stale_ids.push(belief.id.to_string());
+                }
+                pending.push(relation.out_id.clone());
+            }
+        }
+    }
+    stale_ids
+}
+
 fn direct_holder_evidence(claim: &Claim, expected_holder: Option<&str>) -> bool {
     claim.holder_actor_id.as_deref().is_some_and(|holder| {
         holder == claim.originator_actor_id
@@ -917,6 +957,58 @@ mod tests {
             reconcile_claim(&direct, Some(&existing), true).action,
             ReconciliationAction::Supersede
         );
+    }
+
+    #[test]
+    fn stale_propagation_marks_dependency_chain_once() {
+        let now = Utc::now();
+        let belief = |value: &str| {
+            Belief::new(NewBelief {
+                holder_key: "lucy".to_owned(),
+                subject_key: "matthew".to_owned(),
+                predicate_key: "project_state".to_owned(),
+                current_value: value.to_owned(),
+                scope: Scope::new(),
+                confidence: 0.8,
+                trust_class: TrustClass::Derived,
+                known_from: now,
+                valid_from: None,
+                created_at: now,
+            })
+            .expect("test belief is valid")
+        };
+        let first = belief("A");
+        let second = belief("B");
+        let third = belief("C");
+        let relation = |in_id: &Belief, out_id: &Belief| {
+            GraphRelation::new(NewGraphRelation {
+                in_id: in_id.id.to_string(),
+                out_id: out_id.id.to_string(),
+                relation_type: "depends_on".to_owned(),
+                origin: "test".to_owned(),
+                confidence: 1.0,
+                resolved: true,
+                created_at: now,
+            })
+            .expect("test relation is valid")
+        };
+        let relations = vec![relation(&first, &second), relation(&second, &third)];
+        let mut beliefs = vec![first, second, third];
+        let first_id = beliefs[0].id.to_string();
+
+        let stale = propagate_stale_beliefs(
+            &mut beliefs,
+            &relations,
+            &first_id,
+            "upstream correction",
+            now,
+        );
+
+        assert_eq!(stale.len(), 2);
+        assert!(beliefs[1].stale);
+        assert_eq!(beliefs[1].dependency_generation, 1);
+        assert!(beliefs[2].stale);
+        assert_eq!(beliefs[2].dependency_generation, 1);
     }
 
     fn test_claim(

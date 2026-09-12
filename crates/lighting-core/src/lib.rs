@@ -23,7 +23,8 @@ pub use epistemic::{
     MemoryItemKind, MemoryItemSearch, NewBelief, NewClaim, NewGraphRelation, NewMemoryItem,
     PredicateDefinition, PredicateDefinitionStatus, PredicateStatus, Proposal,
     ReconciliationAction, ReconciliationDecision, RelationKind, Scope, Stance, Trace, TrustClass,
-    normalize_registry_key, normalize_scope, reconcile_claim, scope_hash, scopes_overlap,
+    normalize_registry_key, normalize_scope, propagate_stale_beliefs, reconcile_claim, scope_hash,
+    scopes_overlap,
 };
 pub use ledger::{
     LedgerEvent, LedgerEventError, LedgerEventRepository, LedgerIngestResult,
