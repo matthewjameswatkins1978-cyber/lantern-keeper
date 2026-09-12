@@ -1,224 +1,96 @@
 # Lantern Keeper
 
-Lantern Keeper is a local-first, AI-first shared memory layer for Matthew and
-Lucy. The AI notices useful information, records derived understanding with
-provenance, retrieves bounded working context, and preserves corrections as
-history. Matthew can correct or protect memory, but ordinary organisation
-should not require manual filing.
+Lantern Keeper is a local-first shared memory layer for Matthew and Lucy. It
+preserves not only information, but provenance, perspective, changing beliefs,
+and softer fragments that may matter later.
 
-Lighting is the Rust service in this repository. The first useful loop is:
+The central boundary is simple:
 
-    Matthew/Lucy observation
-    -> derived Living Memory with source references
-    -> lexical/project-scoped recall
-    -> compact working context
-    -> provenance and supersession remain inspectable
+    Sources preserve what happened.
+    Claims preserve what was asserted.
+    Beliefs preserve current reconciled understanding.
+    Memory Items preserve what may matter without claiming it as fact.
 
-Source and ledger records are evidence: what was supplied or happened. Memory
-records are derived understanding: what Lantern currently considers useful.
-Derived understanding may change; source evidence is not silently rewritten.
-The joint Tethers architecture remains documented in
-docs/architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md. Tethers is
-out of scope for this foundation pass.
+Lantern is designed so Matthew can talk normally. Lucy can notice, remember,
+retrieve, explain, and correct memory without making Matthew become the filing
+clerk. Historical evidence is retained when derived understanding changes.
 
-## Current implemented scope
+## What works today
 
-- Rust 1.98.1, edition 2024, repository-pinned by rust-toolchain.toml.
-- SurrealDB 3.3.0-beta.4, exactly pinned in Cargo.toml and matched by the
-  qualified local server lane.
-- Embedded, versioned SurrealKV is the normal local store:
-  .lighting-data/surrealkv, with sync=every.
-- Remote WebSocket SurrealDB remains an explicit test/development option via
-  LIGHTING_STORAGE=remote-surreal.
-- Existing Source, Project, Episode, Marker and relation storage.
-- Living Memory records with fact, decision, preference, instruction, lesson,
-  gotcha, open_loop, workflow, summary and entity kinds.
-- Provenance/evolution fields for derived_from, updates, extends, supersedes,
-  contradicts and supports, plus bounded multi-hop lineage.
-- Semantic temporal fields: recorded_at, known_at, valid_from, valid_until and
-  superseded_at, with optional observed_at and as-of retrieval. SurrealKV MVCC
-  history is additional physical history, not a replacement for these fields.
-- Append-only, replay-safe host-neutral `ledger_event` records, a JSON event
-  ingestion endpoint, and `ledger-ingest` CLI support. A representative fixture
-  is in fixtures/ledger/matthew-lucy-representative.json.
-- Validated Basic Memory snapshot import that preserves every note as
-  Markdown Source evidence and records upstream identity/metadata as
-  replay-safe ledger events.
-- CLI and HTTP operations to remember, recall, build context and supersede.
-- Inspectable retrieval traces in recall responses.
-- Engine-independent export to manifest.json and NDJSON files.
-- Embedded SurrealKV qualification and Living Memory integration tests.
-- An executable LanternBench v1 runner in bench/run-lanternbench.ps1.
+- Rust 1.98.1 and Edition 2024 are pinned.
+- SurrealDB 3.3.0-beta.4 is the supported client/server lane.
+- Embedded, versioned SurrealKV is the normal local store.
+- Source, Episode, Project, Claim, Belief, soft Memory Item, relation, Trace,
+  Proposal, Predicate, Dimension, export, import-accounting, recall, and
+  context foundations are present.
+- Predicate and scope normalization, explicit unmapped Claims, pure
+  reconciliation decisions, echo suppression, direct-holder gates, and
+  transitive stale propagation are implemented.
+- The repaired Basic Memory snapshot accounts for 61 notes, 496 observations,
+  and 275 relations with zero unexplained items.
 
-Retrieval is deliberately a first slice, not a completed cognitive system. It
-currently uses phrase matching, project/status/as-of filters, importance,
-confidence and recency. BM25, vector search, entity/graph signals, persisted
-traces, activation, conflict analysis, proposal/gardening, automatic host
-capture and MCP are later work.
+The current feature line is still a foundation, not the finished cutover
+product. Durable Claim-to-Belief transitions, correction-aware Context
+Compiler reads, restore proof, Lucy-native MCP, shadow comparison, and
+cutover remain open. See `CURRENT.md` for the short operational truth.
 
-## Requirements
+## Prerequisites
 
-- Windows with the MSVC C++ build tools, or an equivalent Rust development
-  environment.
-- rustup with Rust 1.98.1, rustfmt and Clippy. The repository toolchain file
-  selects this automatically.
-- SurrealDB CLI/server 3.3.0-beta.4 for the remote integration lane. The
-  embedded path does not require a separate server process.
-- No SurrealDB process is required for the normal embedded path.
+1. Rustup with Rust 1.98.1, rustfmt, and Clippy.
+2. Microsoft C++ Build Tools and Windows SDK for Rust's MSVC target on
+   Windows. The Visual Studio IDE is not required.
+3. SurrealDB 3.3.0-beta.4 only when running the optional remote integration
+   lane. Embedded SurrealKV needs no separate server.
+4. PowerShell on Windows.
 
-## Build and test
+## Build, test, and validate
 
-    cargo check --workspace --all-targets --all-features --locked
-    cargo test --workspace --locked
-    cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+    git clone https://github.com/matthewjameswatkins1978-cyber/lantern-keeper.git
+    cd lantern-keeper
+    pwsh -NoProfile -File .\scripts\validate.ps1
 
-The embedded storage lanes are:
+The validation script is the canonical workflow. Its underlying checks are:
 
-    cargo test -p lighting-store-surreal --test memory_repository --locked
-    cargo test -p lighting-store-surreal --test surrealkv_qualification --locked
+    cargo fmt --all -- --check
+    cargo check --locked --workspace --all-targets --all-features
+    cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+    cargo test --locked --workspace -- --test-threads=1
+    cargo run --locked -p lighting -- version
 
-The existing remote integration tests are opt-in. Start the pinned
-SurrealDB 3.3.0-beta.4 test server with scripts/start-surreal.ps1, set
-LIGHTING_STORAGE=remote-surreal, and run the relevant integration test. To
-skip those tests explicitly:
+## Run Lantern
 
-    cmd /v /c "set LIGHTING_SKIP_INTEGRATION_TESTS=1&& cargo test --workspace --locked"
+The default store is `.lighting-data/surrealkv`, which is local and ignored.
+Optional local overrides can be copied from `.env.example` to `.env`.
 
-For the complete credentialed remote lane, configure the endpoint and root
-credentials for the disposable local server before running the same workspace
-test command. Run `surreal is-ready` first so the server has completed startup.
+    cargo run --locked -p lighting -- serve
+    cargo run --locked -p lighting -- doctor --json
+    cargo run --locked -p lighting -- recall --phrase "evidence-linked" --json
+    cargo run --locked -p lighting -- context --query "Continue with Lantern Keeper" --json
 
-Inspect the active toolchain, database connection, server version and schema
-state with:
+For the optional remote lane, use the exact-version scripts in `scripts/`:
 
-    cargo run -p lighting -- doctor --json
+    .\scripts\start-surreal.ps1
+    $env:LIGHTING_STORAGE = "remote-surreal"
+    $env:LIGHTING_SURREAL_USERNAME = "root"
+    $env:LIGHTING_SURREAL_PASSWORD = "root"
+    cargo test --locked --workspace -- --test-threads=1
+    .\scripts\stop-surreal.ps1
 
-On this Windows repository, the historical source tree contains CRLF files
-that the current rustfmt reports as newline-style differences. Formatting
-new or modified Rust code is still required; do not convert the legacy tree
-wholesale merely to make that diagnostic disappear.
+Do not commit `.env`, local databases, runtime state, or private migration
+material. Stop the Lighting service before exporting embedded storage.
 
-## Local configuration and service
+## Documentation map
 
-Copy .env.example to .env if you want local overrides:
+- `CURRENT.md` — current phase, verified state, gaps, and next step
+- `AGENTS.md` — tool-neutral worker landing page
+- `docs/architecture/` — current architecture and governance
+- `docs/basic-memory-migration.md` — migration accounting and boundaries
+- `docs/recovery.md` — export and recovery procedure
+- `docs/LANTERNBENCH.md` — behavioural benchmark
+- `docs/windows-worker-notes.md` — Windows-specific development notes
+- `docs/mcp.md` — current API boundary and future Lucy-native contract
+- `docs/history/` — selected historical context only
 
-    Copy-Item .env.example .env
-
-The embedded defaults are sufficient:
-
-    LIGHTING_STORAGE=embedded-surrealkv
-    LIGHTING_SURREAL_PATH=.lighting-data/surrealkv
-
-Optional remote settings remain in .env.example for the development server.
-Credentials are only used for the remote backend. Do not commit .env.
-
-Start Lighting:
-
-    cargo run -p lighting -- serve
-
-The service binds to 127.0.0.1:4317 by default. Readiness is reported only
-after the store and all schema migrations are ready:
-
-    Invoke-RestMethod http://127.0.0.1:4317/health/ready
-
-## Memory operations
-
-Remember a derived memory. Repeat --derived-from, --supports,
---supersedes or --contradicts for multiple references:
-
-    cargo run -p lighting -- remember "Matthew prefers evidence-linked context." --kind preference --importance 0.9 --derived-from source:conversation-001 --json
-
-Recall active memories:
-
-    cargo run -p lighting -- recall --phrase "evidence-linked" --json
-
-Build a bounded working packet:
-
-    cargo run -p lighting -- context --query "Continue with Lantern Keeper" --json
-
-Retain a correction as history:
-
-    cargo run -p lighting -- memory-supersede MEMORY_ID --json
-
-Ingest a host-neutral JSON export (an array or `{ "events": [...] }` object).
-Re-running the same file is safe because each event has an idempotency key:
-
-    cargo run -p lighting -- ledger-ingest fixtures/ledger/matthew-lucy-representative.json --json
-
-Import a validated Basic Memory snapshot directory. The importer reads
-`manifest.json` plus `notes-*.ndjson`, validates the complete set before
-contacting Lighting, stores raw notes as immutable Source evidence, and records
-the note, bracketed observation categories, and typed `[[relation]]` links as
-replay-safe ledger events:
-
-    cargo run -p lighting -- basic-memory-import .private-migration/snapshot-2026-09-12-repaired --dry-run --json
-    cargo run -p lighting -- basic-memory-import .private-migration/snapshot-2026-09-12-repaired --json
-
-The migration command does not silently promote whole notes into canonical
-Memory records. Promotion remains a separate reconciliation step so imported
-Markdown stays evidence and uncertain observations are not manufactured into
-truth.
-
-The equivalent HTTP endpoints are:
-
-    POST /api/v1/memories
-    POST /api/v1/memories/recall
-    POST /api/v1/memories/context
-    POST /api/v1/memories/{memory_id}/supersede
-    POST /api/v1/ledger/events
-
-JSON is the machine-facing contract. A no-match recall returns an explicit
-abstention message and an empty result set; candidates are not treated as
-proof merely because they exist.
-
-## Portable backup
-
-Export logical records without depending on the SurrealKV binary format:
-
-    cargo run -p lighting -- export backup
-
-Stop the Lighting service before running this command on Windows; the active
-embedded store holds a file lock. The service can be restarted afterwards.
-
-The export contains:
-
-    backup/manifest.json
-    backup/ledger.ndjson
-    backup/memories.ndjson
-    backup/relations.ndjson
-    backup/projects.ndjson
-
-Each NDJSON record includes its logical table name and JSON-converted record.
-This is a portable escape hatch; restore validation is still a separate
-qualification lane. The original
-.lighting-data directory is not removed by export or migration.
-
-## Existing source/project loop
-
-The original exact-source loop remains available:
-
-    cargo run -p lighting -- source add README.md
-    cargo run -p lighting -- source show SOURCE_ID
-    cargo run -p lighting -- project create "Lantern Keeper"
-    cargo run -p lighting -- project-handoff PROJECT_ID
-
-Sources remain authoritative evidence; Episodes and Markers point into them.
-The old remote-server demonstration scripts remain available as an explicit
-remote test path and are not required for ordinary local memory use.
-
-## Architecture and research notes
-
-- docs/architecture/LANTERN_FOUNDATION_DECISIONS.md records the exact
-  modernisation decisions and current boundaries.
-- docs/dependency-modernisation-2026-09-12.md records the selected matched
-  SurrealDB lane, dependency review and security findings.
-- docs/SURREALKV_QUALIFICATION.md records the workload-oriented qualification.
-- docs/architecture/MEMORY_MODEL_AUDIT.md records model decisions and gaps.
-- docs/architecture/LEDGER_EVENT_MODEL.md defines the evidence boundary.
-- docs/architecture/AMBIENT_MEMORY_LIFECYCLE.md defines host-neutral lifecycle
-  hooks and replay boundaries.
-- bench/lanternbench-v1.json and docs/LANTERNBENCH.md define the benchmark.
-
-Deferred deliberately: GUI, cloud deployment, accounts, broad ontology,
-universal ingestion, provider connectors, MCP handlers, vector/BM25 fusion,
-automatic gardening and autonomous rewriting of source history.
+The optional Tethers preview is explicitly bounded and does not define
+Lantern's memory authority. Legacy implementation archaeology remains in Git
+history or the small labelled history directory, not in the normal setup path.

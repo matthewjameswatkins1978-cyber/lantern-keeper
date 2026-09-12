@@ -1,5 +1,7 @@
 # Dreamer and Foreman
 
+Status: **CANONICAL CURRENT — implementation partial**
+
 Lucy is the sole routine Memory Foreman. Dreamer and extractors may produce
 candidate Claims, soft-memory candidates, associations, contradictions, and
 correction suggestions. They cannot mutate canonical Beliefs directly.

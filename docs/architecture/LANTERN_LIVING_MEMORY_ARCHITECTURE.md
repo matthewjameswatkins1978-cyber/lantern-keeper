@@ -1,5 +1,7 @@
 # Lantern Living Memory Architecture
 
+Status: **CANONICAL CURRENT**
+
 Lantern Keeper is a local-first shared memory for humans and AI. Sources
 preserve what happened; Claims preserve what was asserted; Beliefs preserve
 current reconciled understanding; and Memory Items preserve useful material

@@ -1,5 +1,8 @@
 # Memory Model Audit
 
+> Historical document. This one-time audit is retained for context and is not
+> the current implementation specification.
+
 Status: **PARTIAL — baseline audited; temporal and relation improvements are in progress.**
 
 This audit records the decision about the existing Living Memory prototype before

@@ -1,5 +1,7 @@
 # Lantern Keeper Foundation Decisions
 
+Status: **SUPPORTING CURRENT — binding foundation decisions**
+
 ## 2026-09 foundation modernisation
 
 - The development toolchain is pinned to Rust 1.98.1 stable with Edition 2024,

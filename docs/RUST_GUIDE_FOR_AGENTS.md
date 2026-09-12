@@ -1,166 +1,70 @@
-# Lantern Keeper — Rust Guide for Coding Agents
+# Lantern Keeper — Rust Guide
 
-Read this guide before editing any `.rs` file, `Cargo.toml`, or `Cargo.lock`.
+This guide covers the repository's Rust conventions. It is tool-neutral and
+does not require a particular editor or AI assistant.
 
 ## Version contract
 
 | Item | Value |
-| ---- | ----- |
-| Declared Rust version (workspace) | Rust **1.98.1** |
-| Edition | **2024** |
-| Ambient installed toolchain | rustc/cargo **1.98.1** |
+| --- | --- |
+| Rust | 1.98.1 |
+| Edition | 2024 |
 | Dependency resolution | `Cargo.lock` is authoritative |
+| SurrealDB | exactly 3.3.0-beta.4 |
 
-**Critical rule:** Rust 1.98.1 is the repository compatibility ceiling for
-source choices. Keep the repository-pinned toolchain and do not introduce
-features or dependency requirements beyond it without an explicit decision.
+Keep source choices compatible with the pinned toolchain. Inspect the lockfile
+and matching crate documentation before relying on an API.
 
-Consult **version-appropriate** official documentation:
+## Crate boundaries
 
-- [Rust 1.89 standard library](https://doc.rust-lang.org/1.89.0/std/)
-- [The Rust Reference](https://doc.rust-lang.org/reference/)
-- [The Cargo Book](https://doc.rust-lang.org/cargo/)
-- [The Edition Guide](https://doc.rust-lang.org/edition-guide/)
-- [Clippy documentation](https://doc.rust-lang.org/clippy/)
+    apps/lighting                 server binary and wiring
+    crates/lighting-core          domain types and repository traits; no I/O
+    crates/lighting-service       application behaviour and HTTP routes
+    crates/lighting-store-surreal SurrealDB repository implementations
+    crates/lighting-cli           machine-facing CLI client
 
-For exact crate APIs, inspect the version recorded in `Cargo.lock` and consult
-the matching [docs.rs](https://docs.rs) page. Do not guess APIs from newer
-crate releases.
-
-## Workspace boundaries
-
-```
-apps/lighting              — binary: Axum HTTP server, wiring, entry point
-crates/lighting-core       — library: domain types, traits, no I/O
-crates/lighting-service    — library: business logic, ProjectService, orchestrates stores
-crates/lighting-store-surreal — library: SurrealDB repository implementations
-crates/lighting-cli        — binary: CLI tool (blocking reqwest, admin commands)
-```
-
-**Dependency direction:**
-
-```
-lighting ─────────────────────────────────────────┐
-  └─ lighting-service ─────────────────────┐      │
-       ├─ lighting-core                    │      │
-       └─ lighting-store-surreal ──────────┤      │
-            └─ lighting-core               │      │
-lighting-cli ──────────────────────────────┤      │
-  └─ lighting-service ─────────────────────┘      │
-  └─ lighting-core                                │
-```
-
-- `lighting-core` has **no** dependency on service, store, Axum, Tokio, or SurrealDB.
-- `lighting-store-surreal` must not import from `lighting-service`.
-- Binaries wire everything; libraries define behaviour.
+Storage access stays behind repository traits. Do not put Axum, Tokio, or
+SurrealDB in `lighting-core`, and do not bypass service operations from a
+client or route.
 
 ## Conventions
 
-### Serialization
-- `Serialize` / `Deserialize` on DTOs (data transfer objects) only.
-- Use `serde` derives; keep domain types separate from wire format where practical.
-
-### Error handling
-- **stable API error shape:** `{ "code": "...", "message": "..." }`
-- `thiserror` in `lighting-service`, `lighting-core`, and `lighting-store-surreal` layers.
-- `anyhow` with `.context()` / `bail!` in binaries (`lighting`, `lighting-cli`).
+- Keep domain types separate from wire DTOs where practical.
+- Use the stable API error shape `{ "code": "...", "message": "..." }`.
+- Use `thiserror` in library layers and `anyhow` at binary boundaries.
 - Do not use `unwrap()` or `expect()` in production integration paths.
-- Preserve existing error types and conversions; do not silently replace them.
+- Do not block Tokio workers with synchronous process or file I/O.
+- Keep source and evidence append-oriented; preserve provenance on derived
+  changes and corrections.
+- Do not introduce `unsafe` without a recorded architectural decision.
+- Do not add dependencies or alter dependency features without explicit scope.
 
-### Async runtime
-- Tokio multi-thread runtime (`rt-multi-thread`).
-- Axum async route handlers.
-- **Blocking `reqwest`** belongs to `lighting-cli` only; it must not be copied into
-  async service paths. Use async `reqwest` (or an appropriate async HTTP client)
-  inside Tokio contexts.
+## Native build prerequisites
 
-### Storage
-- SurrealDB access stays behind repository trait boundaries.
-  No direct `surrealdb` calls outside `lighting-store-surreal`.
-- Do not bypass `ProjectService` or repository traits.
+Windows builds target `x86_64-pc-windows-msvc`, so Microsoft C++ Build Tools
+and the Windows SDK are normal platform prerequisites. Lantern does not depend
+on the Visual Studio IDE or an inherited IDE environment. Do not add a
+repository-specific linker path or copy runtime libraries into the project.
 
-### Formatting
-- `rustfmt.toml` enforces **Unix newlines** (`\n`). Preserve this.
-- `.cargo/config.toml` sets `AWS_LC_SYS_NO_ASM = "1"` — respect this environment
-  variable; do not remove or override it.
-
-### Thread safety
-- Do not block Axum/Tokio worker threads with `std::process::Command` or
-  synchronous filesystem I/O. Use `tokio::task::spawn_blocking` for CPU-bound or
-  blocking work.
-
-### Unsafe
-- Do not introduce `unsafe` without an explicit architectural decision recorded
-  in task approval.
-
-## Dependency discipline
-
-- **No new dependencies** without explicit task approval.
-- **No feature changes** (adding, removing, or altering Cargo features) without
-  explicit task authority.
-- Inspect `Cargo.lock` for the exact resolved version of every crate you use.
-- Consult the **exact version** documentation on docs.rs; do not assume APIs
-  from later releases.
-
-## Code discipline
-
-- No `unwrap()` or `expect()` in production integration paths.
-- Preserve existing error types and `From` conversions.
-- Do not bypass `ProjectService` or repository abstractions.
-- Do not put application adapters in `lighting-core` or `lighting-store-surreal`.
-- Do not block async worker threads with synchronous I/O.
-- Do not use `unsafe` without an explicit architectural decision.
+The repository's `.cargo/config.toml` sets
+`AWS_LC_SYS_PREBUILT_NASM=1`. This is required by the pinned transitive
+`aws-lc-sys 0.45.0` build on a normal Windows shell because NASM is not a
+supported repository prerequisite. Keep this setting in sync with that
+dependency; do not replace it with a different AWS-LC workaround.
 
 ## Validation
 
-The project validation command:
+Run the single supported validation path from a plain PowerShell session:
 
-```powershell
-pwsh -NoProfile -File .\scripts\validate.ps1
-```
+    pwsh -NoProfile -File .\scripts\validate.ps1
 
-This runs, in order:
+Equivalent checks are:
 
-1. `cargo fmt --check` — verifies formatting
-2. `cargo clippy --workspace --all-targets -- -D warnings` — zero-warning lint
-3. `cargo test --workspace` — full test suite
-4. `cargo run -p lighting -- version` — smoke-test the binary
+    cargo fmt --all -- --check
+    cargo check --locked --workspace --all-targets --all-features
+    cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+    cargo test --locked --workspace
+    cargo run --locked -p lighting -- version
 
-**Note on integration tests (Windows):** Some integration tests require a live
-SurrealDB instance or Docker. The documented skip command for Windows CI is
-recorded in project task documentation; do not run or alter it in routine
-documentation tasks.
-
-## Tethers integration constraints
-
-Lantern Keeper's initial Tethers integration is preview-only.
-
-- **First event:** `lantern.project_result_preview_requested`
-- **Engine path:** configured via `TETHERS_ENGINE_PATH` environment variable
-- **Scope:** preview only — no storage writes, no external Effects
-- **Boundary:** Tethers never accesses Lantern Keeper storage
-- **Future Actions:** `lantern.*` Actions will call public Lantern Keeper
-  services (not internal stores)
-- **Adapter location:** belongs in `lighting-service`
-- **Protocol:** newline-delimited JSON over stdin/stdout — byte-level format
-  must remain exact
-- **Engine location:** the OCaml engine's local opam switch is path-bound; do
-  not move `tethers-0.1/engine-ocaml/` from the Tethers repository
-
-**Future process integration gate:** Running Tethers as a child process requires
-a separate architectural decision to either:
-- enable appropriate Tokio process/I/O features; or
-- isolate synchronous process work safely (e.g. `spawn_blocking`).
-
-Do not choose or change Tokio features in this documentation task.
-
-## Task workflow
-
-1. Read this guide.
-2. Read repository-specific task documentation.
-3. Inspect `Cargo.toml`, `Cargo.lock`, and relevant source.
-4. Make the smallest change that satisfies the task.
-5. Run `cargo fmt --all` before the final test.
-6. Run the requested validation.
-7. Report changed files, test results, and next steps.
-8. Do not stage, commit, push, or tag unless the task explicitly authorises it.
+Remote integration tests are opt-in and require the exact SurrealDB version
+documented in `README.md`. Embedded tests should remain the default fast lane.

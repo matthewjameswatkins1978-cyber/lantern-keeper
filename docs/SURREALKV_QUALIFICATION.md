@@ -1,5 +1,7 @@
 # SurrealKV Qualification
 
+Status: **SUPPORTING CURRENT — qualification record**
+
 ## Decision
 
 Lantern Keeper uses embedded, versioned SurrealKV as its normal local storage

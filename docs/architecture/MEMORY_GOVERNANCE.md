@@ -1,9 +1,10 @@
 # Memory Governance
 
+Status: **CANONICAL CURRENT**
+
 Matthew is the ultimate human authority. Lucy is the sole routine Memory
-Foreman. Extractors, Dreamer, semantic matchers, Codex, Gemini, and other
-agents may identify or propose material but do not establish shared truth by
-themselves.
+Foreman. Extractors, Dreamer, semantic matchers, and external agents may
+identify or propose material but do not establish shared truth by themselves.
 
 Silence has zero endorsement weight. Quoting is not authorship. Repetition is
 not adoption. Assistant output cannot independently prove a proposition about

@@ -1,5 +1,7 @@
 # Lantern Keeper recovery baseline — 2026-09-12
 
+Status: **HISTORICAL RECOVERY RECORD**
+
 ## Scope
 
 This report records the state found while taking over the stalled Lantern

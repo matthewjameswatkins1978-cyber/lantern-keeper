@@ -1,5 +1,7 @@
 # Lantern Keeper dependency modernisation — 2026-09-12
 
+Status: **HISTORICAL QUALIFICATION RECORD**
+
 ## Decision
 
 The supported development baseline is:

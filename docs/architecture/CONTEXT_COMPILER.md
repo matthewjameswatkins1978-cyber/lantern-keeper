@@ -1,5 +1,7 @@
 # Context Compiler
 
+Status: **CANONICAL CURRENT — implementation partial**
+
 The current service keeps the existing deterministic Memory context path. The
 next canonical compiler will combine direct Belief reads, soft-memory recall,
 episode/source evidence, graph relations, perspective, and explicit stale

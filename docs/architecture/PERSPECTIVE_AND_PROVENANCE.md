@@ -1,5 +1,7 @@
 # Perspective and Provenance
 
+Status: **CANONICAL CURRENT**
+
 Retained assertions distinguish originator, speaker, transmitter, holder,
 stance, and transformation. When dialogue contains quotation or relay, a
 `framing_path` records the meaningful nesting with actions such as speaking,

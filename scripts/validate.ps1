@@ -22,10 +22,14 @@ function Invoke-Step {
 Push-Location $ProjectRoot
 
 try {
-    Invoke-Step -Name "cargo fmt --check" -Action { cargo fmt --check }
-    Invoke-Step -Name "cargo clippy" -Action { cargo clippy --workspace --all-targets -- -D warnings }
-    Invoke-Step -Name "cargo test" -Action { cargo test --workspace }
-    Invoke-Step -Name "lighting version" -Action { cargo run -p lighting -- version }
+    Invoke-Step -Name "cargo fmt --check" -Action { cargo fmt --all -- --check }
+    Invoke-Step -Name "cargo check" -Action { cargo check --locked --workspace --all-targets --all-features }
+    Invoke-Step -Name "cargo clippy" -Action { cargo clippy --locked --workspace --all-targets --all-features -- -D warnings }
+    # The remote SurrealDB lane has a known transient write-conflict during
+    # parallel cold-start tests. Serialize the canonical validation lane; the
+    # parallel behaviour remains a separate qualification concern.
+    Invoke-Step -Name "cargo test" -Action { cargo test --locked --workspace -- --test-threads=1 }
+    Invoke-Step -Name "lighting version" -Action { cargo run --locked -p lighting -- version }
 }
 finally {
     Pop-Location

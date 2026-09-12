@@ -1,5 +1,7 @@
 # Ambient Memory Lifecycle
 
+Status: **SUPPORTING CURRENT — host-neutral lifecycle boundary**
+
 The current lifecycle is intentionally conservative:
 
 ```text
@@ -24,7 +26,7 @@ particular host:
 | `session.close` | Flush pending events and progress markers; do not silently discard an uncommitted event. |
 
 The first implemented client surface is the HTTP ledger endpoint and the
-`lighting ledger-ingest` CLI command. Codex-specific ambient hooks and an
+`lighting ledger-ingest` CLI command. Host-specific ambient hooks and an
 event-driven worker are deferred until the event/projection boundary has more
 qualification.
 

@@ -1,115 +1,54 @@
-# Lantern Keeper - Current Phase
+# Lantern Keeper — Current
 
-## Foundation modernisation complete; import accounting checkpoint complete
+## Repository
 
-The authoritative pre-memory Luna baseline is preserved at commit
-407c52934de8fe4c583c7ed549e51d1de45c7ce3 under tag
-lantern-pre-memory-checkpoint. This implementation runs in the separate
-foundation/lantern-pre-memory worktree; the original dirty checkout remains
-untouched.
+- Active line: `feature/lantern-full-move`
+- Current feature checkpoint: `c2cdfd92863ce043c3751bcfb85a8d8785558e2f`
+- Canonical `master`: `a44554b7050e9b3dd2178eede99b67184d89d12c`
+- Feature checkout was clean before this spring-clean change.
+- `master` remains unchanged by the feature work.
 
-The latest verified implementation checkpoint is commit
-0718a7c7bef314febb4589bb081ba1527bf891ad on `feature/lantern-full-move`.
+## Phase
 
-## Delivered in this pass
+Foundation modernisation and Basic Memory import accounting are complete.
+Spring cleaning is in progress. The next implementation phase is durable
+belief reconciliation and the correction-aware Context Compiler.
 
-- Rust 1.98.1 stable, edition 2024, rustfmt and Clippy pinned in
-  rust-toolchain.toml.
-- Cargo.lock is committed and the supported SurrealDB lane is exactly matched:
-  Rust client and local server 3.3.0-beta.4.
-- Embedded versioned SurrealKV is the default local backend with sync=every.
-  Remote WebSocket storage remains opt-in for existing integration tests.
-- Existing Source/Project/Episode/Marker data remains logically addressable;
-  no .lighting-data store existed in the preserved baseline, so there was no
-  meaningful local database migration to perform.
-- A portable export command writes manifest.json plus ledger, memory,
-  relation and project NDJSON files.
-- A small Memory Ledger/Living Memory substrate supports derived content,
-  provenance references, optional observation time, as-of queries, explicit
-  evolution relationships and bounded multi-hop lineage.
-- Host-neutral append-only ledger events with raw-payload retention, HTTP
-  ingestion and replay-safe `ledger-ingest` CLI support.
-- CLI and HTTP capture, recall, context and supersede operations.
-- Initial embedded qualification and memory repository integration tests.
-- Executable LanternBench v1 runner, representative event fixture, and
-  architecture/qualification documentation.
-- A validated 2026-09-12 Basic Memory Cloud snapshot containing 61 notes,
-  plus a replay-safe `basic-memory-import` command. The checkpoint extends
-  the importer to emit observation and relation evidence.
-- Typed canonical epistemic records: Actor, Claim, Belief, soft Memory Item,
-  Trace, Proposal, Predicate/Dimension definitions, Context Pack, and graph
-  relations. Claims retain framing and attribution; stale Beliefs remain
-  explicitly separate from truth state.
-- Durable SurrealDB stores and HTTP capability routes for Claim capture,
-  Belief projection/listing/stale invalidation, soft-memory capture/search,
-  and unresolved relation inspection.
-- Predicate and dimension definitions now have canonical key normalization,
-  durable registry tables, list/get/create HTTP inspection surfaces, and
-  creation traces. Scoped Claims and Beliefs normalize dimension keys and
-  known OS aliases before computing their deterministic scope hash.
-- Claim capture resolves exact registered predicate keys and aliases only;
-  unknown candidates remain explicitly unmapped. Claims are listable through
-  the HTTP surface with an unmapped-only filter.
-- A side-effect-free reconciliation decision layer now enforces scope overlap,
-  unmapped deferral, echo suppression, historical classification, direct
-  holder gates, supersession, contradiction and dispute outcomes. Canonical
-  belief mutation and evidence-lineage persistence are still follow-up work.
-- Predicate inspection is available through `lighting predicate list`, `get`,
-  `aliases` and `unmapped`, backed by the local HTTP API.
-- Dependency relations can now propagate stale state transitively across
-  in-memory belief projections, incrementing `dependency_generation` once per
-  affected belief without recursive model calls. Durable reconciliation and
-  repair-queue persistence remain open.
-- Lantern exports now include predicate and dimension registry records, so
-  those canonical definitions are included in future restore evidence.
-- `lighting doctor --json` reports the connected server version, schema version,
-  storage configuration and an explicit OK/WARNING status without exposing
-  credentials.
-- Basic Memory import now creates reusable whole-note Episodes, 156 Claim
-  candidates, 299 soft Memory Items, and 191 unresolved relation records in
-  the local store from the preserved snapshot. A second pass is replay-safe.
-- The repaired Basic Memory snapshot now has a deterministic offline accounting
-  report: all 496 observations and 275 relations are accounted for, with zero
-  unexplained items. Explicit Source-only, historical, metadata, unresolved and
-  unsupported outcomes are retained rather than silently omitted.
+## Works today
 
-## Retrieval boundary
+- Rust 1.98.1 / Edition 2024 and SurrealDB 3.3.0-beta.4 are pinned.
+- Embedded, versioned SurrealKV is the normal local store.
+- Sources, Episodes, Projects, Claims, Beliefs, soft Memory Items, relations,
+  registries, traces, proposals, export, import accounting, lexical recall,
+  context, and the optional Tethers preview are present in the tree.
+- Predicate and dimension normalization, explicit unmapped Claims, pure
+  reconciliation decisions, echo suppression, direct-holder gates, and
+  transitive stale propagation are implemented.
+- The repaired Basic Memory snapshot accounts for 61 notes, 496 observations,
+  and 275 relations with zero unexplained items.
 
-The first retrieval slice is intentionally inspectable: phrase matching,
-project/status/as-of filters, importance, confidence and known-at ordering.
-Recall returns a trace containing query, channel and candidate/selected IDs. An
-empty result is an explicit abstention.
+## Still missing or partial
 
-Not yet implemented: clean-database import replay proof, predicate alias
-resolution and promotion into Beliefs, BM25/vector/graph fusion, persisted
-context traces, automated
-contradiction resolution, proposal review commands, narrative rebuilds,
-native host conversation adapters, restore validation, and MCP. These remain
-genuine follow-up gates, not silently implied by the current code.
+- Durable Claim-to-Belief transitions and full Belief history.
+- Correction workflow, persisted Context Pack traces, and stale-aware reads.
+- Fused retrieval, bounded graph projection, expanded LanternBench,
+  Foreman/Dreamer operations, restore proof, and a real Lucy-native MCP path.
+- Basic Memory shadow comparison, final delta, and cutover.
 
-## Verification
+## Environment
 
-The exact qualification lane passes:
+The Rust MSVC target needs the installed Microsoft C++ Build Tools and Windows
+SDK libraries, but Lantern does not require the Visual Studio IDE or a
+particular editor. Plain `pwsh -NoProfile` validation is the acceptance target.
 
-    cargo test -p lighting-store-surreal --test memory_repository --locked
-    cargo test -p lighting-store-surreal --test surrealkv_qualification --locked
+## Recovery and private state
 
-The workspace compile lane passes:
+The unfinished reconciliation draft is preserved in the stash named
+`preserve unfinished reconciliation draft before spring clean 2026-09-13` and
+at `recovery/pre-spring-clean-c2cdfd9`. Private migration material remains in
+`.private-migration/` and must not be committed or deleted.
 
-    cargo check --workspace --all-targets --all-features --locked
+## Next verified step
 
-The workspace Clippy gate and skip-remote workspace test lane also pass; the
-exact packet-level result is recorded in docs/AMBIENT_MEMORY_QUALIFICATION.md.
-
-The new epistemic slice additionally passes core unit tests, workspace check,
-workspace all-features Clippy, live embedded capture/retrieval/stale checks,
-and two Basic Memory importer passes. The final logical export contains the
-new epistemic and relation tables. Cutover has not been performed.
-
-The modernisation qualification passes the complete credentialed remote suite
-against a fresh SurrealDB 3.3.0-beta.4 in-memory server: 215 passed, 0 failed,
-1 ignored. The embedded SurrealKV qualification also passes. A clean 3.2.4
-fallback compile/control was exercised; beta.4 was selected because its
-matched live lane passed and its graph/relation capabilities serve the next
-product stages. The dependency audit findings and their rationale are in
-`docs/dependency-modernisation-2026-09-12.md`.
+Finish the spring-clean inventory, validate a clean plain-shell rebuild, push
+the cleanup to `feature/lantern-full-move`, and leave `master` untouched.

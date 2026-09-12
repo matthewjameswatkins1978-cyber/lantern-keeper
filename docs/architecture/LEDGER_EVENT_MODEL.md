@@ -1,5 +1,7 @@
 # Ledger Event Model
 
+Status: **SUPPORTING CURRENT — implementation partial**
+
 Status: **implemented foundation; adapter and derived-memory projection remain partial**.
 
 `LedgerEvent` is the host-neutral source boundary for ambient memory. It records
