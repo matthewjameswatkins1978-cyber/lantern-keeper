@@ -72,6 +72,27 @@ pub enum BeliefState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ReconciliationAction {
+    Create,
+    Reinforce,
+    Refine,
+    Supersede,
+    Contradict,
+    Dispute,
+    HistoricalOnly,
+    HypothesisOnly,
+    NoChange,
+    Defer,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReconciliationDecision {
+    pub action: ReconciliationAction,
+    pub reason: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TrustClass {
     Direct,
     Derived,
@@ -623,6 +644,112 @@ pub fn normalize_scope(scope: &Scope) -> Result<Scope, EpistemicError> {
     Ok(normalized)
 }
 
+/// Two scopes overlap when every dimension they both specify has the same
+/// canonical value. An absent dimension is generic and therefore overlaps a
+/// more specific scope; differing specified values do not overlap.
+pub fn scopes_overlap(left: &Scope, right: &Scope) -> bool {
+    let keys = left
+        .keys()
+        .chain(right.keys())
+        .map(|key| normalise_scope_key(key))
+        .collect::<std::collections::BTreeSet<_>>();
+    keys.into_iter().all(
+        |key| match (scope_value(left, &key), scope_value(right, &key)) {
+            (Some(left), Some(right)) => left == right,
+            _ => true,
+        },
+    )
+}
+
+fn scope_value(scope: &Scope, key: &str) -> Option<String> {
+    scope.iter().find_map(|(candidate, value)| {
+        (normalise_scope_key(candidate) == key).then(|| normalise_scope_value(key, value))
+    })
+}
+
+/// Make the central claim-to-belief decision without mutating storage.
+///
+/// This deliberately refuses to promote unmapped predicates and does not
+/// treat repeated derived text as independent evidence. Storage orchestration
+/// can apply this decision only after resolving the corresponding belief
+/// identity and recording the supporting trace.
+pub fn reconcile_claim(
+    claim: &Claim,
+    existing: Option<&Belief>,
+    independent_evidence: bool,
+) -> ReconciliationDecision {
+    if claim.predicate_key.is_none() {
+        return decision(ReconciliationAction::Defer, "predicate is unmapped");
+    }
+    if existing.is_some_and(|belief| belief.state != BeliefState::Active) {
+        return decision(ReconciliationAction::Defer, "existing belief is not active");
+    }
+    if claim
+        .valid_to
+        .is_some_and(|valid_to| valid_to <= claim.known_at)
+    {
+        return decision(
+            ReconciliationAction::HistoricalOnly,
+            "claim is temporally closed before it became known",
+        );
+    }
+    let Some(existing) = existing else {
+        return if direct_holder_evidence(claim, None) {
+            decision(ReconciliationAction::Create, "direct holder evidence")
+        } else {
+            decision(
+                ReconciliationAction::HypothesisOnly,
+                "holder attribution is not direct enough for an active belief",
+            )
+        };
+    };
+    if existing.current_value == claim.value && claim.polarity {
+        return if independent_evidence {
+            decision(
+                ReconciliationAction::Reinforce,
+                "independent evidence matches the active belief",
+            )
+        } else {
+            decision(
+                ReconciliationAction::NoChange,
+                "evidence descends from or repeats existing material",
+            )
+        };
+    }
+    if !claim.polarity || claim.stance == Stance::Rejecting {
+        return decision(
+            ReconciliationAction::Dispute,
+            "claim rejects or disputes the active value",
+        );
+    }
+    if direct_holder_evidence(claim, Some(&existing.holder_key)) {
+        decision(
+            ReconciliationAction::Supersede,
+            "direct holder evidence changes the active value",
+        )
+    } else {
+        decision(
+            ReconciliationAction::Contradict,
+            "different value lacks direct holder authority",
+        )
+    }
+}
+
+fn direct_holder_evidence(claim: &Claim, expected_holder: Option<&str>) -> bool {
+    claim.holder_actor_id.as_deref().is_some_and(|holder| {
+        holder == claim.originator_actor_id
+            && holder == claim.speaker_actor_id
+            && expected_holder.is_none_or(|expected| expected == holder)
+    }) && claim.stance == Stance::Endorsing
+}
+
+fn decision(action: ReconciliationAction, reason: &str) -> ReconciliationDecision {
+    ReconciliationDecision {
+        action,
+        reason: reason.to_owned(),
+    }
+}
+
 pub fn normalize_registry_key(value: &str, field: &str) -> Result<String, EpistemicError> {
     let value = non_blank(value.to_owned(), field)?;
     let mut normalized = String::with_capacity(value.len());
@@ -726,6 +853,114 @@ mod tests {
             Err(EpistemicError::InvalidScope(message))
                 if message.contains("duplicate key")
         ));
+    }
+
+    #[test]
+    fn scope_overlap_treats_absent_dimensions_as_generic() {
+        let generic = Scope::new();
+        let mut mac = Scope::new();
+        mac.insert("os".to_owned(), "mac".to_owned());
+        let mut windows = Scope::new();
+        windows.insert("os".to_owned(), "windows".to_owned());
+
+        assert!(scopes_overlap(&generic, &mac));
+        assert!(!scopes_overlap(&mac, &windows));
+    }
+
+    #[test]
+    fn reconciliation_refuses_unmapped_predicates_and_echoes() {
+        let claim = test_claim(None, Some("preferred_editor"), "Zed", "matthew", true);
+        let decision = reconcile_claim(&claim, None, true);
+        assert_eq!(decision.action, ReconciliationAction::Defer);
+
+        let claim = test_claim(Some("preferred_editor"), None, "Zed", "matthew", true);
+        let belief = Belief::new(NewBelief {
+            holder_key: "matthew".to_owned(),
+            subject_key: "matthew".to_owned(),
+            predicate_key: "preferred_editor".to_owned(),
+            current_value: "Zed".to_owned(),
+            scope: Scope::new(),
+            confidence: 0.9,
+            trust_class: TrustClass::Direct,
+            known_from: claim.known_at,
+            valid_from: None,
+            created_at: claim.created_at,
+        })
+        .expect("test belief is valid");
+        let decision = reconcile_claim(&claim, Some(&belief), false);
+        assert_eq!(decision.action, ReconciliationAction::NoChange);
+    }
+
+    #[test]
+    fn reconciliation_requires_direct_holder_evidence_for_change() {
+        let existing = Belief::new(NewBelief {
+            holder_key: "matthew".to_owned(),
+            subject_key: "matthew".to_owned(),
+            predicate_key: "preferred_editor".to_owned(),
+            current_value: "Zed".to_owned(),
+            scope: Scope::new(),
+            confidence: 0.9,
+            trust_class: TrustClass::Direct,
+            known_from: Utc::now(),
+            valid_from: None,
+            created_at: Utc::now(),
+        })
+        .expect("test belief is valid");
+        let inferred = test_claim(Some("preferred_editor"), None, "Helix", "lucy", true);
+        assert_eq!(
+            reconcile_claim(&inferred, Some(&existing), true).action,
+            ReconciliationAction::Contradict
+        );
+
+        let direct = test_claim(Some("preferred_editor"), None, "Helix", "matthew", true);
+        assert_eq!(
+            reconcile_claim(&direct, Some(&existing), true).action,
+            ReconciliationAction::Supersede
+        );
+    }
+
+    fn test_claim(
+        predicate_key: Option<&str>,
+        predicate_candidate: Option<&str>,
+        value: &str,
+        speaker: &str,
+        positive: bool,
+    ) -> Claim {
+        let now = Utc::now();
+        Claim::new(NewClaim {
+            episode_id: None,
+            source_id: None,
+            evidence_span: None,
+            subject_key: "matthew".to_owned(),
+            predicate_key: predicate_key.map(str::to_owned),
+            predicate_candidate: predicate_candidate.map(str::to_owned),
+            predicate_status: if predicate_key.is_some() {
+                PredicateStatus::Resolved
+            } else {
+                PredicateStatus::Unmapped
+            },
+            value: value.to_owned(),
+            scope: Scope::new(),
+            polarity: positive,
+            originator_actor_id: speaker.to_owned(),
+            speaker_actor_id: speaker.to_owned(),
+            transmitter_actor_id: None,
+            holder_actor_id: Some(speaker.to_owned()),
+            stance: if positive {
+                Stance::Endorsing
+            } else {
+                Stance::Rejecting
+            },
+            framing_path: Vec::new(),
+            confidence: 1.0,
+            known_at: now,
+            valid_from: None,
+            valid_to: None,
+            extractor: "test".to_owned(),
+            extractor_version: "1".to_owned(),
+            created_at: now,
+        })
+        .expect("test claim is valid")
     }
 
     #[test]
