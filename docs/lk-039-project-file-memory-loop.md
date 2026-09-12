@@ -11,7 +11,8 @@ concept for the next memory-foundation milestone.
 
 ## Prerequisites
 
-SurrealDB 3.2.1+ running on `ws://127.0.0.1:8000`, plus Lighting serving on `http://127.0.0.1:4317`:
+SurrealDB 3.3.0-beta.4 running on `ws://127.0.0.1:8000`, plus Lighting
+serving on `http://127.0.0.1:4317`:
 
 ```powershell
 .\scripts\start-surreal.ps1

@@ -36,6 +36,10 @@ pub enum StoreError {
     Health(#[source] Box<surrealdb::Error>),
     #[error("SurrealDB health check timed out")]
     HealthTimeout,
+    #[error("failed to read the connected SurrealDB server version: {0}")]
+    ServerVersion(#[source] Box<surrealdb::Error>),
+    #[error("failed to read the Lantern schema version: {0}")]
+    SchemaVersion(#[source] Box<surrealdb::Error>),
     #[error("SurrealDB schema initialisation failed: {0}")]
     Schema(#[source] Box<surrealdb::Error>),
 }
@@ -91,6 +95,27 @@ impl SurrealStore {
             .map_err(|_| StoreError::HealthTimeout)?
             .map(|_| ())
             .map_err(|error| StoreError::Health(Box::new(error)))
+    }
+
+    pub async fn server_version(&self) -> Result<Option<String>, StoreError> {
+        let version = self
+            .db
+            .version()
+            .await
+            .map_err(|error| StoreError::ServerVersion(Box::new(error)))?;
+        Ok(Some(version.to_string()))
+    }
+
+    pub async fn schema_version(&self) -> Result<Option<i64>, StoreError> {
+        let mut response = self
+            .db
+            .query("SELECT VALUE schema_version FROM __lighting_schema:bootstrap;")
+            .await
+            .map_err(|error| StoreError::SchemaVersion(Box::new(error)))?;
+        let versions: Vec<i64> = response
+            .take(0)
+            .map_err(|error| StoreError::SchemaVersion(Box::new(error)))?;
+        Ok(versions.into_iter().next())
     }
 
     pub async fn initialise_schema(&self) -> Result<(), StoreError> {

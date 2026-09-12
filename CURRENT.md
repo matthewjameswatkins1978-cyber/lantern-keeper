@@ -1,6 +1,6 @@
 # Lantern Keeper - Current Phase
 
-## Full living-memory vertical slice and migration foundation
+## Foundation modernisation complete; living-memory implementation continues
 
 The authoritative pre-memory Luna baseline is preserved at commit
 407c52934de8fe4c583c7ed549e51d1de45c7ce3 under tag
@@ -12,8 +12,8 @@ untouched.
 
 - Rust 1.98.1 stable, edition 2024, rustfmt and Clippy pinned in
   rust-toolchain.toml.
-- Direct and transitive dependencies refreshed with Cargo.lock committed in
-  the modernisation commit, with SurrealDB exactly pinned to 3.3.0-beta.3.
+- Cargo.lock is committed and the supported SurrealDB lane is exactly matched:
+  Rust client and local server 3.3.0-beta.4.
 - Embedded versioned SurrealKV is the default local backend with sync=every.
   Remote WebSocket storage remains opt-in for existing integration tests.
 - Existing Source/Project/Episode/Marker data remains logically addressable;
@@ -40,6 +40,9 @@ untouched.
 - Durable SurrealDB stores and HTTP capability routes for Claim capture,
   Belief projection/listing/stale invalidation, soft-memory capture/search,
   and unresolved relation inspection.
+- `lighting doctor --json` reports the connected server version, schema version,
+  storage configuration and an explicit OK/WARNING status without exposing
+  credentials.
 - Basic Memory import now creates reusable whole-note Episodes, 156 Claim
   candidates, 299 soft Memory Items, and 191 unresolved relation records in
   the local store from the preserved snapshot. A second pass is replay-safe.
@@ -75,3 +78,11 @@ The new epistemic slice additionally passes core unit tests, workspace check,
 workspace all-features Clippy, live embedded capture/retrieval/stale checks,
 and two Basic Memory importer passes. The final logical export contains the
 new epistemic and relation tables. Cutover has not been performed.
+
+The modernisation qualification passes the complete credentialed remote suite
+against a fresh SurrealDB 3.3.0-beta.4 in-memory server: 215 passed, 0 failed,
+1 ignored. The embedded SurrealKV qualification also passes. A clean 3.2.4
+fallback compile/control was exercised; beta.4 was selected because its
+matched live lane passed and its graph/relation capabilities serve the next
+product stages. The dependency audit findings and their rationale are in
+`docs/dependency-modernisation-2026-09-12.md`.

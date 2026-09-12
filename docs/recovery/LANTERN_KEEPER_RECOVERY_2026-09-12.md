@@ -154,3 +154,25 @@ live embedded HTTP capture/search/stale checks, and two complete importer
 passes. The packet remains pre-cutover: predicate reconciliation, richer
 retrieval/context compilation, correction cascade tests, native Lucy client
 proof, full restore validation, and final delta migration remain open.
+
+## Foundation modernisation continuation
+
+The expected packet checkpoint was subsequently present exactly at feature
+HEAD `d58ffc9445b542ea32428ab13d2496bd7936cc20`; `origin/master` remained
+`a44554b7050e9b3dd2178eede99b67184d89d12c`. Private paths remained ignored and
+the recovery/archive branches were not modified.
+
+The Rust client was advanced from SurrealDB 3.3.0-beta.3 to exactly
+3.3.0-beta.4. The existing Windows server executable was upgraded from 3.2.1
+to 3.3.0-beta.4 with the old executable retained as a SHA-256-verified
+rollback copy. Qualification used fresh in-memory server stores only; the
+preserved `.lighting-data` and `.private-migration` paths were not opened by
+the new server binary.
+
+The final matched beta.4 remote lane passed 215 tests with 0 failures and 1
+ignored test, plus the embedded SurrealKV qualification. The stable 3.2.4
+control compiled successfully and removed the quick-xml advisories, but beta.4
+was selected under the packet's rule because its complete matched lane passed
+and its graph/relation improvements are directly relevant. `cargo audit` still
+reports the upstream-constrained quick-xml advisories on beta.4 and the
+unfixed transitive rsa advisory; these are documented rather than suppressed.

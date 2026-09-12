@@ -19,6 +19,8 @@ use tracing_subscriber::EnvFilter;
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 4317;
+const EXPECTED_SURREALDB_VERSION: &str = "3.3.0-beta.4";
+const EXPECTED_SCHEMA_VERSION: i64 = 7;
 
 fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -41,6 +43,14 @@ fn main() -> anyhow::Result<()> {
         Command::Version => {
             println!("Lighting {} (Lantern Keeper)", env!("CARGO_PKG_VERSION"));
             Ok(())
+        }
+        Command::Doctor { json } => {
+            init_tracing();
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("failed to create tokio runtime")?;
+            rt.block_on(async { doctor(json).await })
         }
         Command::Health { json } => {
             let url = cli.service_url.unwrap_or_else(default_service_url);
@@ -241,6 +251,12 @@ enum Command {
     Serve,
     /// Print the Lighting version.
     Version,
+    /// Inspect the local Lantern and SurrealDB development baseline.
+    Doctor {
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
     /// Check Lighting service readiness.
     Health {
         #[arg(long)]
@@ -556,6 +572,95 @@ async fn export_data(output: std::path::PathBuf) -> anyhow::Result<()> {
         .await
         .context("failed to export Lantern records")?;
     println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
+}
+
+async fn doctor(json_output: bool) -> anyhow::Result<()> {
+    let config = StoreConfig::from_env();
+    let mut report = serde_json::json!({
+        "lantern_version": env!("CARGO_PKG_VERSION"),
+        "rust_toolchain": "1.98.1",
+        "edition": "2024",
+        "expected_surrealdb": EXPECTED_SURREALDB_VERSION,
+        "storage": config.storage,
+        "endpoint": config.endpoint,
+        "namespace": config.namespace,
+        "database": config.database,
+        "schema_version_expected": EXPECTED_SCHEMA_VERSION,
+        "database_connection": "not_checked",
+        "health": "not_checked",
+        "server_version": serde_json::Value::Null,
+        "schema_version": serde_json::Value::Null,
+        "status": "UNKNOWN"
+    });
+
+    if let Err(error) = config.validate() {
+        report["status"] = serde_json::Value::String("INVALID_CONFIGURATION".to_owned());
+        report["error"] = serde_json::Value::String(error.to_string());
+        print_doctor_report(json_output, &report)?;
+        bail!("Lighting doctor found invalid configuration: {error}");
+    }
+
+    let store = match SurrealStore::connect(&config).await {
+        Ok(store) => store,
+        Err(error) => {
+            report["status"] = serde_json::Value::String("UNAVAILABLE".to_owned());
+            report["error"] = serde_json::Value::String(error.to_string());
+            print_doctor_report(json_output, &report)?;
+            bail!("Lighting doctor could not connect to SurrealDB: {error}");
+        }
+    };
+    report["database_connection"] = serde_json::Value::String("connected".to_owned());
+
+    if let Err(error) = store.health_check().await {
+        report["status"] = serde_json::Value::String("UNHEALTHY".to_owned());
+        report["error"] = serde_json::Value::String(error.to_string());
+        print_doctor_report(json_output, &report)?;
+        bail!("Lighting doctor health check failed: {error}");
+    }
+    report["health"] = serde_json::Value::String("ok".to_owned());
+
+    let server_version = store.server_version().await?;
+    let schema_version = store.schema_version().await?;
+    report["server_version"] = server_version
+        .clone()
+        .map(serde_json::Value::String)
+        .unwrap_or(serde_json::Value::Null);
+    report["schema_version"] = schema_version
+        .map(serde_json::Value::from)
+        .unwrap_or(serde_json::Value::Null);
+    let server_matches = server_version
+        .as_deref()
+        .is_some_and(|version| version.contains(EXPECTED_SURREALDB_VERSION));
+    let schema_matches = schema_version == Some(EXPECTED_SCHEMA_VERSION);
+    report["status"] = serde_json::Value::String(
+        if server_matches && schema_matches {
+            "OK"
+        } else {
+            "WARNING"
+        }
+        .to_owned(),
+    );
+    print_doctor_report(json_output, &report)?;
+
+    if server_matches && schema_matches {
+        Ok(())
+    } else {
+        bail!("Lighting doctor found an unsupported or incomplete development baseline")
+    }
+}
+
+fn print_doctor_report(json_output: bool, report: &serde_json::Value) -> anyhow::Result<()> {
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(report)?);
+        return Ok(());
+    }
+    let object = report
+        .as_object()
+        .context("doctor report must be a JSON object")?;
+    for (key, value) in object {
+        println!("{key}: {}", value.as_str().unwrap_or(&value.to_string()));
+    }
     Ok(())
 }
 

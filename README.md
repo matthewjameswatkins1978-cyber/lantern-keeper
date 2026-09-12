@@ -24,7 +24,8 @@ out of scope for this foundation pass.
 ## Current implemented scope
 
 - Rust 1.98.1, edition 2024, repository-pinned by rust-toolchain.toml.
-- SurrealDB 3.3.0-beta.3, exactly pinned in Cargo.toml.
+- SurrealDB 3.3.0-beta.4, exactly pinned in Cargo.toml and matched by the
+  qualified local server lane.
 - Embedded, versioned SurrealKV is the normal local store:
   .lighting-data/surrealkv, with sync=every.
 - Remote WebSocket SurrealDB remains an explicit test/development option via
@@ -61,6 +62,8 @@ capture and MCP are later work.
   environment.
 - rustup with Rust 1.98.1, rustfmt and Clippy. The repository toolchain file
   selects this automatically.
+- SurrealDB CLI/server 3.3.0-beta.4 for the remote integration lane. The
+  embedded path does not require a separate server process.
 - No SurrealDB process is required for the normal embedded path.
 
 ## Build and test
@@ -74,12 +77,21 @@ The embedded storage lanes are:
     cargo test -p lighting-store-surreal --test memory_repository --locked
     cargo test -p lighting-store-surreal --test surrealkv_qualification --locked
 
-The existing remote integration tests are opt-in. Start the pinned local
-SurrealDB test server with scripts/start-surreal.ps1, set
+The existing remote integration tests are opt-in. Start the pinned
+SurrealDB 3.3.0-beta.4 test server with scripts/start-surreal.ps1, set
 LIGHTING_STORAGE=remote-surreal, and run the relevant integration test. To
 skip those tests explicitly:
 
     cmd /v /c "set LIGHTING_SKIP_INTEGRATION_TESTS=1&& cargo test --workspace --locked"
+
+For the complete credentialed remote lane, configure the endpoint and root
+credentials for the disposable local server before running the same workspace
+test command. Run `surreal is-ready` first so the server has completed startup.
+
+Inspect the active toolchain, database connection, server version and schema
+state with:
+
+    cargo run -p lighting -- doctor --json
 
 On this Windows repository, the historical source tree contains CRLF files
 that the current rustfmt reports as newline-style differences. Formatting
@@ -198,6 +210,8 @@ remote test path and are not required for ordinary local memory use.
 
 - docs/architecture/LANTERN_FOUNDATION_DECISIONS.md records the exact
   modernisation decisions and current boundaries.
+- docs/dependency-modernisation-2026-09-12.md records the selected matched
+  SurrealDB lane, dependency review and security findings.
 - docs/SURREALKV_QUALIFICATION.md records the workload-oriented qualification.
 - docs/architecture/MEMORY_MODEL_AUDIT.md records model decisions and gaps.
 - docs/architecture/LEDGER_EVENT_MODEL.md defines the evidence boundary.

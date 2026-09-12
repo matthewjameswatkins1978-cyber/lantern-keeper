@@ -9,7 +9,7 @@ cloud services come later.
 - Source-backed Project/Episode/Marker storage and deterministic retrieval.
 - Exact source preservation, provenance-bearing excerpts and result writeback.
 - Rust 1.98.1 / edition 2024 repository pin.
-- Exact SurrealDB 3.3.0-beta.3 dependency with embedded versioned SurrealKV
+- Exact SurrealDB 3.3.0-beta.4 dependency with embedded versioned SurrealKV
   as the normal local backend.
 - Portable logical export and workload-oriented SurrealKV qualification.
 - First durable Living Memory model with temporal/as-of queries, explicit
@@ -21,15 +21,15 @@ cloud services come later.
 - Lossless Basic Memory snapshot capture and replay-safe Source/ledger import
   of the complete Lantern project at note level.
 
-## Immediate recovery and restart gates
+## Foundation modernisation record
 
-Before Memory implementation, complete and record:
+The foundation modernisation pass completed and recorded:
 
 1. Windows local checkout archaeology and preservation of all local-only work.
 2. Rust 1.98.1 formatting, compilation, Clippy and test validation.
-3. Separate SurrealDB 3.3.0-beta.4 compatibility experiment, with fallback
-   to the locked 3.2.1 client if required.
-4. README/CURRENT/ROADMAP reconciliation and a clean `master` baseline.
+3. A matched SurrealDB 3.3.0-beta.4 client/server qualification, with a
+   3.2.4 fallback control.
+4. README/CURRENT/ROADMAP reconciliation and an untouched `master` baseline.
 
 The repository must not begin the canonical Memory model until these gates are
 understood. The detailed takeover packet defines the later LK-N1 through LK-N18

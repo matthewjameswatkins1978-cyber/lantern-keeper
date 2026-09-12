@@ -4,13 +4,14 @@
 
 Lantern Keeper uses embedded, versioned SurrealKV as its normal local storage
 path. This is an intentional beta adoption of the exact pinned
-`surrealdb = 3.3.0-beta.3` line. The remote WebSocket backend remains available
+`surrealdb = 3.3.0-beta.4` line. The remote WebSocket backend remains available
 for disposable integration tests and development diagnostics.
 
 ## Configuration
 
 - Rust: 1.98.1 stable, Edition 2024
-- SurrealDB Rust SDK: exactly 3.3.0-beta.3
+- SurrealDB Rust SDK: exactly 3.3.0-beta.4
+- Qualified remote server: exactly 3.3.0-beta.4
 - Embedded engine: `kv-surrealkv`
 - Endpoint: `surrealkv://.lighting-data/surrealkv`
 - Versioning: enabled with `versioned=true`
@@ -61,16 +62,19 @@ while shutting down. The committed data reopened correctly, but clean worker
 shutdown is not yet treated as proven and should be revisited in the abrupt
 termination lane.
 
-The credentialed legacy WebSocket integration lane also showed transaction
-conflicts when parallel API test processes selected separate disposable
-databases. The embedded qualification's four-task concurrent-write workload
-passed; the remote lane remains optional and needs a bounded retry/serialization
-follow-up before it is treated as a release gate.
+The first cold-start credentialed WebSocket run showed transient transaction
+conflicts while parallel API test processes selected separate disposable
+databases. The same symptom was reproduced on the 3.2.4 control. After the
+server readiness gate completed, the complete default-concurrency beta.4 lane
+passed; this is treated as a startup qualification condition, not hidden by a
+test skip. The embedded qualification's four-task concurrent-write workload
+also passed.
 
-\`cargo deny check\` also reports transitive advisories in the pinned beta graph:
-quick-xml 0.39.4 is constrained by SurrealDB's object_store 0.13.2
-dependency, and rsa 0.9.10 has the known Marvin timing advisory with no
-upstream patch. The attempted quick-xml 0.41.0 update is rejected by that
-dependency constraint. This local-only beta deployment is not presented as a
-public hostile-input service; the findings remain release blockers for any
-broader exposure.
+`cargo audit` reports transitive advisories in the pinned beta graph:
+`cargo audit` reports two high-severity `quick-xml 0.39.4` advisories
+constrained by SurrealDB's `object_store 0.13.2` dependency, plus `rsa 0.9.10`
+with the known Marvin timing advisory and no upstream patch. The attempted
+`quick-xml` 0.41.0 update is rejected by that dependency constraint. The beta
+lane is local experimental infrastructure, not a public hostile-input service;
+the findings remain release blockers for broader exposure and are recorded in
+the dependency report.

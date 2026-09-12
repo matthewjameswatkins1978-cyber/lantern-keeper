@@ -3,6 +3,10 @@
 Date: 2026-09-04  
 Branch: `foundation/lantern-pre-memory`
 
+This is a historical qualification snapshot. The current supported
+modernisation baseline is recorded in `docs/dependency-modernisation-2026-09-12.md`
+and `docs/SURREALKV_QUALIFICATION.md`.
+
 ## Evidence
 
 - Preservation checkpoint: `lantern-pre-memory-checkpoint` at
