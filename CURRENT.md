@@ -9,7 +9,7 @@ foundation/lantern-pre-memory worktree; the original dirty checkout remains
 untouched.
 
 The latest verified implementation checkpoint is commit
-f73315a2a64c8fe75ec93fdef0af997b187d6cdf on `feature/lantern-full-move`.
+2bb713932b3508f24f1cc2f1692ba8c053f9089c on `feature/lantern-full-move`.
 
 ## Delivered in this pass
 
@@ -54,6 +54,8 @@ f73315a2a64c8fe75ec93fdef0af997b187d6cdf on `feature/lantern-full-move`.
   unmapped deferral, echo suppression, historical classification, direct
   holder gates, supersession, contradiction and dispute outcomes. Canonical
   belief mutation and evidence-lineage persistence are still follow-up work.
+- Predicate inspection is available through `lighting predicate list`, `get`,
+  `aliases` and `unmapped`, backed by the local HTTP API.
 - `lighting doctor --json` reports the connected server version, schema version,
   storage configuration and an explicit OK/WARNING status without exposing
   credentials.
