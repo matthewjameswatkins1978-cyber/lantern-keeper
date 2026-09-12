@@ -8,7 +8,7 @@ Cline task guardrails:
 
 ## Rust
 
-- MSRV is Rust 1.89 (Edition 2021). Do not use features or APIs introduced after 1.89.
+- The repository toolchain is Rust 1.98.1 (Edition 2024). Do not use features or APIs introduced after the pinned toolchain.
 - Read `docs/RUST_GUIDE_FOR_AGENTS.md` before editing `.rs`, `Cargo.toml`, or `Cargo.lock`.
 - No new dependencies or feature changes without explicit task approval.
 - Respect crate boundaries: `lighting-core` has no I/O; SurrealDB stays behind repository traits.

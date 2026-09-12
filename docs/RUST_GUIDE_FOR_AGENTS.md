@@ -6,15 +6,14 @@ Read this guide before editing any `.rs` file, `Cargo.toml`, or `Cargo.lock`.
 
 | Item | Value |
 | ---- | ----- |
-| Declared MSRV (workspace) | Rust **1.89** |
-| Edition | **2021** |
-| Ambient installed toolchain | rustc/cargo **1.97.1** |
+| Declared Rust version (workspace) | Rust **1.98.1** |
+| Edition | **2024** |
+| Ambient installed toolchain | rustc/cargo **1.98.1** |
 | Dependency resolution | `Cargo.lock` is authoritative |
 
-**Critical rule:** Rust 1.89 is the compatibility ceiling for source choices.
-Agents must not use language features, standard-library APIs, Cargo behaviour, or
-dependency features introduced after Rust 1.89 merely because the local Rust
-1.97 compiler accepts them.
+**Critical rule:** Rust 1.98.1 is the repository compatibility ceiling for
+source choices. Keep the repository-pinned toolchain and do not introduce
+features or dependency requirements beyond it without an explicit decision.
 
 Consult **version-appropriate** official documentation:
 

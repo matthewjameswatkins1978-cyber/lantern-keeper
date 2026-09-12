@@ -146,6 +146,21 @@ fn main() -> anyhow::Result<()> {
             let url = cli.service_url.unwrap_or_else(default_service_url);
             run_cli_command(&url, CliCommand::LedgerIngest { path, json })
         }
+        Command::BasicMemoryImport {
+            path,
+            dry_run,
+            json,
+        } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(
+                &url,
+                CliCommand::BasicMemoryImport {
+                    path,
+                    dry_run,
+                    json,
+                },
+            )
+        }
         Command::Export { output } => {
             init_tracing();
             let rt = tokio::runtime::Builder::new_multi_thread()
@@ -325,6 +340,17 @@ enum Command {
     /// Ingest one event or an events JSON array into the append-only ledger.
     LedgerIngest {
         path: std::path::PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Import a validated Basic Memory snapshot as Source evidence and ledger metadata.
+    BasicMemoryImport {
+        /// Snapshot directory or one notes-*.ndjson shard.
+        path: std::path::PathBuf,
+        /// Validate and report the snapshot without contacting Lighting.
+        #[arg(long)]
+        dry_run: bool,
+        /// Output JSON only.
         #[arg(long)]
         json: bool,
     },

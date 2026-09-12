@@ -4,13 +4,15 @@
 //! so that the unified `lighting` binary can use them directly.  The standalone
 //! `lighting-cli` binary still works via a thin `main.rs` shim.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use chrono::Utc;
 use clap::Subcommand;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// The Lighting service port the CLI connects to by default.
 ///
@@ -92,6 +94,11 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             cmd_memory_supersede(&client, &memory_id, json)
         }
         CliCommand::LedgerIngest { path, json } => cmd_ledger_ingest(&client, &path, json),
+        CliCommand::BasicMemoryImport {
+            path,
+            dry_run,
+            json,
+        } => cmd_basic_memory_import(&client, &path, dry_run, json),
         CliCommand::ProjectHandoff { project_id, json } => {
             cmd_project_handoff(&client, &project_id, json)
         }
@@ -223,6 +230,17 @@ pub enum CliCommand {
     /// Ingest one event or an {"events": [...]} / [...] JSON export into the source ledger.
     LedgerIngest {
         path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Import a validated Basic Memory snapshot as Source evidence and ledger metadata.
+    BasicMemoryImport {
+        /// Snapshot directory or one notes-*.ndjson shard.
+        path: PathBuf,
+        /// Validate and report the snapshot without contacting Lighting.
+        #[arg(long)]
+        dry_run: bool,
+        /// Output JSON only.
         #[arg(long)]
         json: bool,
     },
@@ -911,6 +929,379 @@ struct RememberInput<'a> {
     supports: Vec<String>,
     agent: &'a str,
     json: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct BasicMemorySnapshotRecord {
+    source_project: Option<String>,
+    source_project_id: Option<String>,
+    source_path: String,
+    title: Option<String>,
+    permalink: Option<String>,
+    external_id: Option<String>,
+    entity_id: Option<i64>,
+    note_type: Option<String>,
+    content_type: Option<String>,
+    updated_at: Option<String>,
+    raw_markdown: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BasicMemoryImportSummary {
+    source_records: usize,
+    sources_stored: usize,
+    sources_duplicate: usize,
+    ledger_events_stored: usize,
+    ledger_events_duplicate: usize,
+    observation_events_stored: usize,
+    observation_events_duplicate: usize,
+    relation_events_stored: usize,
+    relation_events_duplicate: usize,
+}
+
+fn load_basic_memory_snapshot(path: &Path) -> anyhow::Result<Vec<BasicMemorySnapshotRecord>> {
+    let files = if path.is_file() {
+        vec![path.to_path_buf()]
+    } else if path.is_dir() {
+        let manifest_path = path.join("manifest.json");
+        let manifest_text = fs::read_to_string(&manifest_path).with_context(|| {
+            format!(
+                "failed to read snapshot manifest {}",
+                manifest_path.display()
+            )
+        })?;
+        let manifest: serde_json::Value =
+            serde_json::from_str(&manifest_text).with_context(|| {
+                format!(
+                    "snapshot manifest is not valid JSON: {}",
+                    manifest_path.display()
+                )
+            })?;
+        let expected_count = manifest
+            .get("note_count")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| anyhow::anyhow!("snapshot manifest has no numeric note_count"))?;
+        let mut files: Vec<PathBuf> = fs::read_dir(path)
+            .with_context(|| format!("failed to list snapshot directory {}", path.display()))?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<_, _>>()
+            .with_context(|| format!("failed to inspect snapshot directory {}", path.display()))?;
+        files.retain(|candidate| {
+            candidate
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("notes-") && name.ends_with(".ndjson"))
+        });
+        files.sort();
+        if files.is_empty() {
+            bail!("snapshot directory contains no notes-*.ndjson shards");
+        }
+        let records = read_basic_memory_shards(&files)?;
+        if records.len() as u64 != expected_count {
+            bail!(
+                "snapshot manifest expects {expected_count} notes but shards contain {}",
+                records.len()
+            );
+        }
+        return Ok(records);
+    } else {
+        bail!("snapshot path does not exist: {}", path.display());
+    };
+
+    read_basic_memory_shards(&files)
+}
+
+fn read_basic_memory_shards(files: &[PathBuf]) -> anyhow::Result<Vec<BasicMemorySnapshotRecord>> {
+    let mut records = Vec::new();
+    let mut paths = std::collections::BTreeSet::new();
+    for file in files {
+        let text = fs::read_to_string(file)
+            .with_context(|| format!("failed to read snapshot shard {}", file.display()))?;
+        for (line_number, line) in text.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let record: BasicMemorySnapshotRecord =
+                serde_json::from_str(line).with_context(|| {
+                    format!(
+                        "snapshot shard {} line {} is not a valid Basic Memory record",
+                        file.display(),
+                        line_number + 1
+                    )
+                })?;
+            if record.source_path.trim().is_empty() {
+                bail!(
+                    "snapshot record in {} has a blank source_path",
+                    file.display()
+                );
+            }
+            if record.raw_markdown.is_empty() {
+                bail!(
+                    "snapshot record {} has an empty raw_markdown body",
+                    record.source_path
+                );
+            }
+            if !paths.insert(record.source_path.clone()) {
+                bail!(
+                    "snapshot contains duplicate source_path {}",
+                    record.source_path
+                );
+            }
+            records.push(record);
+        }
+    }
+    records.sort_by(|left, right| left.source_path.cmp(&right.source_path));
+    Ok(records)
+}
+
+fn cmd_basic_memory_import(
+    client: &HttpClient,
+    path: &Path,
+    dry_run: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let records = load_basic_memory_snapshot(path)?;
+    if dry_run {
+        let result = serde_json::json!({
+            "dry_run": true,
+            "source_records": records.len(),
+            "source_paths": records.iter().map(|record| record.source_path.as_str()).collect::<Vec<_>>()
+        });
+        if json {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            println!(
+                "Basic Memory snapshot is valid: {} source records",
+                records.len()
+            );
+        }
+        return Ok(());
+    }
+
+    let mut summary = BasicMemoryImportSummary {
+        source_records: records.len(),
+        sources_stored: 0,
+        sources_duplicate: 0,
+        ledger_events_stored: 0,
+        ledger_events_duplicate: 0,
+        observation_events_stored: 0,
+        observation_events_duplicate: 0,
+        relation_events_stored: 0,
+        relation_events_duplicate: 0,
+    };
+
+    for record in records {
+        let source_response = client
+            .post_json(
+                "/api/v1/sources",
+                &serde_json::json!({
+                    "title": format!("basic-memory/{}", record.source_path),
+                    "kind": "markdown",
+                    "content": record.raw_markdown,
+                }),
+            )
+            .map_err(|error| {
+                anyhow::Error::msg(error).context("is Lighting running? Try: lighting serve")
+            })?;
+        let source_body = HttpClient::handle_response(source_response)?;
+        let source_id = source_body
+            .get("source_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("source import response has no source_id"))?;
+        match source_body
+            .get("outcome")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("duplicate") => summary.sources_duplicate += 1,
+            Some("stored") => summary.sources_stored += 1,
+            other => bail!("source import response has unexpected outcome {other:?}"),
+        }
+
+        let upstream_key = record
+            .external_id
+            .clone()
+            .unwrap_or_else(|| record.source_path.clone());
+        let mut metadata = BTreeMap::new();
+        metadata.insert("source_path".to_owned(), record.source_path.clone());
+        metadata.insert("source_id".to_owned(), source_id.to_owned());
+        if let Some(value) = &record.title {
+            metadata.insert("source_title".to_owned(), value.clone());
+        }
+        if let Some(value) = &record.permalink {
+            metadata.insert("permalink".to_owned(), value.clone());
+        }
+        if let Some(value) = &record.note_type {
+            metadata.insert("note_type".to_owned(), value.clone());
+        }
+        if let Some(value) = &record.content_type {
+            metadata.insert("content_type".to_owned(), value.clone());
+        }
+        if let Some(value) = &record.entity_id {
+            metadata.insert("entity_id".to_owned(), value.to_string());
+        }
+        if let Some(value) = &record.source_project {
+            metadata.insert("source_project".to_owned(), value.clone());
+        }
+        if let Some(value) = &record.source_project_id {
+            metadata.insert("source_project_id".to_owned(), value.clone());
+        }
+        let note_event = post_basic_memory_ledger_event(
+            client,
+            format!("basic-memory:{upstream_key}"),
+            record.external_id.as_deref(),
+            format!("Imported Basic Memory note {}", record.source_path),
+            record.updated_at.as_deref(),
+            metadata.clone(),
+        )?;
+        if note_event {
+            summary.ledger_events_duplicate += 1;
+        } else {
+            summary.ledger_events_stored += 1;
+        }
+
+        for (index, (category, content)) in extract_basic_memory_observations(&record.raw_markdown)
+            .into_iter()
+            .enumerate()
+        {
+            let mut observation_metadata = metadata.clone();
+            observation_metadata.insert("record_kind".to_owned(), "observation".to_owned());
+            observation_metadata.insert("observation_index".to_owned(), index.to_string());
+            observation_metadata.insert("category".to_owned(), category.clone());
+            let duplicate = post_basic_memory_ledger_event(
+                client,
+                format!("basic-memory:{upstream_key}:observation:{index}"),
+                record.external_id.as_deref(),
+                format!(
+                    "Imported Basic Memory observation [{category}] from {}: {content}",
+                    record.source_path
+                ),
+                record.updated_at.as_deref(),
+                observation_metadata,
+            )?;
+            if duplicate {
+                summary.observation_events_duplicate += 1;
+            } else {
+                summary.observation_events_stored += 1;
+            }
+        }
+
+        for (index, (predicate, target)) in extract_basic_memory_relations(&record.raw_markdown)
+            .into_iter()
+            .enumerate()
+        {
+            let mut relation_metadata = metadata.clone();
+            relation_metadata.insert("record_kind".to_owned(), "relation".to_owned());
+            relation_metadata.insert("relation_index".to_owned(), index.to_string());
+            relation_metadata.insert("predicate".to_owned(), predicate.clone());
+            relation_metadata.insert("target".to_owned(), target.clone());
+            let duplicate = post_basic_memory_ledger_event(
+                client,
+                format!("basic-memory:{upstream_key}:relation:{index}"),
+                record.external_id.as_deref(),
+                format!(
+                    "Imported Basic Memory relation {predicate} -> [[{target}]] from {}",
+                    record.source_path
+                ),
+                record.updated_at.as_deref(),
+                relation_metadata,
+            )?;
+            if duplicate {
+                summary.relation_events_duplicate += 1;
+            } else {
+                summary.relation_events_stored += 1;
+            }
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+    } else {
+        println!(
+            "Basic Memory import: {} notes, {} sources stored, {} sources already present, {} note events stored, {} note events already present, {} observations stored, {} observations already present, {} relations stored, {} relations already present",
+            summary.source_records,
+            summary.sources_stored,
+            summary.sources_duplicate,
+            summary.ledger_events_stored,
+            summary.ledger_events_duplicate,
+            summary.observation_events_stored,
+            summary.observation_events_duplicate,
+            summary.relation_events_stored,
+            summary.relation_events_duplicate
+        );
+    }
+    Ok(())
+}
+
+fn post_basic_memory_ledger_event(
+    client: &HttpClient,
+    event_id: String,
+    external_id: Option<&str>,
+    content: String,
+    observed_at: Option<&str>,
+    metadata: BTreeMap<String, String>,
+) -> anyhow::Result<bool> {
+    let raw_payload = serde_json::to_string(&metadata)?;
+    let response = client
+        .post_json(
+            "/api/v1/ledger/events",
+            &serde_json::json!({
+                "event_id": event_id,
+                "source": "basic-memory-cloud",
+                "external_id": external_id,
+                "session_id": null,
+                "conversation_id": null,
+                "turn_id": null,
+                "actor": "basic-memory-import",
+                "role": "tool",
+                "content": content,
+                "observed_at": observed_at,
+                "received_at": Utc::now().to_rfc3339(),
+                "reply_to": null,
+                "project_hint": "Lantern",
+                "idempotency_key": event_id,
+                "raw_payload": raw_payload,
+                "metadata": metadata,
+            }),
+        )
+        .map_err(|error| {
+            anyhow::Error::msg(error).context("failed to record migration ledger event")
+        })?;
+    let body = HttpClient::handle_response(response)?;
+    body.get("duplicate")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| anyhow::anyhow!("ledger import response has no duplicate field"))
+}
+
+fn extract_basic_memory_observations(markdown: &str) -> Vec<(String, String)> {
+    markdown
+        .lines()
+        .filter_map(|line| {
+            let value = line.trim().strip_prefix("- [")?;
+            let (category, content) = value.split_once("] ")?;
+            let category = category.trim();
+            let content = content.trim();
+            if category.is_empty() || content.is_empty() {
+                return None;
+            }
+            Some((category.to_owned(), content.to_owned()))
+        })
+        .collect()
+}
+
+fn extract_basic_memory_relations(markdown: &str) -> Vec<(String, String)> {
+    markdown
+        .lines()
+        .filter_map(|line| {
+            let value = line.trim().strip_prefix("- ")?;
+            let (predicate, target) = value.split_once(" [[")?;
+            let target = target.strip_suffix("]]")?.trim();
+            let predicate = predicate.trim();
+            if predicate.is_empty() || target.is_empty() {
+                return None;
+            }
+            Some((predicate.to_owned(), target.to_owned()))
+        })
+        .collect()
 }
 
 fn cmd_ledger_ingest(client: &HttpClient, path: &Path, json: bool) -> anyhow::Result<()> {
@@ -1615,6 +2006,26 @@ mod tests {
             }
             _ => panic!("expected Retrieve variant"),
         }
+    }
+
+    #[test]
+    fn basic_memory_extractors_preserve_unknown_categories_and_relation_targets() {
+        let markdown = "# Note\n\n- [decision] Keep the source intact\n- [unusual-label] Preserve this too\n- related_to [[Lantern Keeper]]\n- governed_by [[A title with spaces]]\n";
+
+        assert_eq!(
+            extract_basic_memory_observations(markdown),
+            vec![
+                ("decision".to_owned(), "Keep the source intact".to_owned()),
+                ("unusual-label".to_owned(), "Preserve this too".to_owned())
+            ]
+        );
+        assert_eq!(
+            extract_basic_memory_relations(markdown),
+            vec![
+                ("related_to".to_owned(), "Lantern Keeper".to_owned()),
+                ("governed_by".to_owned(), "A title with spaces".to_owned())
+            ]
+        );
     }
 
     // ── Project handoff tests ──────────────────────────────────────────────

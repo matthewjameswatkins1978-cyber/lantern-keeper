@@ -40,6 +40,9 @@ out of scope for this foundation pass.
 - Append-only, replay-safe host-neutral `ledger_event` records, a JSON event
   ingestion endpoint, and `ledger-ingest` CLI support. A representative fixture
   is in fixtures/ledger/matthew-lucy-representative.json.
+- Validated Basic Memory snapshot import that preserves every note as
+  Markdown Source evidence and records upstream identity/metadata as
+  replay-safe ledger events.
 - CLI and HTTP operations to remember, recall, build context and supersede.
 - Inspectable retrieval traces in recall responses.
 - Engine-independent export to manifest.json and NDJSON files.
@@ -129,6 +132,20 @@ Ingest a host-neutral JSON export (an array or `{ "events": [...] }` object).
 Re-running the same file is safe because each event has an idempotency key:
 
     cargo run -p lighting -- ledger-ingest fixtures/ledger/matthew-lucy-representative.json --json
+
+Import a validated Basic Memory snapshot directory. The importer reads
+`manifest.json` plus `notes-*.ndjson`, validates the complete set before
+contacting Lighting, stores raw notes as immutable Source evidence, and records
+the note, bracketed observation categories, and typed `[[relation]]` links as
+replay-safe ledger events:
+
+    cargo run -p lighting -- basic-memory-import .private-migration/snapshot-2026-09-12-repaired --dry-run --json
+    cargo run -p lighting -- basic-memory-import .private-migration/snapshot-2026-09-12-repaired --json
+
+The migration command does not silently promote whole notes into canonical
+Memory records. Promotion remains a separate reconciliation step so imported
+Markdown stays evidence and uncertain observations are not manufactured into
+truth.
 
 The equivalent HTTP endpoints are:
 
