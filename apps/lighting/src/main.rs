@@ -10,8 +10,8 @@ use lighting_service::{
     MarkerService, MemoryService, ProjectRetrievalService, ProjectService, build_router,
 };
 use lighting_store_surreal::{
-    ExportSummary, StoreConfig, SurrealLedgerRepository, SurrealMemoryPathRepository,
-    SurrealMemoryRepository, SurrealSourceRepository, SurrealStore,
+    ExportSummary, StoreConfig, SurrealEpistemicRepository, SurrealLedgerRepository,
+    SurrealMemoryPathRepository, SurrealMemoryRepository, SurrealSourceRepository, SurrealStore,
 };
 use tokio::net::TcpListener;
 use tracing::info;
@@ -464,6 +464,13 @@ async fn serve() -> anyhow::Result<()> {
 
     info!("Source-ledger event schema migration applied successfully");
 
+    let epistemic_repo = SurrealEpistemicRepository::new(store.clone());
+    epistemic_repo
+        .migrate()
+        .await
+        .context("failed to apply canonical epistemic schema migration")?;
+    info!("Canonical epistemic schema migration applied successfully");
+
     let source_repo: Arc<dyn lighting_core::SourceRepository> = Arc::new(repo);
     let mp_repo: Arc<dyn lighting_core::MemoryPathRepository> = Arc::new(mp_repo);
     let memory_repo: Arc<dyn lighting_core::MemoryRepository> = Arc::new(memory_repo);
@@ -479,6 +486,7 @@ async fn serve() -> anyhow::Result<()> {
     let memory_service = MemoryService::new(Arc::clone(&memory_repo));
     let ledger_repo = SurrealLedgerRepository::new(store.clone());
     let ledger_service = LedgerService::new(Arc::new(ledger_repo));
+    let epistemic_service = lighting_service::EpistemicService::new(Arc::new(epistemic_repo));
     let tethers_client = match TethersEngineClient::from_env() {
         Ok(client) => Some(client),
         Err(TethersEngineError::MissingEnginePath) => None,
@@ -498,6 +506,7 @@ async fn serve() -> anyhow::Result<()> {
         tethers_client,
         memory_service: Some(memory_service),
         ledger_service: Some(ledger_service),
+        epistemic_service: Some(epistemic_service),
     };
     app_state.mark_ready();
 
@@ -538,6 +547,10 @@ async fn export_data(output: std::path::PathBuf) -> anyhow::Result<()> {
         .migrate()
         .await
         .context("failed to initialise the source-ledger event schema")?;
+    SurrealEpistemicRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the canonical epistemic schema")?;
     let summary: ExportSummary = store
         .export_to(&output)
         .await

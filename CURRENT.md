@@ -1,6 +1,6 @@
 # Lantern Keeper - Current Phase
 
-## Foundation modernisation and first useful memory loop
+## Full living-memory vertical slice and migration foundation
 
 The authoritative pre-memory Luna baseline is preserved at commit
 407c52934de8fe4c583c7ed549e51d1de45c7ce3 under tag
@@ -32,8 +32,17 @@ untouched.
   architecture/qualification documentation.
 - A validated 2026-09-12 Basic Memory Cloud snapshot containing 61 notes,
   plus a replay-safe `basic-memory-import` command. The checkpoint extends
-  the importer to emit observation and relation evidence, but that extension
-  has not yet been rerun against the local store.
+  the importer to emit observation and relation evidence.
+- Typed canonical epistemic records: Actor, Claim, Belief, soft Memory Item,
+  Trace, Proposal, Predicate/Dimension definitions, Context Pack, and graph
+  relations. Claims retain framing and attribution; stale Beliefs remain
+  explicitly separate from truth state.
+- Durable SurrealDB stores and HTTP capability routes for Claim capture,
+  Belief projection/listing/stale invalidation, soft-memory capture/search,
+  and unresolved relation inspection.
+- Basic Memory import now creates reusable whole-note Episodes, 156 Claim
+  candidates, 299 soft Memory Items, and 191 unresolved relation records in
+  the local store from the preserved snapshot. A second pass is replay-safe.
 
 ## Retrieval boundary
 
@@ -42,11 +51,11 @@ project/status/as-of filters, importance, confidence and known-at ordering.
 Recall returns a trace containing query, channel and candidate/selected IDs. An
 empty result is an explicit abstention.
 
-Not yet implemented: note-level reconciliation/promotion, BM25/vector/graph
-fusion, persisted retrieval traces, activation metadata, automated
-contradiction resolution, proposals/gardening, native host conversation
-adapters, watermark cursors, restore validation, and MCP. These are deliberate
-follow-up work, not silently implied by the current code.
+Not yet implemented: canonical predicate reconciliation/promotion into
+Beliefs, BM25/vector/graph fusion, persisted context traces, automated
+contradiction resolution, proposal review commands, narrative rebuilds,
+native host conversation adapters, restore validation, and MCP. These remain
+genuine follow-up gates, not silently implied by the current code.
 
 ## Verification
 
@@ -61,3 +70,8 @@ The workspace compile lane passes:
 
 The workspace Clippy gate and skip-remote workspace test lane also pass; the
 exact packet-level result is recorded in docs/AMBIENT_MEMORY_QUALIFICATION.md.
+
+The new epistemic slice additionally passes core unit tests, workspace check,
+workspace all-features Clippy, live embedded capture/retrieval/stale checks,
+and two Basic Memory importer passes. The final logical export contains the
+new epistemic and relation tables. Cutover has not been performed.

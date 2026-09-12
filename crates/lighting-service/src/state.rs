@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::episode_association_ops::EpisodeAssociationService;
 use crate::episode_ops::EpisodeService;
+use crate::epistemic_ops::EpistemicService;
 use crate::ledger_ops::LedgerService;
 use crate::marker_ops::MarkerService;
 use crate::marker_retrieval_ops::MarkerRetrievalService;
@@ -24,6 +25,7 @@ pub struct AppState {
     pub tethers_client: Option<TethersEngineClient>,
     pub memory_service: Option<MemoryService>,
     pub ledger_service: Option<LedgerService>,
+    pub epistemic_service: Option<EpistemicService>,
 }
 
 impl AppState {
@@ -40,6 +42,7 @@ impl AppState {
             tethers_client: None,
             memory_service: None,
             ledger_service: None,
+            epistemic_service: None,
         }
     }
 

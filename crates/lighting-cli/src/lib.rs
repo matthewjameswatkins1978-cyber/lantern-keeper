@@ -951,6 +951,10 @@ struct BasicMemoryImportSummary {
     source_records: usize,
     sources_stored: usize,
     sources_duplicate: usize,
+    episodes_submitted: usize,
+    claim_candidates_submitted: usize,
+    memory_items_submitted: usize,
+    relations_submitted: usize,
     ledger_events_stored: usize,
     ledger_events_duplicate: usize,
     observation_events_stored: usize,
@@ -1082,6 +1086,10 @@ fn cmd_basic_memory_import(
         source_records: records.len(),
         sources_stored: 0,
         sources_duplicate: 0,
+        episodes_submitted: 0,
+        claim_candidates_submitted: 0,
+        memory_items_submitted: 0,
+        relations_submitted: 0,
         ledger_events_stored: 0,
         ledger_events_duplicate: 0,
         observation_events_stored: 0,
@@ -1116,6 +1124,26 @@ fn cmd_basic_memory_import(
             Some("stored") => summary.sources_stored += 1,
             other => bail!("source import response has unexpected outcome {other:?}"),
         }
+
+        let episode_body = client
+            .post_json(
+                "/api/v1/episodes",
+                &serde_json::json!({
+                    "title": format!("Basic Memory whole note: {}", record.source_path),
+                    "source_id": source_id,
+                    "start_byte": 0,
+                    "end_byte": record.raw_markdown.len(),
+                }),
+            )
+            .map_err(|error| {
+                anyhow::Error::msg(error).context("failed to create imported Episode")
+            })?;
+        let episode_body = HttpClient::handle_response(episode_body)?;
+        let episode_id = episode_body
+            .get("episode_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("episode import response has no episode_id"))?;
+        summary.episodes_submitted += 1;
 
         let upstream_key = record
             .external_id
@@ -1183,6 +1211,16 @@ fn cmd_basic_memory_import(
             } else {
                 summary.observation_events_stored += 1;
             }
+
+            if is_truth_bearing_basic_memory_category(&category) {
+                post_basic_memory_claim(
+                    client, &record, source_id, episode_id, &category, &content,
+                )?;
+                summary.claim_candidates_submitted += 1;
+            } else {
+                post_basic_memory_item(client, source_id, episode_id, &category, &content)?;
+                summary.memory_items_submitted += 1;
+            }
         }
 
         for (index, (predicate, target)) in extract_basic_memory_relations(&record.raw_markdown)
@@ -1210,6 +1248,8 @@ fn cmd_basic_memory_import(
             } else {
                 summary.relation_events_stored += 1;
             }
+            post_basic_memory_relation(client, episode_id, &predicate, &target)?;
+            summary.relations_submitted += 1;
         }
     }
 
@@ -1217,10 +1257,14 @@ fn cmd_basic_memory_import(
         println!("{}", serde_json::to_string_pretty(&summary)?);
     } else {
         println!(
-            "Basic Memory import: {} notes, {} sources stored, {} sources already present, {} note events stored, {} note events already present, {} observations stored, {} observations already present, {} relations stored, {} relations already present",
+            "Basic Memory import: {} notes, {} sources stored, {} sources already present, {} whole-note Episodes submitted, {} Claim candidates submitted, {} soft Memory Items submitted, {} relations submitted, {} note events stored, {} note events already present, {} observations stored, {} observations already present, {} relations stored, {} relations already present",
             summary.source_records,
             summary.sources_stored,
             summary.sources_duplicate,
+            summary.episodes_submitted,
+            summary.claim_candidates_submitted,
+            summary.memory_items_submitted,
+            summary.relations_submitted,
             summary.ledger_events_stored,
             summary.ledger_events_duplicate,
             summary.observation_events_stored,
@@ -1229,6 +1273,108 @@ fn cmd_basic_memory_import(
             summary.relation_events_duplicate
         );
     }
+    Ok(())
+}
+
+fn is_truth_bearing_basic_memory_category(category: &str) -> bool {
+    matches!(
+        category,
+        "decision" | "rule" | "current" | "preference" | "constraint" | "problem" | "opportunity"
+    )
+}
+
+fn post_basic_memory_claim(
+    client: &HttpClient,
+    record: &BasicMemorySnapshotRecord,
+    source_id: &str,
+    episode_id: &str,
+    category: &str,
+    content: &str,
+) -> anyhow::Result<()> {
+    let response = client
+        .post_json(
+            "/api/v1/claims",
+            &serde_json::json!({
+                "source_id": source_id,
+                "episode_id": episode_id,
+                "subject_key": format!("legacy:basic-memory:{}", record.source_path),
+                "value": content,
+                "predicate_candidate": category,
+                "predicate_status": "candidate",
+                "originator_actor_id": "basic-memory",
+                "speaker_actor_id": "basic-memory",
+                "transmitter_actor_id": "basic-memory",
+                "holder_actor_id": "legacy:shared",
+                "stance": "unobserved",
+                "confidence": 0.35,
+                "extractor": "basic-memory-import",
+                "extractor_version": "1",
+            }),
+        )
+        .map_err(|error| {
+            anyhow::Error::msg(error).context("failed to import Basic Memory Claim candidate")
+        })?;
+    HttpClient::handle_response(response)?;
+    Ok(())
+}
+
+fn post_basic_memory_item(
+    client: &HttpClient,
+    source_id: &str,
+    episode_id: &str,
+    category: &str,
+    content: &str,
+) -> anyhow::Result<()> {
+    let kind = match category {
+        "idea" | "concept" => "idea",
+        "history" => "anecdote",
+        "quote" => "quote",
+        "lesson" => "lesson",
+        _ => "other",
+    };
+    let response = client
+        .post_json(
+            "/api/v1/memory-items",
+            &serde_json::json!({
+                "source_id": source_id,
+                "episode_id": episode_id,
+                "kind": kind,
+                "content": content,
+                "originator_actor_id": "unknown",
+                "transmitter_actor_id": "basic-memory",
+                "holder_actor_id": "legacy:shared",
+                "salience": 0.4,
+            }),
+        )
+        .map_err(|error| {
+            anyhow::Error::msg(error).context("failed to import Basic Memory soft Memory Item")
+        })?;
+    HttpClient::handle_response(response)?;
+    Ok(())
+}
+
+fn post_basic_memory_relation(
+    client: &HttpClient,
+    episode_id: &str,
+    relation_type: &str,
+    target: &str,
+) -> anyhow::Result<()> {
+    let response = client
+        .post_json(
+            "/api/v1/relations",
+            &serde_json::json!({
+                "in_id": episode_id,
+                "out_id": format!("basic-memory:{target}"),
+                "relation_type": relation_type,
+                "origin": "basic-memory-cloud",
+                "confidence": 1.0,
+                "resolved": false,
+            }),
+        )
+        .map_err(|error| {
+            anyhow::Error::msg(error).context("failed to import Basic Memory relation")
+        })?;
+    HttpClient::handle_response(response)?;
     Ok(())
 }
 

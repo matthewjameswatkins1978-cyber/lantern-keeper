@@ -47,6 +47,7 @@ fn ca(repo: Arc<SurrealSourceRepository>) -> Router {
         tethers_client: None,
         memory_service: None,
         ledger_service: None,
+        epistemic_service: None,
     };
     build_router(st)
 }

@@ -51,6 +51,7 @@ async fn full_app() -> Router {
         tethers_client: None,
         memory_service: None,
         ledger_service: None,
+        epistemic_service: None,
     })
 }
 async fn body_json(body: Body) -> Value {
