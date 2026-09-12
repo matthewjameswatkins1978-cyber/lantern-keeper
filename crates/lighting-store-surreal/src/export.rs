@@ -60,6 +60,8 @@ impl SurrealStore {
                     "memory_relation",
                     "trace",
                     "proposal",
+                    "predicate_definition",
+                    "dimension_definition",
                 ],
             ),
         ];
