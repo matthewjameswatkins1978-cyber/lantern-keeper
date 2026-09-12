@@ -1,7 +1,19 @@
 # Lantern Keeper
 
-Lantern Keeper is a local-first shared memory project for future ChatGPT and
-Codex workflows.
+Lantern Keeper is a local-first shared memory project for ChatGPT, Codex and
+other AI workflows.
+
+## Recovered baseline — 12 September 2026
+
+The repository's clean working baseline is the former
+`agent/lighting-source-api` implementation, now being prepared on `master`.
+It proves a durable Source → Episode → Project retrieval loop with exact
+provenance and revision-safe history. The canonical Memory reconciliation
+engine, MCP boundary, Basic Memory bridge and Lucy-native takeover remain the
+next implementation stage.
+
+The first restart gate is deliberately boring: Rust 1.98.1 formatting,
+compilation, Clippy and tests must remain green before Memory work begins.
 
 The joint architectural contract and build foundation for Lantern Keeper and
 Tethers is
@@ -74,14 +86,14 @@ Not implemented yet:
 
 ## Prerequisites
 
-- Rust stable toolchain with Cargo, rustfmt, and Clippy.
+- Rust 1.98.1 stable toolchain with Cargo, rustfmt, and Clippy.
 - Visual Studio Build Tools with the MSVC C++ toolchain (Windows).
 - SurrealDB 3.2.1 or later.
 
-Detected local options (on the original workstation):
-
-- `surreal` 3.2.1 for Windows on x86_64 is installed.
-- Docker/Podman were not detected.
+The committed lockfile currently resolves the Rust SurrealDB client to 3.2.1.
+The native Windows helper scripts use a project-local SurrealDB data directory.
+SurrealDB 3.3 beta compatibility is a separate experiment and is not part of
+this baseline.
 
 ## Build And Check
 

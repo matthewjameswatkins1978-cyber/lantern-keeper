@@ -1,8 +1,8 @@
-SHARED MEMORY SYSTEM  
+SHARED MEMORY SYSTEM
 Project Plan
-Working title:  
+Working title:
 Project Lantern
-Core idea:  
+Core idea:
 A shared memory layer for ChatGPT and Codex, built around meaningful conversation episodes rather than entire chats.
 The system will not attempt to make an AI permanently remember every word. Instead, it will create a small number of useful markers that point back to the original conversation. When an old subject is mentioned vaguely, the system finds the most likely episode, retrieves the original messages, and allows the AI to reread what was actually said.
 The original conversation remains the source of truth.
@@ -106,7 +106,7 @@ vector and hybrid retrieval later, if testing proves they are needed
 The surrounding architecture will remain modular because that makes the system easier to understand, test, and improve.
 However, the project will not weaken the SurrealDB implementation merely to imitate a generic relational database.
 The rule is:
-The domain remains clean and modular.  
+The domain remains clean and modular.
 The implementation uses SurrealDB properly.
 
 FIRST PROOF
@@ -122,11 +122,11 @@ The correct episode appears among the highest-ranked results.
 The result contains a valid reference to the original messages.
 The original episode can be reopened and reread.
 Example:
-Stored discussion:  
+Stored discussion:
 Using ants, slime mould, and simple local rules as inspiration for game AI.
-Later query:  
+Later query:
 “Where did we talk about that ant thing for the game?”
-Expected result:  
+Expected result:
 The system finds the relevant episode, identifies the source conversation and message range, and returns enough original context for the AI to understand the discussion properly.
 This proves the heart of the system before integrations and automation are added.
 
@@ -386,17 +386,17 @@ relationship strength as a weak signal
 Do not begin with embeddings.
 The first test is whether simple retrieval is already good enough for the way Matthew naturally asks questions.
 10.2 Search stages
-Stage 1:  
+Stage 1:
 Search markers, summaries, projects, and topics.
-Stage 2:  
+Stage 2:
 Rank candidate episodes.
-Stage 3:  
+Stage 3:
 Return the strongest three candidates.
-Stage 4:  
+Stage 4:
 Read the original messages around the highest-ranked episode.
-Stage 5:  
+Stage 5:
 Confirm that the source text actually supports the match.
-Stage 6:  
+Stage 6:
 Answer using the source material.
 10.3 Search result
 Each result should include:
@@ -424,11 +424,11 @@ conversation identifier
 start message identifier or sequence number
 end message identifier or sequence number
 Example:
-Conversation:  
+Conversation:
 chat_2026_07_16_rabbit_game
-Episode:  
+Episode:
 messages 42 to 51
-Marker:  
+Marker:
 nature-inspired-game-ai
 The marker identifier may be a compact stable identifier, but it should not carry meaning that must be manually decoded.
 Example:
@@ -512,7 +512,7 @@ failure tests
 
 BUILD PHASES
 PHASE 0: Environment and recovery
-Purpose:  
+Purpose:
 Establish the development foundation.
 Work:
 locate the final SurrealDB code from Bertha
@@ -532,7 +532,7 @@ a database can be exported and restored
 no Bertha production data is touched
 
 PHASE 1: Core storage proof
-Purpose:  
+Purpose:
 Prove the graph model works.
 Work:
 create conversation records
@@ -552,7 +552,7 @@ duplicate imports are handled safely
 automated integration tests pass against real SurrealDB
 
 PHASE 2: Vague retrieval proof
-Purpose:  
+Purpose:
 Prove that old discussions can be found from natural recollection.
 Work:
 manually select at least ten real discussion episodes
@@ -582,7 +582,7 @@ the original message range can be read
 retrieval performance is acceptable locally
 
 PHASE 3: Test campaign
-Purpose:  
+Purpose:
 Find where the proof breaks before adding integration.
 Test cases:
 two similar projects
@@ -624,7 +624,7 @@ retrieval quality has a recorded baseline
 known weaknesses are documented rather than hidden
 
 PHASE 4: Project context assembler
-Purpose:  
+Purpose:
 Create useful working context rather than merely finding episodes.
 Work:
 assemble active project decisions
@@ -644,7 +644,7 @@ irrelevant conversation does not flood the package
 every important statement can be traced to its source
 
 PHASE 5: Codex adapter
-Purpose:  
+Purpose:
 Allow Codex to consume and update project memory.
 Codex should be able to:
 retrieve project context
@@ -665,7 +665,7 @@ the result is linked to the task and project
 no manual copying is required within the proof workflow
 
 PHASE 6: ChatGPT adapter
-Purpose:  
+Purpose:
 Allow ChatGPT to use the same memory directly.
 ChatGPT should be able to:
 search memory
@@ -684,7 +684,7 @@ ChatGPT can retrieve the result
 Matthew does not have to carry the report between them
 
 PHASE 7: Full bridge proof
-Purpose:  
+Purpose:
 Demonstrate the complete practical workflow.
 Scenario:
 Matthew and ChatGPT discuss a project.
@@ -704,7 +704,7 @@ failures are visible and recoverable
 the system passes its full regression suite
 
 PHASE 8: Automatic episode marking
-Purpose:  
+Purpose:
 Reduce manual memory maintenance.
 This phase begins only after manual episode retrieval is reliable.
 Work:
@@ -728,7 +728,7 @@ corrections are quick
 automatic marking does not interrupt ordinary conversation
 
 PHASE 9: Advanced retrieval
-Purpose:  
+Purpose:
 Improve failures demonstrated by real testing.
 Possible additions:
 SurrealDB full-text indexes
@@ -742,11 +742,11 @@ relationship-based recommendations
 temporal reasoning
 These features are added only when a documented failure justifies them.
 Example:
-Problem:  
+Problem:
 Text search cannot find a discussion described using completely different vocabulary.
-Response:  
+Response:
 Add embeddings and hybrid ranking.
-Requirement:  
+Requirement:
 The hybrid method must beat the existing benchmark without increasing false confident matches beyond the agreed threshold.
 
 TESTING STRATEGY
@@ -915,7 +915,7 @@ Project Lantern is a local shared memory layer for ChatGPT and Codex.
 It treats conversations as source material, episodes as meaningful units, markers as lightweight references, and projects as dynamic views assembled from relevant memory.
 It does not pretend that an AI remembers everything.
 It gives the AI a reliable index, lets it return to the original source, and allows different tools to share the right context without Matthew becoming the messenger between them.
-Build the proof.  
-Test it until it bends.  
-Improve what actually fails.  
+Build the proof.
+Test it until it bends.
+Improve what actually fails.
 Test it again.

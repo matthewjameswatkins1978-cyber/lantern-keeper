@@ -29,7 +29,22 @@ This proof preserves authoritative Sources, creates bounded Episodes, links
 them to Projects and Markers, retrieves deterministic Codex handoff context,
 and records completed results back into the Project.
 
-## Next
+## Immediate recovery and restart gates
+
+Before Memory implementation, complete and record:
+
+1. Windows local checkout archaeology and preservation of all local-only work.
+2. Rust 1.98.1 formatting, compilation, Clippy and test validation.
+3. Separate SurrealDB 3.3.0-beta.4 compatibility experiment, with fallback
+   to the locked 3.2.1 client if required.
+4. README/CURRENT/ROADMAP reconciliation and a clean `master` baseline.
+
+The repository must not begin the canonical Memory model until these gates are
+understood. The detailed takeover packet defines the later LK-N1 through LK-N18
+sequence, including recovery, reconciliation, retrieval, MCP, Basic Memory
+replication, shadow use and reversible cutover.
+
+## Next implementation
 
 Build Lantern Keeper's minimum memory foundation for the later joint runtime
 slice. The first implementation should stay inside Lantern Keeper's memory

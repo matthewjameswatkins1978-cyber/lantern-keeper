@@ -1,5 +1,11 @@
 # Lantern Keeper - Current Phase
 
+**Baseline reset:** 12 September 2026
+
+**Canonical trunk:** `master`
+
+**Recovered implementation:** `407c529` (`agent/lighting-source-api`)
+
 ## Phase
 
 Joint Tethers/Lantern Keeper foundation: preserve the completed
@@ -44,14 +50,19 @@ Capture project knowledge
 
 ## Validation
 
-Last verified locally:
+The clean restart validation now passes in the recovery environment with Rust
+1.98.1 and SurrealDB integration deliberately skipped:
 
-```powershell
-.\scripts\validate.ps1
-.\scripts\run-first-proof-local.ps1
+```text
+cargo fmt --all -- --check
+cargo check --workspace --all-targets --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+LIGHTING_SKIP_INTEGRATION_TESTS=1 cargo test --workspace
 ```
 
-Both commands passed with live local SurrealDB.
+All available tests pass; the live Tethers-engine test remains intentionally
+ignored until a Tethers engine binary is configured. Windows live SurrealDB
+validation remains a workstation check.
 
 ## Task Log — LK-027 through LK-038
 
@@ -64,7 +75,7 @@ LK-027 through LK-038 implement the file-capture, revision-history, revision-saf
 
 ### Test Validation
 
-141 tests pass across the full workspace (25 CLI, 32 core, 26 service, plus integration tests for episodes, markers, projects, retrieval, sources, store-surreal, and memory-path repository).
+The recovered baseline has been revalidated with Rust 1.98.1: all available non-live workspace tests pass. The external Tethers-engine test remains intentionally ignored, and live Windows/SurrealDB validation remains a workstation check.
 
 ### Workflow Delivered
 
@@ -116,6 +127,6 @@ Immediate Lantern Keeper work:
 
 ## Next Verified Step
 
-Commit the documentation reconciliation, excluding unrelated local scratch
-files. Do not begin memory-foundation implementation in this documentation
-task.
+Confirm the Windows checkout contains no newer local-only work, then begin the
+canonical Memory model and reconciliation slice. Do not treat the existing
+`memory_path` module as the canonical Memory entity.

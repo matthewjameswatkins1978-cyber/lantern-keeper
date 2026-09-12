@@ -26,18 +26,18 @@ pub enum StoreError {
     Connect {
         endpoint: String,
         #[source]
-        source: surrealdb::Error,
+        source: Box<surrealdb::Error>,
     },
     #[error("failed to authenticate with SurrealDB: {0}")]
-    Authenticate(#[source] surrealdb::Error),
+    Authenticate(#[source] Box<surrealdb::Error>),
     #[error("failed to select SurrealDB namespace/database: {0}")]
-    Select(#[source] surrealdb::Error),
+    Select(#[source] Box<surrealdb::Error>),
     #[error("SurrealDB health check failed: {0}")]
-    Health(#[source] surrealdb::Error),
+    Health(#[source] Box<surrealdb::Error>),
     #[error("SurrealDB health check timed out")]
     HealthTimeout,
     #[error("SurrealDB schema initialisation failed: {0}")]
-    Schema(#[source] surrealdb::Error),
+    Schema(#[source] Box<surrealdb::Error>),
 }
 
 impl SurrealStore {
@@ -48,7 +48,7 @@ impl SurrealStore {
             .await
             .map_err(|source| StoreError::Connect {
                 endpoint: config.endpoint.clone(),
-                source,
+                source: Box::new(source),
             })?;
 
         if !config.username.is_empty() || !config.password.is_empty() {
@@ -57,13 +57,13 @@ impl SurrealStore {
                 password: config.password.clone(),
             })
             .await
-            .map_err(StoreError::Authenticate)?;
+            .map_err(|source| StoreError::Authenticate(Box::new(source)))?;
         }
 
         db.use_ns(&config.namespace)
             .use_db(&config.database)
             .await
-            .map_err(StoreError::Select)?;
+            .map_err(|source| StoreError::Select(Box::new(source)))?;
 
         Ok(Self { db })
     }
@@ -73,7 +73,7 @@ impl SurrealStore {
             .await
             .map_err(|_| StoreError::HealthTimeout)?
             .map(|_| ())
-            .map_err(StoreError::Health)
+            .map_err(|source| StoreError::Health(Box::new(source)))
     }
 
     pub async fn initialise_schema(&self) -> Result<(), StoreError> {
@@ -81,7 +81,7 @@ impl SurrealStore {
             .query(schema::BOOTSTRAP_QUERY)
             .await
             .map(|_| ())
-            .map_err(StoreError::Schema)
+            .map_err(|source| StoreError::Schema(Box::new(source)))
     }
 
     /// Executes a raw SurrealQL query against the underlying connection.

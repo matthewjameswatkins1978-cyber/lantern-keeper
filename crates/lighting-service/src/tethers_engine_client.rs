@@ -134,7 +134,7 @@ impl TethersEngineClient {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, windows))]
     fn new_with_args(engine_path: PathBuf, engine_args: Vec<String>, timeout: Duration) -> Self {
         Self {
             engine_path,
@@ -367,8 +367,11 @@ fn join_error_to_io(error: JoinError) -> TethersEngineError {
 mod tests {
     use super::*;
     use crate::tethers_preview::{build_preview_request, PreviewInput, TethersStatus};
+    #[cfg(windows)]
     use std::fs;
+    #[cfg(windows)]
     use std::process::Command as StdCommand;
+    #[cfg(windows)]
     use std::time::{SystemTime, UNIX_EPOCH};
 
     // ── Pure request/response tests ────────────────────────────
@@ -472,6 +475,7 @@ mod tests {
 
     // ── Controlled child-process tests ─────────────────────────
 
+    #[cfg(windows)]
     fn sample_request() -> TethersRequest {
         build_preview_request(&PreviewInput {
             evaluation_id: "eval-child-001".into(),
@@ -482,6 +486,7 @@ mod tests {
         })
     }
 
+    #[cfg(windows)]
     fn powershell_client(script: String, timeout: Duration) -> TethersEngineClient {
         TethersEngineClient::new_with_args(
             PathBuf::from("powershell.exe"),
@@ -496,14 +501,17 @@ mod tests {
         )
     }
 
+    #[cfg(windows)]
     fn minimal_error_json() -> &'static str {
         r#"{"protocol_version":"0.1","status":"error","error":{"code":"parse_error","message":"bad"}}"#
     }
 
+    #[cfg(windows)]
     fn ps_single_quoted(value: &str) -> String {
         format!("'{}'", value.replace('\'', "''"))
     }
 
+    #[cfg(windows)]
     fn unique_temp_path(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -512,6 +520,7 @@ mod tests {
         std::env::temp_dir().join(format!("lighting-{name}-{nanos}.txt"))
     }
 
+    #[cfg(windows)]
     async fn read_pid_file(path: &PathBuf) -> u32 {
         for _ in 0..20 {
             if let Ok(text) = fs::read_to_string(path) {
@@ -524,6 +533,7 @@ mod tests {
         panic!("timed-out child did not write its pid file");
     }
 
+    #[cfg(windows)]
     fn process_is_running(pid: u32) -> bool {
         let script =
             format!("if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}");
@@ -541,6 +551,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg(windows)]
     async fn timeout_kills_and_reaps_child_process() {
         let pid_file = unique_temp_path("tethers-timeout-pid");
         let script = format!(
@@ -566,6 +577,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg(windows)]
     async fn large_stderr_is_drained_without_unbounded_diagnostics() {
         let stderr_bytes = STDERR_LIMIT_BYTES + 32_768;
         let script = format!(
@@ -591,6 +603,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg(windows)]
     async fn oversized_stdout_is_drained_and_rejected() {
         let stdout_bytes = STDOUT_LIMIT_BYTES + 1024;
         let script = format!("[Console]::Out.Write(('x' * {stdout_bytes})); exit 0");
@@ -608,6 +621,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg(windows)]
     async fn empty_output_is_distinguishable() {
         let client = powershell_client("exit 0".into(), Duration::from_secs(5));
 
@@ -620,6 +634,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg(windows)]
     async fn invalid_json_is_distinguishable() {
         let script = "[Console]::Out.WriteLine('not-json'); exit 0".to_owned();
         let client = powershell_client(script, Duration::from_secs(5));
@@ -633,6 +648,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg(windows)]
     async fn multiple_response_lines_are_distinguishable() {
         let script = format!(
             "[Console]::Out.WriteLine({0}); [Console]::Out.WriteLine({0}); exit 0",
