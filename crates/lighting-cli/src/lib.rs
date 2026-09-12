@@ -102,6 +102,12 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
         CliCommand::BasicMemoryAccounting { path, output, json } => {
             cmd_basic_memory_accounting(&path, &output, json)
         }
+        CliCommand::Predicate { command } => match command {
+            PredicateCommand::List { json } => cmd_predicate_list(&client, json),
+            PredicateCommand::Get { key, json } => cmd_predicate_get(&client, &key, json),
+            PredicateCommand::Aliases { key, json } => cmd_predicate_aliases(&client, &key, json),
+            PredicateCommand::Unmapped { json } => cmd_predicate_unmapped(&client, json),
+        },
         CliCommand::ProjectHandoff { project_id, json } => {
             cmd_project_handoff(&client, &project_id, json)
         }
@@ -258,6 +264,11 @@ pub enum CliCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect the canonical predicate registry and unmapped claim queue.
+    Predicate {
+        #[command(subcommand)]
+        command: PredicateCommand,
+    },
     /// Produce a Codex-ready handoff for a Project.
     ProjectHandoff {
         /// Project ID (UUID).
@@ -314,6 +325,32 @@ pub enum CliCommand {
         #[arg(long, value_parser = ["markdown", "plain_text"])]
         kind: Option<String>,
         /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum PredicateCommand {
+    /// List registered predicates.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one registered predicate by canonical key or alias.
+    Get {
+        key: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show aliases for one registered predicate.
+    Aliases {
+        key: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List claims that have no resolved canonical predicate.
+    Unmapped {
         #[arg(long)]
         json: bool,
     },
@@ -603,6 +640,96 @@ struct ProjectShowResponse {
 // ---------------------------------------------------------------------------
 // Command implementations
 // ---------------------------------------------------------------------------
+
+fn cmd_predicate_list(client: &HttpClient, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get("/api/v1/predicates")
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else if let Some(predicates) = body["predicates"].as_array() {
+        if predicates.is_empty() {
+            println!("(no registered predicates)");
+        } else {
+            for predicate in predicates {
+                println!(
+                    "{} [{}]",
+                    predicate["key"].as_str().unwrap_or("<invalid>"),
+                    predicate["status"].as_str().unwrap_or("unknown")
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cmd_predicate_get(client: &HttpClient, key: &str, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get(&format!("/api/v1/predicates/{}", urlencoding::encode(key)))
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else {
+        let predicate = &body["predicate"];
+        println!(
+            "Key         : {}",
+            predicate["key"].as_str().unwrap_or("<invalid>")
+        );
+        println!(
+            "Status      : {}",
+            predicate["status"].as_str().unwrap_or("unknown")
+        );
+        println!(
+            "Value type  : {}",
+            predicate["value_type"].as_str().unwrap_or("unknown")
+        );
+        println!("Aliases     : {}", predicate["aliases"]);
+        println!(
+            "Description : {}",
+            predicate["description"].as_str().unwrap_or("")
+        );
+    }
+    Ok(())
+}
+
+fn cmd_predicate_aliases(client: &HttpClient, key: &str, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get(&format!("/api/v1/predicates/{}", urlencoding::encode(key)))
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    let aliases = body["predicate"]["aliases"].clone();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({"aliases": aliases}))?
+        );
+    } else {
+        println!("{}", aliases);
+    }
+    Ok(())
+}
+
+fn cmd_predicate_unmapped(client: &HttpClient, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get("/api/v1/claims?unmapped=true")
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else if let Some(claims) = body["claims"].as_array() {
+        println!("Unmapped claims: {}", claims.len());
+        for claim in claims {
+            println!(
+                "- {}: {}",
+                claim["predicate_candidate"].as_str().unwrap_or("<none>"),
+                claim["value"].as_str().unwrap_or("<invalid>")
+            );
+        }
+    }
+    Ok(())
+}
 
 fn cmd_health(client: &HttpClient, json: bool) -> anyhow::Result<()> {
     let response = client
