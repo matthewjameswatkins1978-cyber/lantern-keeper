@@ -1,8 +1,34 @@
+//! Core domain types for Lantern Keeper's Lighting service.
+//!
+//! This crate intentionally has no storage, HTTP, filesystem, or CLI
+//! dependencies. It owns domain meaning: Sources are authoritative original
+//! material, and any derived data must point back to them rather than replace
+//! them.
+
 use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod memory_path;
+pub mod source;
+pub mod source_outline;
+
+pub use memory_path::{
+    Episode, EpisodeError, EpisodeMarkerLink, EpisodeProjectLink, EpisodeTitle, Marker,
+    MarkerError, MemoryPathRepository, MemoryPathRepositoryError, Project, ProjectError,
+    ProjectLinkKind, ProjectName, ProjectStatus, SourceRange, SourceRangeError, StoreMarkerResult,
+};
+pub use source::{
+    find_all_matches, NewSource, Source, SourceContent, SourceError, SourceFingerprint, SourceId,
+    SourceKind, SourceRepository, SourceRepositoryError, SourceTitle, StoreSourceResult,
+};
+pub use source_outline::{parse_outline, Heading, MarkdownOutline};
+
+/// Lighting service version.
+pub const LIGHTING_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Error returned when an identifier value is invalid.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum IdentifierError {
     #[error("identifier cannot be empty")]
@@ -11,11 +37,13 @@ pub enum IdentifierError {
 
 macro_rules! identifier_type {
     ($name:ident) => {
+        /// Strongly typed domain identifier.
         #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
         #[serde(transparent)]
         pub struct $name(String);
 
         impl $name {
+            /// Creates a new identifier, rejecting empty or whitespace-only values.
             pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
                 let value = value.into();
                 if value.trim().is_empty() {
@@ -25,6 +53,7 @@ macro_rules! identifier_type {
                 Ok(Self(value))
             }
 
+            /// Returns the identifier as a string slice.
             pub fn as_str(&self) -> &str {
                 &self.0
             }
@@ -80,5 +109,10 @@ mod tests {
         let json = serde_json::to_string(&id).unwrap();
 
         assert_eq!(json, "\"topic-1\"");
+    }
+
+    #[test]
+    fn lighting_version_matches_cargo_version() {
+        assert_eq!(LIGHTING_VERSION, env!("CARGO_PKG_VERSION"));
     }
 }

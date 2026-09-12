@@ -11,20 +11,24 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://example.invalid/lantern-keeper"
+repository = "https://github.com/matthewjameswatkins1978-cyber/lantern-keeper"
 rust-version = "1.89"
 
 [workspace.dependencies]
 anyhow = "1.0"
+async-trait = "0.1"
 axum = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 dotenvy = "0.15"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10"
 surrealdb = { version = "3.2", default-features = false, features = ["protocol-ws"] }
 thiserror = "2.0"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+tokio = { version = "1", features = ["macros", "net", "process", "rt-multi-thread", "signal", "time", "io-util"] }
 tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+urlencoding = "2"
 uuid = { version = "1", features = ["v4"] }

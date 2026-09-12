@@ -1,0 +1,921 @@
+SHARED MEMORY SYSTEM
+Project Plan
+Working title:
+Project Lantern
+Core idea:
+A shared memory layer for ChatGPT and Codex, built around meaningful conversation episodes rather than entire chats.
+The system will not attempt to make an AI permanently remember every word. Instead, it will create a small number of useful markers that point back to the original conversation. When an old subject is mentioned vaguely, the system finds the most likely episode, retrieves the original messages, and allows the AI to reread what was actually said.
+The original conversation remains the source of truth.
+The memory system is the map that helps us find it again.
+
+THE PROBLEM
+ChatGPT is useful for thinking, designing, discussing problems, and making decisions.
+Codex is better positioned to inspect files, modify projects, run tests, and work directly on the computer.
+At present, Matthew often has to act as the middleman between them:
+explain the project to ChatGPT
+copy instructions into Codex
+bring Codex’s report back to ChatGPT
+remind both systems of earlier decisions
+search through old chats manually
+reconstruct conversations from partial memories
+Chat conversations also wander naturally.
+One conversation may contain:
+an active software project
+a new idea
+a technical decision
+an animation reference
+football
+a bus timetable
+something important that only becomes important later
+Whole conversations therefore cannot reliably be treated as belonging to one project.
+Most conversation is also disposable. A bus lookup or casual question should not have the same weight as a project decision.
+The system must distinguish between useful episodes and conversational exhaust without constantly interrupting Matthew.
+
+THE GOAL
+Build a local shared memory service that allows ChatGPT and Codex to:
+record meaningful episodes from conversations
+connect episodes to projects, topics, decisions, tasks, and handoffs
+search old discussions using vague natural language
+reopen and reread the original source
+share current project context
+pass work between one another without Matthew copying everything manually
+preserve decision history
+recognise when a newer decision replaces an older one
+avoid flooding either AI with irrelevant context
+The first version is specifically for ChatGPT and Codex.
+The architecture may later support Cline, local models, Claude, Gemini, or other tools, but they are not part of the first proof.
+
+CORE PRINCIPLES
+3.1 Build a map, not another territory
+The system should not duplicate entire conversations into a second giant memory archive.
+It should store compact markers and structured records that point back to the original source.
+3.2 Episodes are the main unit
+A conversation is only a container.
+An episode is a meaningful stretch of discussion, usually covering one idea, problem, decision, or task.
+An episode may contain one exchange, six exchanges, or a much longer discussion.
+3.3 Sparse markers
+The system should create only enough markers to make useful material recoverable.
+It does not need to label every message or sentence.
+3.4 Reread before answering
+When an old discussion is found, the AI should reread the original episode rather than relying entirely on a summary.
+Marker summaries help retrieval. They are not the final authority.
+3.5 Capture generously, promote cautiously, forget gracefully
+Potentially useful material may be indexed lightly.
+Only genuinely durable material should become active long-term memory.
+Disposable material should fade or expire.
+3.6 Meaning over folders
+Projects should not own entire conversations.
+A single episode may relate to several projects or topics.
+Projects are dynamic views assembled from relevant memory.
+3.7 Same memory, different context
+ChatGPT and Codex use the same memory system but should receive different context packages.
+ChatGPT may need:
+reasoning
+history
+unresolved questions
+preferences
+relationships between ideas
+Codex may need:
+current task
+technical constraints
+relevant decisions
+expected behaviour
+affected files
+recent handoff
+3.8 Practicality first
+The system exists to save Matthew time and mental effort.
+A technically impressive feature that does not improve the real workflow is not a priority.
+3.9 Test before expansion
+Build one complete proof.
+Test it heavily.
+Improve one weakness.
+Run the tests again.
+Every discovered bug becomes a permanent regression test.
+
+TECHNOLOGY DECISION
+SurrealDB will be the primary database and graph engine.
+This is a deliberate commitment, not a temporary placeholder.
+The project should make serious use of SurrealDB’s strengths:
+document records
+graph relationships
+relationship metadata
+full-text search
+flexible schema evolution
+graph traversal
+vector and hybrid retrieval later, if testing proves they are needed
+The surrounding architecture will remain modular because that makes the system easier to understand, test, and improve.
+However, the project will not weaken the SurrealDB implementation merely to imitate a generic relational database.
+The rule is:
+The domain remains clean and modular.
+The implementation uses SurrealDB properly.
+
+FIRST PROOF
+The first proof is not the ChatGPT-to-Codex bridge.
+The first proof is the memory system’s central retrieval loop.
+It must demonstrate:
+A conversation source is registered.
+A meaningful episode is manually created.
+A marker is attached to the episode.
+The episode is connected to a project or topic.
+A vague natural-language query is submitted.
+The correct episode appears among the highest-ranked results.
+The result contains a valid reference to the original messages.
+The original episode can be reopened and reread.
+Example:
+Stored discussion:
+Using ants, slime mould, and simple local rules as inspiration for game AI.
+Later query:
+“Where did we talk about that ant thing for the game?”
+Expected result:
+The system finds the relevant episode, identifies the source conversation and message range, and returns enough original context for the AI to understand the discussion properly.
+This proves the heart of the system before integrations and automation are added.
+
+FIRST PROOF BOUNDARIES
+Included:
+local SurrealDB database
+local memory service
+manually entered conversations and episodes
+markers
+projects and topics
+text and fuzzy retrieval
+ranked search results
+source references
+source episode reading
+automated tests
+command-line test interface
+Not included:
+automatic conversation ingestion
+automatic episode detection
+ChatGPT integration
+Codex integration
+embeddings
+vector search
+graphical interface
+cloud synchronisation
+multiple users
+external AI providers
+complex permissions
+automatic deletion of real data
+These are deliberately deferred until the central retrieval idea has survived testing.
+
+INITIAL DATA MODEL
+7.1 Conversation
+Represents the original conversation container.
+Fields:
+id
+source system
+external conversation identifier
+title
+created time
+updated time
+source location or access reference
+import status
+content hash
+metadata
+The content hash helps detect duplicate imports or changed source material.
+7.2 Message reference
+Represents the position of a message within a conversation.
+Fields:
+conversation
+external message identifier
+sequence number
+speaker
+created time
+optional content hash
+The first version may store original message text in a controlled test fixture.
+The long-term system should normally retrieve text from the original source where possible.
+7.3 Episode
+Represents a meaningful stretch of conversation.
+Fields:
+id
+conversation
+start message
+end message
+short summary
+optional longer retrieval summary
+created time
+created by
+confidence
+review state
+An episode may overlap another episode if testing shows that strict boundaries lose useful context.
+7.4 Marker
+A compact searchable pointer to an episode.
+Fields:
+id
+episode
+label
+keywords
+aliases
+kind
+importance
+lifespan
+confidence
+created time
+created by
+review state
+Initial marker kinds:
+idea
+decision
+fact
+task
+preference
+reference
+question
+handoff
+result
+lookup
+7.5 Project
+Represents a durable area of work.
+Fields:
+id
+name
+description
+status
+created time
+updated time
+Examples:
+Pudding Pie
+Bunny Deluxe
+Shared Memory System
+Triptych
+Rabbit Game
+7.6 Topic
+Represents a subject that may span projects.
+Examples:
+animation
+local AI
+SurrealDB
+game AI
+British children’s television
+music production
+Topics are broader and less formal than projects.
+7.7 Decision
+Represents a conclusion that affects future work.
+Fields:
+id
+statement
+reasoning summary
+status
+created time
+active from
+superseded time
+source episode
+Decision states:
+proposed
+active
+superseded
+abandoned
+Example:
+“SurrealDB is the committed primary database for the shared memory system.”
+7.8 Task
+Represents actionable work.
+Fields:
+id
+description
+owner
+status
+priority
+created time
+started time
+completed time
+result summary
+source episode
+Task states:
+proposed
+ready
+active
+blocked
+completed
+abandoned
+7.9 Handoff
+Represents work passed between ChatGPT, Codex, or another tool.
+Fields:
+id
+project
+sender
+intended recipient
+task
+summary
+constraints
+files involved
+result
+unresolved questions
+created time
+completed time
+7.10 Source
+Represents where information originated.
+Examples:
+ChatGPT conversation
+Codex run
+local file
+test fixture
+manual note
+Every important memory record should retain provenance.
+
+GRAPH RELATIONSHIPS
+Initial relationships:
+conversation CONTAINS episode
+marker POINTS_TO episode
+episode CONCERNS project
+episode TAGGED_AS topic
+episode SUPPORTS decision
+episode CREATES task
+episode RELATED_TO episode
+decision SUPERSEDES decision
+task IMPLEMENTS decision
+task BELONGS_TO project
+handoff REPORTS_ON task
+handoff BELONGS_TO project
+source PRODUCED episode
+Relationship records may contain:
+confidence
+strength
+reason
+created time
+created by
+review state
+This allows the graph to express uncertainty without pretending every inferred connection is equally reliable.
+
+MEMORY TEMPERATURE
+Memory temperature should be stored as behaviour and metadata, not as separate databases.
+9.1 Hot memory
+Automatically included in active project context.
+Examples:
+current decisions
+active tasks
+technical constraints
+recent handoffs
+unresolved blockers
+important user preferences relevant to the project
+9.2 Warm memory
+Searchable but not automatically injected.
+Examples:
+interesting ideas
+references
+possible future directions
+related discussions
+inactive projects
+background reasoning
+9.3 Fading memory
+Low-value or temporary material.
+Examples:
+timetables
+one-off lookups
+casual questions
+short-lived factual information
+Fading memory may receive an expiry date.
+It can be promoted if:
+Matthew marks it as important
+it is mentioned repeatedly
+it becomes connected to an active project
+it becomes the source of a decision or task
+another important episode refers to it
+
+RETRIEVAL DESIGN
+10.1 First retrieval method
+Begin with:
+marker label matching
+keyword matching
+alias matching
+episode summary matching
+project and topic matching
+fuzzy string matching
+recency as a weak signal
+importance as a weak signal
+relationship strength as a weak signal
+Do not begin with embeddings.
+The first test is whether simple retrieval is already good enough for the way Matthew naturally asks questions.
+10.2 Search stages
+Stage 1:
+Search markers, summaries, projects, and topics.
+Stage 2:
+Rank candidate episodes.
+Stage 3:
+Return the strongest three candidates.
+Stage 4:
+Read the original messages around the highest-ranked episode.
+Stage 5:
+Confirm that the source text actually supports the match.
+Stage 6:
+Answer using the source material.
+10.3 Search result
+Each result should include:
+episode identifier
+marker label
+short summary
+source conversation
+start and end messages
+linked project
+linked topics
+confidence score
+reasons for the match
+source availability
+The system should be able to explain a match simply:
+“Matched because the query contained ants and game, and this episode is linked to game AI, nature-inspired systems, and the Rabbit Game project.”
+10.4 Weak results
+If the match is weak, the system must not pretend certainty.
+It should return likely alternatives or state that nothing reliable was found.
+A clean failure is better than a confident invention.
+
+SOURCE REFERENCES
+References should use stable identifiers rather than minutes or approximate timestamps.
+Preferred source reference:
+conversation identifier
+start message identifier or sequence number
+end message identifier or sequence number
+Example:
+Conversation:
+chat_2026_07_16_rabbit_game
+Episode:
+messages 42 to 51
+Marker:
+nature-inspired-game-ai
+The marker identifier may be a compact stable identifier, but it should not carry meaning that must be manually decoded.
+Example:
+episode:01JZ8M4Q7R2K
+Human-readable labels exist separately.
+
+SYSTEM COMPONENTS
+12.1 memory-core
+Contains:
+domain types
+validation rules
+episode rules
+marker rules
+ranking models
+temperature behaviour
+decision supersession
+task states
+context assembly rules
+It should not contain user interface code or direct ChatGPT/Codex integration.
+12.2 memory-store-surreal
+Contains:
+SurrealDB connection
+schema
+migrations
+SurrealQL queries
+graph relations
+indexes
+transactions
+backup and restore
+test database setup
+This component should use SurrealDB confidently rather than hiding its graph features.
+12.3 memory-service
+Provides the local application interface.
+Possible first implementation:
+local HTTP API
+later, an MCP interface if useful
+Initial operations:
+create_conversation
+create_episode
+create_marker
+link_episode_to_project
+link_episode_to_topic
+search_memory
+read_episode
+create_decision
+supersede_decision
+create_task
+write_handoff
+get_project_context
+12.4 memory-source
+Responsible for retrieving the original source material.
+The first version uses controlled local test fixtures.
+Later source adapters may include:
+ChatGPT conversation export or supported API
+Codex reports and run records
+local Markdown transcripts
+project notes
+12.5 memory-cli
+A small command-line interface for development and testing.
+Commands may include:
+initialise database
+import fixture
+list conversations
+list episodes
+search
+read episode
+show project
+inspect graph
+export database
+restore database
+run retrieval benchmark
+12.6 memory-tests
+Contains:
+unit tests
+real SurrealDB integration tests
+graph tests
+retrieval benchmarks
+end-to-end tests
+regression tests
+failure tests
+
+BUILD PHASES
+PHASE 0: Environment and recovery
+Purpose:
+Establish the development foundation.
+Work:
+locate the final SurrealDB code from Bertha
+inspect what can be reused
+confirm the installed SurrealDB version
+create a fresh project repository
+document the local development commands
+create an isolated test database
+prove database creation, export, restore, and deletion
+establish source control
+establish automated test execution
+Exit criteria:
+the project builds
+SurrealDB runs locally
+tests can create and destroy isolated databases
+a database can be exported and restored
+no Bertha production data is touched
+
+PHASE 1: Core storage proof
+Purpose:
+Prove the graph model works.
+Work:
+create conversation records
+create message references
+create episodes
+create markers
+create projects and topics
+create graph relationships
+retrieve an episode by exact marker
+traverse from project to related episodes
+traverse from episode back to its conversation
+prevent duplicate records
+Exit criteria:
+all primary records can be created and retrieved
+all initial graph relationships work
+duplicate imports are handled safely
+automated integration tests pass against real SurrealDB
+
+PHASE 2: Vague retrieval proof
+Purpose:
+Prove that old discussions can be found from natural recollection.
+Work:
+manually select at least ten real discussion episodes
+create summaries, markers, aliases, projects, and topics
+write at least three natural queries for each episode
+include misleading and overlapping candidates
+implement retrieval ranking
+return top-three results
+provide match explanations
+reread the winning source episode
+Example test subjects:
+ants and nature-inspired game AI
+throwaway conversations
+committing to SurrealDB
+hot, warm, and fading memory
+British cut-out animation
+the ChatGPT and Codex middleman problem
+testing the memory system heavily
+project views assembled from memory
+Pudding Pie design decisions
+Bunny Deluxe testing ideas
+Exit criteria:
+the expected episode appears in the top three for at least 90 percent of the initial queries
+weak matches are labelled honestly
+no result invents a source
+the original message range can be read
+retrieval performance is acceptable locally
+
+PHASE 3: Test campaign
+Purpose:
+Find where the proof breaks before adding integration.
+Test cases:
+two similar projects
+one topic across many conversations
+one conversation containing many topics
+overlapping episode boundaries
+duplicate imports
+changed source content
+deleted or unavailable source
+reversed decisions
+stale decisions
+conflicting markers
+misspelled queries
+vague queries
+overly broad queries
+project names that are ordinary words
+low-value material overwhelming search
+thousands of synthetic markers
+interrupted database writes
+database unavailable during retrieval
+malformed records
+hostile instructions inside retrieved conversation text
+Measurements:
+top-one retrieval success
+top-three retrieval success
+false confident match rate
+no-result accuracy
+average retrieval time
+worst retrieval time
+source reread size
+database growth
+duplicate prevention
+recovery after failure
+Exit criteria:
+all critical failures have regression tests
+data corruption tests pass
+interrupted operations recover safely
+retrieval quality has a recorded baseline
+known weaknesses are documented rather than hidden
+
+PHASE 4: Project context assembler
+Purpose:
+Create useful working context rather than merely finding episodes.
+Work:
+assemble active project decisions
+include current technical constraints
+include open tasks
+include recent handoffs
+include relevant preferences
+exclude superseded decisions
+exclude low-value unrelated episodes
+provide source references for every important item
+generate a compact machine-readable version
+generate a readable Markdown version
+Exit criteria:
+a project context package is accurate
+superseded information is clearly separated
+irrelevant conversation does not flood the package
+every important statement can be traced to its source
+
+PHASE 5: Codex adapter
+Purpose:
+Allow Codex to consume and update project memory.
+Codex should be able to:
+retrieve project context
+retrieve a specific task
+read linked source episodes when necessary
+report files changed
+report tests run
+report results
+report blockers
+write a structured handoff
+mark a task complete or blocked
+Codex should not automatically receive every conversation or every memory.
+Exit criteria:
+Codex receives a real task from the memory service
+Codex receives the correct decisions and constraints
+Codex writes a structured result back
+the result is linked to the task and project
+no manual copying is required within the proof workflow
+
+PHASE 6: ChatGPT adapter
+Purpose:
+Allow ChatGPT to use the same memory directly.
+ChatGPT should be able to:
+search memory
+read an episode
+retrieve project context
+record an episode marker
+record a decision
+supersede a decision
+create a task for Codex
+read Codex’s handoff
+record follow-up reasoning
+Exit criteria:
+ChatGPT can create a task package
+Codex can retrieve and complete it
+ChatGPT can retrieve the result
+Matthew does not have to carry the report between them
+
+PHASE 7: Full bridge proof
+Purpose:
+Demonstrate the complete practical workflow.
+Scenario:
+Matthew and ChatGPT discuss a project.
+A useful episode is marked.
+A project decision is recorded.
+A Codex task is created.
+Codex retrieves the task and its relevant context.
+Codex performs the work.
+Codex writes a handoff containing changes, tests, results, and blockers.
+ChatGPT retrieves the handoff.
+Matthew later vaguely refers to the original discussion.
+ChatGPT finds the episode and rereads it.
+Exit criteria:
+the complete loop works without manual copying
+every stage retains provenance
+failures are visible and recoverable
+the system passes its full regression suite
+
+PHASE 8: Automatic episode marking
+Purpose:
+Reduce manual memory maintenance.
+This phase begins only after manual episode retrieval is reliable.
+Work:
+detect likely subject changes
+identify decisions
+identify tasks
+identify durable preferences
+identify references and ideas
+avoid marking casual lookups unnecessarily
+create sparse episode proposals
+attach confidence
+place uncertain items in a review queue
+learn from accepted, edited, and rejected proposals
+The system should not ask Matthew to approve every marker.
+Most marker creation is reversible and can happen quietly.
+Exit criteria:
+automatic markers improve retrieval
+false markers do not overwhelm useful results
+episode boundaries are usually sensible
+corrections are quick
+automatic marking does not interrupt ordinary conversation
+
+PHASE 9: Advanced retrieval
+Purpose:
+Improve failures demonstrated by real testing.
+Possible additions:
+SurrealDB full-text indexes
+synonym expansion
+spelling correction
+query rewriting
+vector embeddings
+hybrid text and vector ranking
+graph-assisted ranking
+relationship-based recommendations
+temporal reasoning
+These features are added only when a documented failure justifies them.
+Example:
+Problem:
+Text search cannot find a discussion described using completely different vocabulary.
+Response:
+Add embeddings and hybrid ranking.
+Requirement:
+The hybrid method must beat the existing benchmark without increasing false confident matches beyond the agreed threshold.
+
+TESTING STRATEGY
+14.1 Unit tests
+Test:
+validation
+state transitions
+scoring functions
+temperature changes
+expiry
+decision supersession
+context filtering
+identifier handling
+14.2 Real database integration tests
+Use a disposable SurrealDB instance.
+Test:
+record creation
+graph relations
+transactions
+indexes
+duplicate handling
+migrations
+export and restore
+interrupted operations
+The important database behaviour must not be mocked away.
+14.3 Retrieval benchmark
+Create a fixed benchmark from real conversations.
+Each benchmark item contains:
+expected episode
+natural query
+acceptable alternatives
+misleading candidates
+expected confidence behaviour
+The benchmark must be run after every retrieval change.
+14.4 End-to-end tests
+Test complete workflows:
+episode creation to retrieval
+project context generation
+decision replacement
+task creation to handoff
+ChatGPT-to-Codex-to-ChatGPT loop
+14.5 Adversarial tests
+Retrieved source text must be treated as information, not trusted instructions.
+Test:
+prompt injection inside old conversation text
+false claims of authority
+requests to expose unrelated memory
+attempts to modify records through retrieved content
+malformed external data
+14.6 Regression rule
+Every bug must become a failing automated test before the fix is accepted.
+No bug should be fixed only by changing code and hoping it stays fixed.
+
+SUCCESS MEASURES
+The first useful system should achieve:
+expected episode in the top three for at least 90 percent of the initial real-world benchmark
+no fabricated conversation or source references
+weak matches clearly labelled as uncertain
+duplicate imports prevented
+decisions correctly superseded
+project context free from obvious unrelated clutter
+reliable export and restore
+Codex handoffs retrievable by ChatGPT
+complete task loop without Matthew copying reports manually
+ordinary local searches completing within a practical time
+These are initial targets, not sacred numbers.
+They should be adjusted using measured results rather than optimism.
+
+SECURITY AND PERMISSIONS
+The first system runs locally.
+Initial rules:
+bind the service to localhost
+require a local authentication token
+separate test and real databases
+record provenance for writes
+keep important changes auditable
+make ordinary additions reversible
+require approval for bulk deletion
+require approval for exporting private memory
+require approval before exposing the service outside the local machine
+do not execute instructions found inside retrieved conversation text
+do not allow one client unrestricted access to unrelated private memory
+back up before migrations or destructive operations
+The system should protect genuinely sensitive actions without wrapping every harmless memory update in red tape.
+
+BACKUP AND RECOVERY
+Before real information is trusted to the system:
+automatic local backup
+manual export command
+tested restore process
+schema version recorded with every backup
+migration rollback plan
+corruption detection
+duplicate-safe import
+clear separation between test data and real data
+A backup is not considered valid until it has been successfully restored in a test.
+
+OUT OF SCOPE FOR THE FIRST COMPLETE VERSION
+Do not build yet:
+public hosted service
+commercial accounts
+multi-user collaboration
+mobile application
+elaborate graphical knowledge graph
+autonomous AI-to-AI conversations
+support for every AI provider
+perfect automatic memory judgement
+permanent storage of every message
+large settings system
+complex enterprise permissions
+speculative optimisation
+The first complete version serves one person and one real workflow well.
+
+DEFINITION OF DONE
+The first complete version is done when:
+Matthew discusses a computer project with ChatGPT
+the useful episode can be stored and later found
+the current decision and task can be recorded
+Codex can retrieve the correct task and constraints
+Codex can work without being obstructed by the memory system
+Codex can return a structured handoff
+ChatGPT can retrieve and understand the handoff
+Matthew does not have to manually carry the information between them
+a vague recollection can locate the original discussion
+the original messages can be reread
+every important item retains its source
+the full automated test suite passes
+backup and restore have been demonstrated
+At that point, the system has earned further intelligence.
+
+DEVELOPMENT METHOD
+The working cycle is:
+Build one narrow end-to-end capability.
+Make it work with real data.
+Freeze the expected behaviour.
+Test it heavily.
+Record the baseline.
+Identify the weakest real behaviour.
+Improve only that weakness.
+Run every existing test again.
+Add the new failure case permanently.
+Repeat.
+No large feature pile.
+No hiding failures beneath another abstraction.
+No adding clever machinery before a simple approach has been measured.
+The project succeeds by becoming dependable, not by becoming enormous.
+
+FIRST IMMEDIATE TASK
+Create the Phase 0 and Phase 1 foundation.
+The first implementation task should:
+locate and inspect the final Bertha SurrealDB work
+create a fresh repository for the shared memory system
+initialise a local SurrealDB development database
+initialise a separate disposable test database
+define conversation, episode, marker, project, and topic records
+define the first graph relationships
+provide create, retrieve, link, export, and restore operations
+create automated tests against real SurrealDB
+include one manually created example episode
+retrieve that episode through an exact marker
+document how to run everything
+The task is complete only when the tests pass from a clean checkout and the database can be destroyed and rebuilt automatically.
+
+FINAL PROJECT STATEMENT
+Project Lantern is a local shared memory layer for ChatGPT and Codex.
+It treats conversations as source material, episodes as meaningful units, markers as lightweight references, and projects as dynamic views assembled from relevant memory.
+It does not pretend that an AI remembers everything.
+It gives the AI a reliable index, lets it return to the original source, and allows different tools to share the right context without Matthew becoming the messenger between them.
+Build the proof.
+Test it until it bends.
+Improve what actually fails.
+Test it again.

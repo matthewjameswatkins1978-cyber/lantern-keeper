@@ -1,53 +1,22 @@
-use anyhow::Context;
-use clap::{Parser, Subcommand};
-use lighting_store_surreal::{StoreConfig, SurrealStore};
+//! Standalone `lighting-cli` binary — thin shim over the CLI library.
+//!
+//! The primary user-facing command is `lighting` (in `apps/lighting`).
+//! This binary exists so the CLI tests remain self-contained.
+
+use clap::Parser;
+use lighting_cli::{default_service_url, run_cli_command, validate_service_url, CliCommand};
 
 #[derive(Debug, Parser)]
-#[command(name = "lighting-cli", about = "Development commands for Lighting")]
+#[command(name = "lighting-cli", about = "Lighting CLI (standalone)")]
 struct Cli {
+    #[arg(long, env = "LIGHTING_SERVICE_URL", default_value_t = default_service_url(), value_parser = validate_service_url)]
+    service_url: String,
+
     #[command(subcommand)]
-    command: Command,
+    command: CliCommand,
 }
 
-#[derive(Debug, Subcommand)]
-enum Command {
-    Health,
-    InitDb,
-    PrintConfig,
-}
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    dotenvy::dotenv().ok();
-    tracing_subscriber::fmt::init();
-
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let config = StoreConfig::from_env();
-
-    match cli.command {
-        Command::Health => {
-            let store = SurrealStore::connect(&config)
-                .await
-                .context("failed to connect to SurrealDB")?;
-            store.health_check().await.context("health check failed")?;
-            println!("Lighting database health check succeeded");
-        }
-        Command::InitDb => {
-            let store = SurrealStore::connect(&config)
-                .await
-                .context("failed to connect to SurrealDB")?;
-            store
-                .initialise_schema()
-                .await
-                .context("schema initialisation failed")?;
-            println!("Lighting schema initialisation completed");
-        }
-        Command::PrintConfig => {
-            let json = serde_json::to_string_pretty(&config.redacted())
-                .context("failed to render redacted configuration")?;
-            println!("{json}");
-        }
-    }
-
-    Ok(())
+    run_cli_command(&cli.service_url, cli.command)
 }

@@ -6,7 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+async-trait = "0.1"
+chrono.workspace = true
+lighting-core = { path = "../lighting-core" }
 serde.workspace = true
+serde_json.workspace = true
 surrealdb.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

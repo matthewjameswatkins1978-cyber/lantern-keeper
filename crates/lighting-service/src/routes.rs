@@ -3,52 +3,61 @@ use serde::Serialize;
 
 use crate::state::AppState;
 
+/// Response returned by `GET /health/live`.
 #[derive(Serialize)]
-pub struct HealthResponse {
-    service: &'static str,
-    status: &'static str,
-    database: &'static str,
+pub struct LivenessResponse {
+    pub alive: bool,
 }
 
-#[derive(Serialize)]
-pub struct ErrorResponse {
-    service: &'static str,
-    status: &'static str,
-    error: String,
-}
-
+/// Response returned by `GET /api/v1/version`.
 #[derive(Serialize)]
 pub struct VersionResponse {
-    service: &'static str,
-    project: &'static str,
-    version: &'static str,
+    pub service: &'static str,
+    pub project: &'static str,
+    pub version: &'static str,
 }
 
-pub async fn health(
-    State(state): State<AppState>,
-) -> Result<Json<HealthResponse>, (StatusCode, Json<ErrorResponse>)> {
-    state.database_health().await.map_err(|error| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(ErrorResponse {
-                service: "Lighting",
-                status: "error",
-                error,
-            }),
-        )
-    })?;
-
-    Ok(Json(HealthResponse {
-        service: "Lighting",
-        status: "ok",
-        database: "connected",
-    }))
+/// Response returned by `GET /health/ready`.
+#[derive(Serialize)]
+pub struct ReadinessResponse {
+    pub ready: bool,
+    pub reason: String,
 }
 
+/// Liveness probe. Always returns 200 — reports that the process is alive.
+pub async fn live() -> Json<LivenessResponse> {
+    Json(LivenessResponse { alive: true })
+}
+
+/// Service version information.
 pub async fn version() -> Json<VersionResponse> {
     Json(VersionResponse {
         service: "Lighting",
         project: "Lantern Keeper",
         version: env!("CARGO_PKG_VERSION"),
     })
+}
+
+/// Readiness probe.
+///
+/// Returns 200 only after the service has connected to SurrealDB and applied /
+/// verified its schema migration. Storage state is reported honestly.
+pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadinessResponse>) {
+    if state.is_ready() {
+        (
+            StatusCode::OK,
+            Json(ReadinessResponse {
+                ready: true,
+                reason: "durable Source storage is ready".to_owned(),
+            }),
+        )
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ReadinessResponse {
+                ready: false,
+                reason: "storage is not configured".to_owned(),
+            }),
+        )
+    }
 }

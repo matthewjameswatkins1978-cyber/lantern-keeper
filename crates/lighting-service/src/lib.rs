@@ -1,6 +1,40 @@
 pub mod app;
+pub mod episode_association_dto;
+pub mod episode_association_ops;
+pub mod episode_association_routes;
+pub mod episode_dto;
+pub mod episode_ops;
+pub mod episode_routes;
+pub mod marker_dto;
+pub mod marker_ops;
+pub mod marker_retrieval_dto;
+pub mod marker_retrieval_ops;
+pub mod marker_retrieval_routes;
+pub mod marker_routes;
+pub mod project_dto;
+pub mod project_ops;
+pub mod project_retrieval_dto;
+pub mod project_retrieval_ops;
+pub mod project_retrieval_routes;
+pub mod project_routes;
 pub mod routes;
+pub mod source_dto;
+pub mod source_ops;
+pub mod source_outline_dto;
+pub mod source_routes;
 pub mod state;
+pub mod tethers_engine_client;
+pub mod tethers_preview;
+pub mod tethers_routes;
+
+#[cfg(test)]
+mod tests;
 
 pub use app::build_router;
+pub use episode_association_ops::EpisodeAssociationService;
+pub use episode_ops::EpisodeService;
+pub use marker_ops::MarkerService;
+pub use marker_retrieval_ops::MarkerRetrievalService;
+pub use project_ops::ProjectService;
+pub use project_retrieval_ops::ProjectRetrievalService;
 pub use state::AppState;

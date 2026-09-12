@@ -1,10 +1,111 @@
 use axum::Router;
+use tower_http::limit::RequestBodyLimitLayer;
 
-use crate::{routes, state::AppState};
+use crate::{
+    episode_association_routes, episode_routes, marker_retrieval_routes, marker_routes,
+    project_retrieval_routes, project_routes, routes, source_routes, state::AppState,
+    tethers_routes,
+};
 
+/// Maximum accepted request body size for Source creation (1 MiB).
+const SOURCE_CREATE_BODY_LIMIT: usize = 1_048_576;
+
+/// Builds the full Axum router with all routes and middleware.
 pub fn build_router(state: AppState) -> Router {
+    let source_routes = Router::new()
+        .route(
+            "/api/v1/sources",
+            axum::routing::post(source_routes::create_source),
+        )
+        .route(
+            "/api/v1/sources/outline",
+            axum::routing::get(source_routes::get_source_outline),
+        )
+        .route(
+            "/api/v1/sources/history",
+            axum::routing::get(source_routes::get_source_history),
+        )
+        .route(
+            "/api/v1/sources/{source_id}",
+            axum::routing::get(source_routes::get_source),
+        )
+        .layer(RequestBodyLimitLayer::new(SOURCE_CREATE_BODY_LIMIT));
+
+    let project_routes = Router::new()
+        .route(
+            "/api/v1/projects",
+            axum::routing::post(project_routes::create_project).get(project_routes::list_projects),
+        )
+        .route(
+            "/api/v1/projects/{project_id}",
+            axum::routing::get(project_routes::show_project),
+        );
+    let project_routes = project_routes
+        .route(
+            "/api/v1/projects/{project_id}/record-result",
+            axum::routing::post(project_routes::record_result),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/add-file",
+            axum::routing::post(project_routes::add_file),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/tethers/preview",
+            axum::routing::post(tethers_routes::preview),
+        );
+
+    let marker_routes = Router::new()
+        .route(
+            "/api/v1/markers",
+            axum::routing::post(marker_routes::create_marker),
+        )
+        .route(
+            "/api/v1/markers/lookup",
+            axum::routing::get(marker_routes::lookup_marker),
+        )
+        .route(
+            "/api/v1/markers/{marker_id}",
+            axum::routing::get(marker_routes::get_marker),
+        );
+
     Router::new()
-        .route("/health", axum::routing::get(routes::health))
-        .route("/version", axum::routing::get(routes::version))
+        .route("/health/live", axum::routing::get(routes::live))
+        .route("/health/ready", axum::routing::get(routes::ready))
+        .route("/api/v1/version", axum::routing::get(routes::version))
+        .merge(source_routes)
+        .merge(project_routes)
+        .merge(marker_routes)
+        .merge(
+            Router::new()
+                .route(
+                    "/api/v1/episodes",
+                    axum::routing::post(episode_routes::create_episode),
+                )
+                .route(
+                    "/api/v1/episodes/{episode_id}",
+                    axum::routing::get(episode_routes::get_episode),
+                ),
+        )
+        .merge(
+            Router::new()
+                .route(
+                    "/api/v1/episodes/{episode_id}/projects",
+                    axum::routing::post(episode_association_routes::link_project)
+                        .get(episode_association_routes::list_project_links),
+                )
+                .route(
+                    "/api/v1/episodes/{episode_id}/markers",
+                    axum::routing::post(episode_association_routes::link_marker)
+                        .get(episode_association_routes::list_marker_links),
+                ),
+        )
+        .route(
+            "/api/v1/retrieval/markers",
+            axum::routing::post(marker_retrieval_routes::retrieve_by_marker),
+        )
+        .route(
+            "/api/v1/retrieval/projects",
+            axum::routing::post(project_retrieval_routes::retrieve_by_project),
+        )
         .with_state(state)
 }

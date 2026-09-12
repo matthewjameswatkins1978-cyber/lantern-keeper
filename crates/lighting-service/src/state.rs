@@ -1,47 +1,53 @@
-use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::sync::Arc;
 
-use lighting_store_surreal::{StoreConfig, SurrealStore};
-use tokio::time::timeout;
-
-pub type HealthCheckFuture<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
-
-pub trait DatabaseHealth: Send + Sync {
-    fn health_check(&self) -> HealthCheckFuture<'_>;
-}
+use crate::episode_association_ops::EpisodeAssociationService;
+use crate::episode_ops::EpisodeService;
+use crate::marker_ops::MarkerService;
+use crate::marker_retrieval_ops::MarkerRetrievalService;
+use crate::project_ops::ProjectService;
+use crate::project_retrieval_ops::ProjectRetrievalService;
+use crate::source_ops::SourceService;
+use crate::tethers_engine_client::TethersEngineClient;
 
 #[derive(Clone)]
 pub struct AppState {
-    database: Arc<dyn DatabaseHealth>,
+    pub ready: Arc<std::sync::atomic::AtomicBool>,
+    pub source_service: Option<SourceService>,
+    pub project_service: Option<ProjectService>,
+    pub marker_service: Option<MarkerService>,
+    pub episode_service: Option<EpisodeService>,
+    pub association_service: Option<EpisodeAssociationService>,
+    pub retrieval_service: Option<MarkerRetrievalService>,
+    pub project_retrieval_service: Option<ProjectRetrievalService>,
+    pub tethers_client: Option<TethersEngineClient>,
 }
 
 impl AppState {
-    pub fn new(database: impl DatabaseHealth + 'static) -> Self {
+    pub fn new_unready() -> Self {
         Self {
-            database: Arc::new(database),
+            ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            source_service: None,
+            project_service: None,
+            marker_service: None,
+            episode_service: None,
+            association_service: None,
+            retrieval_service: None,
+            project_retrieval_service: None,
+            tethers_client: None,
         }
     }
 
-    pub async fn database_health(&self) -> Result<(), String> {
-        self.database.health_check().await
+    pub fn is_ready(&self) -> bool {
+        self.ready.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub fn mark_ready(&self) {
+        self.ready.store(true, std::sync::atomic::Ordering::Release);
     }
 }
 
-impl DatabaseHealth for SurrealStore {
-    fn health_check(&self) -> HealthCheckFuture<'_> {
-        Box::pin(async move { self.health_check().await.map_err(|error| error.to_string()) })
-    }
-}
-
-impl DatabaseHealth for StoreConfig {
-    fn health_check(&self) -> HealthCheckFuture<'_> {
-        Box::pin(async move {
-            timeout(Duration::from_secs(3), async {
-                let store = SurrealStore::connect(self).await?;
-                store.health_check().await
-            })
-            .await
-            .map_err(|_| "SurrealDB health check timed out".to_owned())?
-            .map_err(|error| error.to_string())
-        })
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new_unready()
     }
 }
