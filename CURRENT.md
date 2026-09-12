@@ -9,7 +9,7 @@ foundation/lantern-pre-memory worktree; the original dirty checkout remains
 untouched.
 
 The latest verified implementation checkpoint is commit
-c0b59b6f9108fc2d39166d2462fa7183f49ec161 on `feature/lantern-full-move`.
+f73315a2a64c8fe75ec93fdef0af997b187d6cdf on `feature/lantern-full-move`.
 
 ## Delivered in this pass
 
@@ -50,6 +50,10 @@ c0b59b6f9108fc2d39166d2462fa7183f49ec161 on `feature/lantern-full-move`.
 - Claim capture resolves exact registered predicate keys and aliases only;
   unknown candidates remain explicitly unmapped. Claims are listable through
   the HTTP surface with an unmapped-only filter.
+- A side-effect-free reconciliation decision layer now enforces scope overlap,
+  unmapped deferral, echo suppression, historical classification, direct
+  holder gates, supersession, contradiction and dispute outcomes. Canonical
+  belief mutation and evidence-lineage persistence are still follow-up work.
 - `lighting doctor --json` reports the connected server version, schema version,
   storage configuration and an explicit OK/WARNING status without exposing
   credentials.
