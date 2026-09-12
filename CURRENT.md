@@ -1,6 +1,6 @@
 # Lantern Keeper - Current Phase
 
-## Foundation modernisation complete; living-memory implementation continues
+## Foundation modernisation complete; import accounting checkpoint complete
 
 The authoritative pre-memory Luna baseline is preserved at commit
 407c52934de8fe4c583c7ed549e51d1de45c7ce3 under tag
@@ -46,6 +46,10 @@ untouched.
 - Basic Memory import now creates reusable whole-note Episodes, 156 Claim
   candidates, 299 soft Memory Items, and 191 unresolved relation records in
   the local store from the preserved snapshot. A second pass is replay-safe.
+- The repaired Basic Memory snapshot now has a deterministic offline accounting
+  report: all 496 observations and 275 relations are accounted for, with zero
+  unexplained items. Explicit Source-only, historical, metadata, unresolved and
+  unsupported outcomes are retained rather than silently omitted.
 
 ## Retrieval boundary
 
@@ -54,7 +58,7 @@ project/status/as-of filters, importance, confidence and known-at ordering.
 Recall returns a trace containing query, channel and candidate/selected IDs. An
 empty result is an explicit abstention.
 
-Not yet implemented: canonical predicate reconciliation/promotion into
+Not yet implemented: clean-database import replay proof, canonical predicate reconciliation/promotion into
 Beliefs, BM25/vector/graph fusion, persisted context traces, automated
 contradiction resolution, proposal review commands, narrative rebuilds,
 native host conversation adapters, restore validation, and MCP. These remain

@@ -99,6 +99,9 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             dry_run,
             json,
         } => cmd_basic_memory_import(&client, &path, dry_run, json),
+        CliCommand::BasicMemoryAccounting { path, output, json } => {
+            cmd_basic_memory_accounting(&path, &output, json)
+        }
         CliCommand::ProjectHandoff { project_id, json } => {
             cmd_project_handoff(&client, &project_id, json)
         }
@@ -241,6 +244,17 @@ pub enum CliCommand {
         #[arg(long)]
         dry_run: bool,
         /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Produce deterministic accounting for every observation and relation in a Basic Memory snapshot.
+    BasicMemoryAccounting {
+        /// Validated snapshot directory.
+        path: PathBuf,
+        /// JSON report destination.
+        #[arg(long)]
+        output: PathBuf,
+        /// Also print the report as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -963,6 +977,51 @@ struct BasicMemoryImportSummary {
     relation_events_duplicate: usize,
 }
 
+const BASIC_MEMORY_ACCOUNTING_VERSION: &str = "basic-memory-accounting-v1";
+
+#[derive(Debug, Deserialize)]
+struct BasicMemorySnapshotManifest {
+    captured_at: Option<String>,
+    note_count: Option<usize>,
+    observation_count: Option<usize>,
+    relation_count: Option<usize>,
+    export_sha256: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct BasicMemoryAccountingItem {
+    source_id: String,
+    source_path: String,
+    line_number: usize,
+    item_type: String,
+    raw_value: String,
+    outcome: String,
+    reason: String,
+    importer_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct BasicMemoryAccountingReport {
+    schema: &'static str,
+    importer_version: &'static str,
+    snapshot_captured_at: Option<String>,
+    snapshot_export_sha256: Option<String>,
+    source_records: usize,
+    expected_observations: Option<usize>,
+    accounted_observations: usize,
+    expected_relations: Option<usize>,
+    accounted_relations: usize,
+    unexplained_observations: usize,
+    unexplained_relations: usize,
+    observation_outcomes: BTreeMap<String, usize>,
+    relation_outcomes: BTreeMap<String, usize>,
+    items: Vec<BasicMemoryAccountingItem>,
+}
+
 fn load_basic_memory_snapshot(path: &Path) -> anyhow::Result<Vec<BasicMemorySnapshotRecord>> {
     let files = if path.is_file() {
         vec![path.to_path_buf()]
@@ -1056,6 +1115,354 @@ fn read_basic_memory_shards(files: &[PathBuf]) -> anyhow::Result<Vec<BasicMemory
     }
     records.sort_by(|left, right| left.source_path.cmp(&right.source_path));
     Ok(records)
+}
+
+fn load_basic_memory_snapshot_manifest(path: &Path) -> anyhow::Result<BasicMemorySnapshotManifest> {
+    if !path.is_dir() {
+        bail!(
+            "accounting requires a snapshot directory: {}",
+            path.display()
+        );
+    }
+    let manifest_path = path.join("manifest.json");
+    let manifest_text = fs::read_to_string(&manifest_path).with_context(|| {
+        format!(
+            "failed to read snapshot manifest {}",
+            manifest_path.display()
+        )
+    })?;
+    serde_json::from_str(&manifest_text).with_context(|| {
+        format!(
+            "snapshot manifest is not valid JSON: {}",
+            manifest_path.display()
+        )
+    })
+}
+
+fn basic_memory_body_lines(markdown: &str) -> impl Iterator<Item = (usize, &str)> {
+    let mut in_frontmatter = false;
+    let mut frontmatter_seen = false;
+    markdown.lines().enumerate().filter(move |(_, line)| {
+        if line.trim() == "---" {
+            if !frontmatter_seen {
+                frontmatter_seen = true;
+                in_frontmatter = true;
+            } else {
+                in_frontmatter = false;
+            }
+            return false;
+        }
+        frontmatter_seen && !in_frontmatter
+    })
+}
+
+fn basic_memory_source_id(record: &BasicMemorySnapshotRecord) -> String {
+    record
+        .external_id
+        .clone()
+        .unwrap_or_else(|| format!("basic-memory:source:{}", record.source_path))
+}
+
+fn classify_accounted_observation(category: &str) -> (&'static str, String) {
+    let category = category.trim().to_ascii_lowercase();
+    if is_truth_bearing_basic_memory_category(&category) {
+        return (
+            "claim",
+            "truth-bearing category retained as a Claim candidate; predicate resolution remains separate".to_owned(),
+        );
+    }
+    if category == "history" || category == "historical" {
+        return (
+            "historical_memory",
+            "historical category retained as dated source-backed memory".to_owned(),
+        );
+    }
+    if matches!(
+        category.as_str(),
+        "anecdote"
+            | "concept"
+            | "creative_seed"
+            | "humour"
+            | "idea"
+            | "impression"
+            | "insight"
+            | "lesson"
+            | "memory"
+            | "negative_constraint"
+            | "open_loop"
+            | "pattern"
+            | "pattern_candidate"
+            | "principle"
+            | "quote"
+            | "reference"
+            | "rejected_path"
+            | "strength_observation"
+            | "tension"
+    ) {
+        return (
+            "soft_memory",
+            "recognized soft-memory category retained without promoting it to canonical truth"
+                .to_owned(),
+        );
+    }
+    (
+        "source_only_intentional",
+        format!(
+            "category `{category}` has no dedicated canonical import mapping; exact text remains in the Source and ledger"
+        ),
+    )
+}
+
+fn first_basic_memory_target(line: &str) -> Option<(String, bool)> {
+    let start = line.find("[[")?;
+    let rest = &line[start + 2..];
+    let end = rest.find("]]")?;
+    let target = rest[..end].trim();
+    if target.is_empty() {
+        return None;
+    }
+    let multiple = rest[end + 2..].contains("[[");
+    Some((target.to_owned(), multiple))
+}
+
+fn basic_memory_target_key(target: &str) -> String {
+    target
+        .split_once('|')
+        .map(|(path, _)| path)
+        .unwrap_or(target)
+        .trim()
+        .trim_end_matches(".md")
+        .replace('\\', "/")
+        .to_ascii_lowercase()
+}
+
+fn basic_memory_known_target_keys(
+    records: &[BasicMemorySnapshotRecord],
+) -> std::collections::BTreeSet<String> {
+    records
+        .iter()
+        .flat_map(|record| {
+            [
+                Some(record.source_path.as_str()),
+                record.title.as_deref(),
+                record.permalink.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .map(basic_memory_target_key)
+        })
+        .collect()
+}
+
+fn build_basic_memory_accounting(
+    records: &[BasicMemorySnapshotRecord],
+    manifest: &BasicMemorySnapshotManifest,
+) -> BasicMemoryAccountingReport {
+    let known_targets = basic_memory_known_target_keys(records);
+    let mut items = Vec::new();
+    let mut observation_outcomes = BTreeMap::new();
+    let mut relation_outcomes = BTreeMap::new();
+    let mut accounted_observations = 0;
+    let mut accounted_relations = 0;
+
+    for record in records {
+        let source_id = basic_memory_source_id(record);
+        let metadata_source = record
+            .source_path
+            .to_ascii_lowercase()
+            .ends_with("index.md")
+            || record
+                .note_type
+                .as_deref()
+                .is_some_and(|value| value.eq_ignore_ascii_case("index"));
+        let historical_source = record
+            .source_path
+            .to_ascii_lowercase()
+            .starts_with("archive/")
+            || record
+                .source_path
+                .to_ascii_lowercase()
+                .starts_with("history/");
+
+        for (line_index, line) in basic_memory_body_lines(&record.raw_markdown) {
+            let raw_value = line.trim();
+            if raw_value.starts_with("- [[") {
+                if first_basic_memory_target(raw_value).is_some() {
+                    let reason =
+                        "index/navigation link retained as source metadata and relation evidence";
+                    *observation_outcomes
+                        .entry("metadata".to_owned())
+                        .or_insert(0) += 1;
+                    accounted_observations += 1;
+                    items.push(BasicMemoryAccountingItem {
+                        source_id: source_id.clone(),
+                        source_path: record.source_path.clone(),
+                        line_number: line_index + 1,
+                        item_type: "observation".to_owned(),
+                        raw_value: raw_value.to_owned(),
+                        outcome: "metadata".to_owned(),
+                        reason: reason.to_owned(),
+                        importer_version: BASIC_MEMORY_ACCOUNTING_VERSION.to_owned(),
+                        category: None,
+                        target: first_basic_memory_target(raw_value).map(|(target, _)| target),
+                    });
+                }
+            } else if let Some(value) = raw_value.strip_prefix("- [")
+                && let Some((category, content)) = value.split_once("] ")
+                && !category.trim().is_empty()
+                && !content.trim().is_empty()
+            {
+                let (outcome, reason) = classify_accounted_observation(category);
+                *observation_outcomes.entry(outcome.to_owned()).or_insert(0) += 1;
+                accounted_observations += 1;
+                items.push(BasicMemoryAccountingItem {
+                    source_id: source_id.clone(),
+                    source_path: record.source_path.clone(),
+                    line_number: line_index + 1,
+                    item_type: "observation".to_owned(),
+                    raw_value: raw_value.to_owned(),
+                    outcome: outcome.to_owned(),
+                    reason,
+                    importer_version: BASIC_MEMORY_ACCOUNTING_VERSION.to_owned(),
+                    category: Some(category.trim().to_owned()),
+                    target: None,
+                });
+            }
+
+            if raw_value.starts_with("- ")
+                && let Some((target, multiple)) = first_basic_memory_target(raw_value)
+            {
+                let target_key = basic_memory_target_key(&target);
+                let (outcome, reason) = if multiple {
+                    (
+                            "unsupported_with_reason",
+                            "one legacy bullet contains multiple wiki targets; raw line is preserved without guessing a single edge".to_owned(),
+                        )
+                } else if !known_targets.contains(&target_key) {
+                    (
+                        "unresolved_target",
+                        "wiki target does not match any imported source path, title or permalink"
+                            .to_owned(),
+                    )
+                } else if metadata_source {
+                    (
+                            "metadata_only",
+                            "index/navigation relation is retained as metadata rather than treated as semantic project evidence".to_owned(),
+                        )
+                } else if historical_source {
+                    (
+                        "historical_relation",
+                        "relation is retained with historical source context".to_owned(),
+                    )
+                } else {
+                    (
+                        "resolved_relation",
+                        "wiki target resolves to an imported source path, title or permalink"
+                            .to_owned(),
+                    )
+                };
+                *relation_outcomes.entry(outcome.to_owned()).or_insert(0) += 1;
+                accounted_relations += 1;
+                items.push(BasicMemoryAccountingItem {
+                    source_id: source_id.clone(),
+                    source_path: record.source_path.clone(),
+                    line_number: line_index + 1,
+                    item_type: "relation".to_owned(),
+                    raw_value: raw_value.to_owned(),
+                    outcome: outcome.to_owned(),
+                    reason,
+                    importer_version: BASIC_MEMORY_ACCOUNTING_VERSION.to_owned(),
+                    category: raw_value
+                        .strip_prefix("- ")
+                        .and_then(|value| value.split_once("[["))
+                        .map(|(predicate, _)| predicate.trim().to_owned())
+                        .filter(|value| !value.is_empty()),
+                    target: Some(target),
+                });
+            }
+        }
+    }
+
+    let unexplained_observations = manifest
+        .observation_count
+        .map(|expected| expected.saturating_sub(accounted_observations))
+        .unwrap_or(0);
+    let unexplained_relations = manifest
+        .relation_count
+        .map(|expected| expected.saturating_sub(accounted_relations))
+        .unwrap_or(0);
+
+    BasicMemoryAccountingReport {
+        schema: "lantern.basic-memory-accounting/1",
+        importer_version: BASIC_MEMORY_ACCOUNTING_VERSION,
+        snapshot_captured_at: manifest.captured_at.clone(),
+        snapshot_export_sha256: manifest.export_sha256.clone(),
+        source_records: records.len(),
+        expected_observations: manifest.observation_count,
+        accounted_observations,
+        expected_relations: manifest.relation_count,
+        accounted_relations,
+        unexplained_observations,
+        unexplained_relations,
+        observation_outcomes,
+        relation_outcomes,
+        items,
+    }
+}
+
+fn cmd_basic_memory_accounting(path: &Path, output: &Path, json: bool) -> anyhow::Result<()> {
+    let manifest = load_basic_memory_snapshot_manifest(path)?;
+    let records = load_basic_memory_snapshot(path)?;
+    if manifest
+        .note_count
+        .is_some_and(|expected| expected != records.len())
+    {
+        bail!(
+            "snapshot manifest note_count does not match records: expected {:?}, actual {}",
+            manifest.note_count,
+            records.len()
+        );
+    }
+    let report = build_basic_memory_accounting(&records, &manifest);
+    if report.unexplained_observations != 0 || report.unexplained_relations != 0 {
+        bail!(
+            "snapshot accounting is incomplete: unexplained observations={}, relations={}",
+            report.unexplained_observations,
+            report.unexplained_relations
+        );
+    }
+    let encoded = serde_json::to_vec_pretty(&report)?;
+    if let Some(parent) = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create accounting report directory {}",
+                parent.display()
+            )
+        })?;
+    }
+    fs::write(output, encoded)
+        .with_context(|| format!("failed to write accounting report {}", output.display()))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "Basic Memory accounting: {} notes, {}/{} observations, {}/{} relations, unexplained=0",
+            report.source_records,
+            report.accounted_observations,
+            report
+                .expected_observations
+                .unwrap_or(report.accounted_observations),
+            report.accounted_relations,
+            report
+                .expected_relations
+                .unwrap_or(report.accounted_relations),
+        );
+        println!("Report: {}", output.display());
+    }
+    Ok(())
 }
 
 fn cmd_basic_memory_import(
@@ -2172,6 +2579,58 @@ mod tests {
                 ("governed_by".to_owned(), "A title with spaces".to_owned())
             ]
         );
+    }
+
+    #[test]
+    fn basic_memory_accounting_covers_tagged_and_index_items() {
+        let records = vec![
+            BasicMemorySnapshotRecord {
+                source_project: None,
+                source_project_id: None,
+                source_path: "index.md".to_owned(),
+                title: Some("Index".to_owned()),
+                permalink: Some("index".to_owned()),
+                external_id: Some("index-source".to_owned()),
+                entity_id: None,
+                note_type: Some("index".to_owned()),
+                content_type: Some("text/markdown".to_owned()),
+                updated_at: None,
+                raw_markdown: "---\ntitle: Index\n---\n\n# Index\n\n- [[Known]]\n".to_owned(),
+            },
+            BasicMemorySnapshotRecord {
+                source_project: None,
+                source_project_id: None,
+                source_path: "Known.md".to_owned(),
+                title: Some("Known".to_owned()),
+                permalink: Some("known".to_owned()),
+                external_id: Some("known-source".to_owned()),
+                entity_id: None,
+                note_type: Some("note".to_owned()),
+                content_type: Some("text/markdown".to_owned()),
+                updated_at: None,
+                raw_markdown:
+                    "---\ntitle: Known\n---\n\n- [decision] Keep it\n- related_to [[Index]]\n"
+                        .to_owned(),
+            },
+        ];
+        let manifest = BasicMemorySnapshotManifest {
+            captured_at: Some("2026-09-12".to_owned()),
+            note_count: Some(2),
+            observation_count: Some(2),
+            relation_count: Some(2),
+            export_sha256: None,
+        };
+
+        let report = build_basic_memory_accounting(&records, &manifest);
+
+        assert_eq!(report.accounted_observations, 2);
+        assert_eq!(report.accounted_relations, 2);
+        assert_eq!(report.unexplained_observations, 0);
+        assert_eq!(report.unexplained_relations, 0);
+        assert_eq!(report.observation_outcomes["metadata"], 1);
+        assert_eq!(report.observation_outcomes["claim"], 1);
+        assert_eq!(report.relation_outcomes["metadata_only"], 1);
+        assert_eq!(report.relation_outcomes["resolved_relation"], 1);
     }
 
     // ── Project handoff tests ──────────────────────────────────────────────
