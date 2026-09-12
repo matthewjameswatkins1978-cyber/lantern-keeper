@@ -366,7 +366,7 @@ fn join_error_to_io(error: JoinError) -> TethersEngineError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tethers_preview::{build_preview_request, PreviewInput, TethersStatus};
+    use crate::tethers_preview::{PreviewInput, TethersStatus, build_preview_request};
     #[cfg(windows)]
     use std::fs;
     #[cfg(windows)]

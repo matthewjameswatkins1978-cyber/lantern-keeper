@@ -176,6 +176,28 @@ impl MemoryPathRepository for SurrealMemoryPathRepository {
         record.map(to_domain_episode).transpose()
     }
 
+    async fn find_episode_by_source_range(
+        &self,
+        source_id: &SourceId,
+        start_byte: usize,
+        end_byte: usize,
+    ) -> Result<Option<Episode>, MemoryPathRepositoryError> {
+        let record: Option<surrealdb::types::Object> = self
+            .store
+            .query(
+                "SELECT * FROM episode WHERE source_id = $source_id AND start_byte = $start_byte AND end_byte = $end_byte ORDER BY created_at ASC LIMIT 1",
+            )
+            .bind(("source_id", source_id.as_str()))
+            .bind(("start_byte", start_byte as i64))
+            .bind(("end_byte", end_byte as i64))
+            .await
+            .map_err(|e| MemoryPathRepositoryError::Operation(Box::new(e)))?
+            .take(0)
+            .map_err(|e| MemoryPathRepositoryError::Operation(Box::new(e)))?;
+
+        record.map(to_domain_episode).transpose()
+    }
+
     async fn create_marker(
         &self,
         marker: Marker,

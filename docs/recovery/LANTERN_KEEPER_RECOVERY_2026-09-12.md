@@ -124,3 +124,33 @@ Basic Memory snapshot as immutable migration input, and make the next changes
 on this checkout without publishing. The canonical branch remains master;
 no merge into master is claimed until the importer, backend checks, and
 post-import verification are complete.
+
+## Full-packet continuation checkpoint
+
+The new packet was continued from the recovery commit on the isolated branch
+`feature/lantern-full-move`; the packet's expected master SHA
+`a44554b7050e9b3dd2178eede99b67184d89d12c` is not present in this clone, so it
+could not be verified as a local ancestor. Actual `master` remains
+`ca4f86a2504d34c585f8984b9d93fabf4fe49142` and was not changed.
+
+The typed epistemic model and local SurrealDB adapter now preserve Claims,
+Beliefs, soft Memory Items, Traces, Proposals, and graph relations. The
+importer creates exact whole-note Episodes and routes truth-bearing
+observations to conservative Claim candidates while creative, historical, and
+unknown observations become soft Memory Items. Imported wiki relations retain
+their original labels and unresolved target keys.
+
+Against the repaired private snapshot, the local run observed 61 duplicate
+Sources, 61 reusable Episodes, 156 Claim candidates, 299 soft Memory Items,
+and 191 unresolved relations. The identical second pass stored no duplicate
+ledger events, observations, relations, Claims, Memory Items, or Episodes.
+The local export at
+`.private-migration/lantern-export-feature-2026-09-12-d` contains 1,479
+logical records and includes `memory_relation` in its epistemic export.
+
+Verification for this continuation: `cargo fmt --all`, workspace all-targets
+check, workspace all-features Clippy with warnings denied, 49 core unit tests,
+live embedded HTTP capture/search/stale checks, and two complete importer
+passes. The packet remains pre-cutover: predicate reconciliation, richer
+retrieval/context compilation, correction cascade tests, native Lucy client
+proof, full restore validation, and final delta migration remain open.

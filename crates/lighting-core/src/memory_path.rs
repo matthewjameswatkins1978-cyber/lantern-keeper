@@ -420,6 +420,20 @@ pub trait MemoryPathRepository: Send + Sync {
         id: &EpisodeId,
     ) -> Result<Option<Episode>, MemoryPathRepositoryError>;
 
+    /// Find an Episode with the same exact Source byte range.
+    ///
+    /// This default keeps existing in-memory adapters source-compatible while
+    /// durable implementations can use it to make importer resume idempotent.
+    async fn find_episode_by_source_range(
+        &self,
+        source_id: &SourceId,
+        start_byte: usize,
+        end_byte: usize,
+    ) -> Result<Option<Episode>, MemoryPathRepositoryError> {
+        let _ = (source_id, start_byte, end_byte);
+        Ok(None)
+    }
+
     /// Store a Marker. Returns existing Marker if lookup key collides.
     async fn create_marker(
         &self,

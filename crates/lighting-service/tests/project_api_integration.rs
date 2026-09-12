@@ -47,6 +47,7 @@ async fn app_with_source() -> Router {
         tethers_client: None,
         memory_service: None,
         ledger_service: None,
+        epistemic_service: None,
     };
     build_router(st)
 }
@@ -75,6 +76,7 @@ async fn app() -> Router {
         tethers_client: None,
         memory_service: None,
         ledger_service: None,
+        epistemic_service: None,
     };
     build_router(st)
 }
@@ -187,6 +189,7 @@ async fn project_survives_fresh_connection() {
         tethers_client: None,
         memory_service: None,
         ledger_service: None,
+        epistemic_service: None,
     });
     let pr = a1
         .oneshot(
@@ -226,6 +229,7 @@ async fn project_survives_fresh_connection() {
         tethers_client: None,
         memory_service: None,
         ledger_service: None,
+        epistemic_service: None,
     });
     let gr = a2
         .oneshot(

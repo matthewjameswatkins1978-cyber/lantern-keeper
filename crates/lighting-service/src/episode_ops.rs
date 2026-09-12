@@ -88,6 +88,14 @@ impl EpisodeService {
         let source_range =
             SourceRange::new(source_id.clone(), start_byte, end_byte, source.content())
                 .map_err(EpisodeOperationError::InvalidRange)?;
+        if let Some(existing) = self
+            .memory_repo
+            .find_episode_by_source_range(&source_id, start_byte, end_byte)
+            .await
+            .map_err(|e| EpisodeOperationError::Repository(e.into()))?
+        {
+            return self.build_response(&existing, &source).await;
+        }
         let episode = Episode::new(title, source_range);
         let stored = self
             .memory_repo

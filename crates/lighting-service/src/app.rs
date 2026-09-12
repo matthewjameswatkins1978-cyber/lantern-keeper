@@ -2,9 +2,9 @@ use axum::Router;
 use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::{
-    episode_association_routes, episode_routes, ledger_routes, marker_retrieval_routes,
-    marker_routes, memory_routes, project_retrieval_routes, project_routes, routes, source_routes,
-    state::AppState, tethers_routes,
+    episode_association_routes, episode_routes, epistemic_routes, ledger_routes,
+    marker_retrieval_routes, marker_routes, memory_routes, project_retrieval_routes,
+    project_routes, routes, source_routes, state::AppState, tethers_routes,
 };
 
 /// Maximum accepted request body size for Source creation (1 MiB).
@@ -99,6 +99,35 @@ pub fn build_router(state: AppState) -> Router {
         .merge(marker_routes)
         .merge(memory_routes)
         .merge(ledger_routes)
+        .merge(
+            Router::new()
+                .route(
+                    "/api/v1/claims",
+                    axum::routing::post(epistemic_routes::capture_claim),
+                )
+                .route(
+                    "/api/v1/beliefs",
+                    axum::routing::post(epistemic_routes::create_belief)
+                        .get(epistemic_routes::list_beliefs),
+                )
+                .route(
+                    "/api/v1/beliefs/{belief_id}/stale",
+                    axum::routing::post(epistemic_routes::mark_belief_stale),
+                )
+                .route(
+                    "/api/v1/memory-items",
+                    axum::routing::post(epistemic_routes::remember_soft),
+                )
+                .route(
+                    "/api/v1/memory-items/search",
+                    axum::routing::post(epistemic_routes::search_soft),
+                )
+                .route(
+                    "/api/v1/relations",
+                    axum::routing::post(epistemic_routes::store_relation)
+                        .get(epistemic_routes::list_unresolved_relations),
+                ),
+        )
         .merge(
             Router::new()
                 .route(

@@ -10,12 +10,20 @@ use std::{fmt, str::FromStr};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod epistemic;
 pub mod ledger;
 pub mod memory;
 pub mod memory_path;
 pub mod source;
 pub mod source_outline;
 
+pub use epistemic::{
+    Actor, Belief, BeliefState, Claim, ContextPack, DimensionDefinition, EpistemicError,
+    EpistemicRepository, EpistemicRepositoryError, Frame, FrameAction, GraphRelation, MemoryItem,
+    MemoryItemKind, MemoryItemSearch, NewBelief, NewClaim, NewGraphRelation, NewMemoryItem,
+    PredicateDefinition, PredicateStatus, Proposal, RelationKind, Scope, Stance, Trace, TrustClass,
+    scope_hash,
+};
 pub use ledger::{
     LedgerEvent, LedgerEventError, LedgerEventRepository, LedgerIngestResult,
     LedgerRepositoryError, LedgerRole,
@@ -91,6 +99,13 @@ identifier_type!(MarkerId);
 identifier_type!(ProjectId);
 identifier_type!(TopicId);
 identifier_type!(MemoryId);
+identifier_type!(ClaimId);
+identifier_type!(BeliefId);
+identifier_type!(MemoryItemId);
+identifier_type!(TraceId);
+identifier_type!(ProposalId);
+identifier_type!(ContextPackId);
+identifier_type!(RelationId);
 
 #[cfg(test)]
 mod tests {

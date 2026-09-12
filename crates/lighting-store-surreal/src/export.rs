@@ -41,7 +41,7 @@ impl SurrealStore {
             .await
             .map_err(ExportError::Filesystem)?;
 
-        let groups: [(&str, &[&str]); 3] = [
+        let groups: [(&str, &[&str]); 4] = [
             (
                 "ledger.ndjson",
                 &["source", "episode", "marker", "ledger_event"],
@@ -51,6 +51,17 @@ impl SurrealStore {
                 "relations.ndjson",
                 &["episode_project_relation", "episode_marker_relation"],
             ),
+            (
+                "epistemic.ndjson",
+                &[
+                    "epistemic_claim",
+                    "belief",
+                    "memory_item",
+                    "memory_relation",
+                    "trace",
+                    "proposal",
+                ],
+            ),
         ];
 
         let mut tables = Vec::new();
@@ -59,12 +70,7 @@ impl SurrealStore {
         for (file_name, table_names) in groups {
             let mut lines = Vec::new();
             for table in table_names {
-                let records: Vec<surrealdb::types::Object> = self
-                    .query(format!("SELECT * FROM {table}"))
-                    .await
-                    .map_err(ExportError::Query)?
-                    .take(0)
-                    .map_err(ExportError::Query)?;
+                let records = select_table(self, table).await?;
 
                 tables.push((*table).to_owned());
                 record_count += records.len();
@@ -88,12 +94,7 @@ impl SurrealStore {
                 .map_err(ExportError::Filesystem)?;
         }
 
-        let memory_records: Vec<surrealdb::types::Object> = self
-            .query("SELECT * FROM memory")
-            .await
-            .map_err(ExportError::Query)?
-            .take(0)
-            .map_err(ExportError::Query)?;
+        let memory_records = select_table(self, "memory").await?;
         tables.push("memory".to_owned());
         record_count += memory_records.len();
         let memory_lines = memory_records
@@ -125,7 +126,8 @@ impl SurrealStore {
                 "ledger.ndjson",
                 "memories.ndjson",
                 "relations.ndjson",
-                "projects.ndjson"
+                "projects.ndjson",
+                "epistemic.ndjson"
             ]
         });
         let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(ExportError::Json)?;
@@ -150,4 +152,20 @@ fn object_to_json(object: surrealdb::types::Object) -> Value {
             .map(|(key, value)| (key, value.into_json_value()))
             .collect(),
     )
+}
+
+async fn select_table(
+    store: &SurrealStore,
+    table: &str,
+) -> Result<Vec<surrealdb::types::Object>, ExportError> {
+    let mut result = match store.query(format!("SELECT * FROM {table}")).await {
+        Ok(result) => result,
+        Err(error) if error.to_string().contains("does not exist") => return Ok(Vec::new()),
+        Err(error) => return Err(ExportError::Query(error)),
+    };
+    match result.take(0) {
+        Ok(records) => Ok(records),
+        Err(error) if error.to_string().contains("does not exist") => Ok(Vec::new()),
+        Err(error) => Err(ExportError::Query(error)),
+    }
 }

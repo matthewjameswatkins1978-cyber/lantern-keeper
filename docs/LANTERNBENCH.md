@@ -1,19 +1,12 @@
 # LanternBench
 
-LanternBench is a small executable acceptance runner for retrieval and context
-assembly. The definitions live in [`bench/lanternbench-v1.json`](../bench/lanternbench-v1.json);
-the runner is [`bench/run-lanternbench.ps1`](../bench/run-lanternbench.ps1).
+LanternBench is the deterministic behavioural harness for memory safety and
+retrieval. Synthetic fixtures may be committed; private Matthew memory may
+not. The required scenarios include topic slicing, attribution isolation,
+silence, adoption, retraction, scope refinement, stale dependency severance,
+quotes, soft-memory fade/revival, self-citation quarantine, correction trace,
+and legacy migration.
 
-Run it against a local Lighting service after loading the corresponding fixture
-memories:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File bench/run-lanternbench.ps1
-powershell -ExecutionPolicy Bypass -File bench/run-lanternbench.ps1 -Json
-```
-
-The runner reports pass/total globally and per category. A missing memory is a
-failed case, not a reason to weaken the expected evidence. The current suite
-covers provenance, supersession/temporal behaviour, abstention, and context
-assembly. It remains intentionally small until a representative Matthew/Lucy
-corpus is imported.
+The existing `bench/lanternbench-v1.json` and runner remain the starting point.
+The full packet's acceptance report must keep exactness, integration, and
+performance evidence distinct.

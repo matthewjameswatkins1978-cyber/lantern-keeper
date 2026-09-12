@@ -120,6 +120,7 @@ mod router_tests {
             tethers_client: None,
             memory_service: None,
             ledger_service: None,
+            epistemic_service: None,
         };
         build_router(state)
     }
@@ -548,6 +549,7 @@ mod router_tests {
             tethers_client: None,
             memory_service: None,
             ledger_service: None,
+            epistemic_service: None,
         };
         build_router(state)
     }
@@ -800,6 +802,7 @@ mod router_tests {
             tethers_client: None,
             memory_service: None,
             ledger_service: None,
+            epistemic_service: None,
         };
         build_router(state)
     }
@@ -1753,6 +1756,7 @@ mod project_add_file_tests {
             tethers_client: None,
             memory_service: None,
             ledger_service: None,
+            epistemic_service: None,
         };
         build_router(state)
     }
@@ -2067,6 +2071,7 @@ mod project_add_file_tests {
             tethers_client: Some(tethers_client),
             memory_service: None,
             ledger_service: None,
+            epistemic_service: None,
         };
         build_router(state)
     }
@@ -2464,6 +2469,7 @@ mod project_add_file_tests {
             tethers_client: None,
             memory_service: None,
             ledger_service: None,
+            epistemic_service: None,
         };
         let app = build_router(state);
 
@@ -2581,6 +2587,7 @@ mod project_add_file_tests {
             tethers_client: Some(client),
             memory_service: None,
             ledger_service: None,
+            epistemic_service: None,
         };
         let app = build_router(state);
 
