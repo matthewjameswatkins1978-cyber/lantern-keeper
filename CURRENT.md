@@ -9,7 +9,7 @@ foundation/lantern-pre-memory worktree; the original dirty checkout remains
 untouched.
 
 The latest verified implementation checkpoint is commit
-c3fa1d4095973b5bce2770fde8b3b8787d15de70 on `feature/lantern-full-move`.
+0718a7c7bef314febb4589bb081ba1527bf891ad on `feature/lantern-full-move`.
 
 ## Delivered in this pass
 
@@ -60,6 +60,8 @@ c3fa1d4095973b5bce2770fde8b3b8787d15de70 on `feature/lantern-full-move`.
   in-memory belief projections, incrementing `dependency_generation` once per
   affected belief without recursive model calls. Durable reconciliation and
   repair-queue persistence remain open.
+- Lantern exports now include predicate and dimension registry records, so
+  those canonical definitions are included in future restore evidence.
 - `lighting doctor --json` reports the connected server version, schema version,
   storage configuration and an explicit OK/WARNING status without exposing
   credentials.
