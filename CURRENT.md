@@ -8,8 +8,8 @@ lantern-pre-memory-checkpoint. This implementation runs in the separate
 foundation/lantern-pre-memory worktree; the original dirty checkout remains
 untouched.
 
-The latest verified import-accounting implementation is commit
-bbe26b7bd1fb037a6fe22c8c11de0608b873e3e5 on `feature/lantern-full-move`.
+The latest verified implementation checkpoint is commit
+b4cf3756bb7238b26c83a55f1fcd94b2bddb14df on `feature/lantern-full-move`.
 
 ## Delivered in this pass
 
@@ -43,6 +43,10 @@ bbe26b7bd1fb037a6fe22c8c11de0608b873e3e5 on `feature/lantern-full-move`.
 - Durable SurrealDB stores and HTTP capability routes for Claim capture,
   Belief projection/listing/stale invalidation, soft-memory capture/search,
   and unresolved relation inspection.
+- Predicate and dimension definitions now have canonical key normalization,
+  durable registry tables, list/get/create HTTP inspection surfaces, and
+  creation traces. Scoped Claims and Beliefs normalize dimension keys and
+  known OS aliases before computing their deterministic scope hash.
 - `lighting doctor --json` reports the connected server version, schema version,
   storage configuration and an explicit OK/WARNING status without exposing
   credentials.
@@ -61,8 +65,9 @@ project/status/as-of filters, importance, confidence and known-at ordering.
 Recall returns a trace containing query, channel and candidate/selected IDs. An
 empty result is an explicit abstention.
 
-Not yet implemented: clean-database import replay proof, canonical predicate reconciliation/promotion into
-Beliefs, BM25/vector/graph fusion, persisted context traces, automated
+Not yet implemented: clean-database import replay proof, predicate alias
+resolution and promotion into Beliefs, BM25/vector/graph fusion, persisted
+context traces, automated
 contradiction resolution, proposal review commands, narrative rebuilds,
 native host conversation adapters, restore validation, and MCP. These remain
 genuine follow-up gates, not silently implied by the current code.

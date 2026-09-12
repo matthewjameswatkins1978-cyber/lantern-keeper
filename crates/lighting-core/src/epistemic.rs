@@ -55,6 +55,14 @@ pub enum PredicateStatus {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum PredicateDefinitionStatus {
+    Active,
+    Experimental,
+    Deprecated,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BeliefState {
     Active,
     Disputed,
@@ -171,11 +179,20 @@ impl Claim {
         let speaker_actor_id = non_blank(input.speaker_actor_id, "claim speaker")?;
         let extractor = non_blank(input.extractor, "claim extractor")?;
         let extractor_version = non_blank(input.extractor_version, "claim extractor version")?;
-        let scope_hash = scope_hash(&input.scope);
+        let scope = normalize_scope(&input.scope)?;
+        let scope_hash = scope_hash(&scope);
+        let predicate_key = input
+            .predicate_key
+            .map(|value| normalize_registry_key(&value, "claim predicate"))
+            .transpose()?;
+        let predicate_candidate = input
+            .predicate_candidate
+            .map(|value| normalize_registry_key(&value, "claim predicate candidate"))
+            .transpose()?;
         let dedupe_key = format!(
             "{}|{}|{}|{}",
             subject_key,
-            input.predicate_key.as_deref().unwrap_or(""),
+            predicate_key.as_deref().unwrap_or(""),
             scope_hash,
             value
         );
@@ -186,11 +203,11 @@ impl Claim {
             source_id: input.source_id,
             evidence_span: input.evidence_span,
             subject_key,
-            predicate_key: input.predicate_key,
-            predicate_candidate: input.predicate_candidate,
+            predicate_key,
+            predicate_candidate,
             predicate_status: input.predicate_status,
             value,
-            scope: input.scope,
+            scope,
             scope_hash,
             polarity: input.polarity,
             originator_actor_id,
@@ -265,15 +282,16 @@ pub struct Belief {
 impl Belief {
     pub fn new(input: NewBelief) -> Result<Self, EpistemicError> {
         validate_confidence(input.confidence)?;
+        let scope = normalize_scope(&input.scope)?;
         Ok(Self {
             id: BeliefId::new(uuid::Uuid::new_v4().to_string())
                 .map_err(|_| EpistemicError::Identifier)?,
             holder_key: non_blank(input.holder_key, "belief holder")?,
             subject_key: non_blank(input.subject_key, "belief subject")?,
-            predicate_key: non_blank(input.predicate_key, "belief predicate")?,
+            predicate_key: normalize_registry_key(&input.predicate_key, "belief predicate")?,
             current_value: non_blank(input.current_value, "belief value")?,
-            scope_hash: scope_hash(&input.scope),
-            scope: input.scope,
+            scope_hash: scope_hash(&scope),
+            scope,
             state: BeliefState::Active,
             confidence: input.confidence,
             trust_class: input.trust_class,
@@ -402,6 +420,9 @@ pub struct PredicateDefinition {
     pub aliases: Vec<String>,
     pub value_type: String,
     pub allowed_dimensions: Vec<String>,
+    pub description: String,
+    pub status: PredicateDefinitionStatus,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -477,6 +498,8 @@ pub enum EpistemicError {
     InvalidUnit(String),
     #[error("invalid identifier")]
     Identifier,
+    #[error("invalid scope: {0}")]
+    InvalidScope(String),
 }
 
 #[derive(Debug, Error)]
@@ -530,16 +553,110 @@ pub trait EpistemicRepository: Send + Sync {
     async fn list_unresolved_relations(
         &self,
     ) -> Result<Vec<GraphRelation>, EpistemicRepositoryError>;
+    async fn store_predicate_definition(
+        &self,
+        definition: PredicateDefinition,
+    ) -> Result<PredicateDefinition, EpistemicRepositoryError>;
+    async fn get_predicate_definition(
+        &self,
+        key: &str,
+    ) -> Result<Option<PredicateDefinition>, EpistemicRepositoryError>;
+    async fn list_predicate_definitions(
+        &self,
+    ) -> Result<Vec<PredicateDefinition>, EpistemicRepositoryError>;
+    async fn store_dimension_definition(
+        &self,
+        definition: DimensionDefinition,
+    ) -> Result<DimensionDefinition, EpistemicRepositoryError>;
+    async fn get_dimension_definition(
+        &self,
+        key: &str,
+    ) -> Result<Option<DimensionDefinition>, EpistemicRepositoryError>;
+    async fn list_dimension_definitions(
+        &self,
+    ) -> Result<Vec<DimensionDefinition>, EpistemicRepositoryError>;
 }
 
 pub fn scope_hash(scope: &Scope) -> String {
     use sha2::{Digest, Sha256};
-    let canonical = scope
+    let mut entries = scope
         .iter()
-        .map(|(key, value)| format!("{key}={value}\n"))
-        .collect::<String>();
+        .map(|(key, value)| {
+            format!(
+                "{}={}\n",
+                normalise_scope_key(key),
+                normalise_scope_value(&normalise_scope_key(key), value)
+            )
+        })
+        .collect::<Vec<_>>();
+    entries.sort();
+    let canonical = entries.concat();
     let digest = Sha256::digest(canonical.as_bytes());
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Return the canonical representation used by scoped Claims and Beliefs.
+///
+/// Keys are case-insensitive dimension names. Values are case-normalised only
+/// for dimensions whose vocabulary is not an entity identifier; project and
+/// device values retain their caller-provided casing after trimming.
+pub fn normalize_scope(scope: &Scope) -> Result<Scope, EpistemicError> {
+    let mut normalized = Scope::new();
+    for (key, value) in scope {
+        let normalized_key =
+            non_blank(key.clone(), "scope key").map(|value| normalise_scope_key(&value))?;
+        let normalized_value = non_blank(value.clone(), "scope value")
+            .map(|value| normalise_scope_value(&normalized_key, &value))?;
+        if normalized
+            .insert(normalized_key.clone(), normalized_value)
+            .is_some()
+        {
+            return Err(EpistemicError::InvalidScope(format!(
+                "duplicate key after normalization: {normalized_key}"
+            )));
+        }
+    }
+    Ok(normalized)
+}
+
+pub fn normalize_registry_key(value: &str, field: &str) -> Result<String, EpistemicError> {
+    let value = non_blank(value.to_owned(), field)?;
+    let mut normalized = String::with_capacity(value.len());
+    let mut separator = false;
+    for character in value.trim().chars() {
+        if character.is_ascii_alphanumeric() {
+            normalized.push(character.to_ascii_lowercase());
+            separator = false;
+        } else if !separator {
+            normalized.push('_');
+            separator = true;
+        }
+    }
+    let normalized = normalized.trim_matches('_').to_owned();
+    if normalized.is_empty() {
+        return Err(EpistemicError::Blank(field.to_owned()));
+    }
+    Ok(normalized)
+}
+
+fn normalise_scope_key(value: &str) -> String {
+    normalize_registry_key(value, "scope key").unwrap_or_else(|_| value.trim().to_ascii_lowercase())
+}
+
+fn normalise_scope_value(key: &str, value: &str) -> String {
+    let value = value.trim();
+    match key {
+        "os" => match value.to_ascii_lowercase().as_str() {
+            "mac" | "macos" | "osx" => "macos".to_owned(),
+            "win" | "windows" | "win32" => "windows".to_owned(),
+            "linux" => "linux".to_owned(),
+            _ => value.to_ascii_lowercase(),
+        },
+        "context" | "environment" | "location_context" | "activity" | "time_context" => {
+            value.to_ascii_lowercase()
+        }
+        _ => value.to_owned(),
+    }
 }
 
 fn non_blank(value: String, field: &str) -> Result<String, EpistemicError> {
@@ -575,6 +692,72 @@ mod tests {
         second.insert("os".to_owned(), "macos".to_owned());
         second.insert("context".to_owned(), "development".to_owned());
         assert_eq!(scope_hash(&first), scope_hash(&second));
+    }
+
+    #[test]
+    fn scope_normalization_canonicalizes_keys_and_known_aliases() {
+        let mut scope = Scope::new();
+        scope.insert(" OS ".to_owned(), "OSX".to_owned());
+        scope.insert("Context".to_owned(), "Development".to_owned());
+
+        let normalized = normalize_scope(&scope).expect("scope is valid");
+
+        assert_eq!(normalized.get("os"), Some(&"macos".to_owned()));
+        assert_eq!(normalized.get("context"), Some(&"development".to_owned()));
+
+        let mut equivalent = Scope::new();
+        equivalent.insert("os".to_owned(), "mac".to_owned());
+        equivalent.insert("context".to_owned(), "development".to_owned());
+        assert_eq!(scope_hash(&scope), scope_hash(&equivalent));
+    }
+
+    #[test]
+    fn scope_normalization_rejects_colliding_keys() {
+        let mut scope = Scope::new();
+        scope.insert("OS".to_owned(), "macos".to_owned());
+        scope.insert("os".to_owned(), "windows".to_owned());
+
+        assert!(matches!(
+            normalize_scope(&scope),
+            Err(EpistemicError::InvalidScope(message))
+                if message.contains("duplicate key")
+        ));
+    }
+
+    #[test]
+    fn claim_normalizes_predicate_and_scope_before_identity() {
+        let now = Utc::now();
+        let mut scope = Scope::new();
+        scope.insert("OS".to_owned(), "Mac".to_owned());
+        let claim = Claim::new(NewClaim {
+            episode_id: None,
+            source_id: None,
+            evidence_span: None,
+            subject_key: "matthew".to_owned(),
+            predicate_key: Some("Preferred Editor".to_owned()),
+            predicate_candidate: None,
+            predicate_status: PredicateStatus::Resolved,
+            value: "Zed".to_owned(),
+            scope,
+            polarity: true,
+            originator_actor_id: "matthew".to_owned(),
+            speaker_actor_id: "matthew".to_owned(),
+            transmitter_actor_id: None,
+            holder_actor_id: Some("matthew".to_owned()),
+            stance: Stance::Endorsing,
+            framing_path: Vec::new(),
+            confidence: 1.0,
+            known_at: now,
+            valid_from: None,
+            valid_to: None,
+            extractor: "test".to_owned(),
+            extractor_version: "1".to_owned(),
+            created_at: now,
+        })
+        .expect("claim is valid");
+
+        assert_eq!(claim.predicate_key.as_deref(), Some("preferred_editor"));
+        assert_eq!(claim.scope.get("os"), Some(&"macos".to_owned()));
     }
 
     #[test]

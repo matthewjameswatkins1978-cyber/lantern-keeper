@@ -21,8 +21,8 @@ pub use epistemic::{
     Actor, Belief, BeliefState, Claim, ContextPack, DimensionDefinition, EpistemicError,
     EpistemicRepository, EpistemicRepositoryError, Frame, FrameAction, GraphRelation, MemoryItem,
     MemoryItemKind, MemoryItemSearch, NewBelief, NewClaim, NewGraphRelation, NewMemoryItem,
-    PredicateDefinition, PredicateStatus, Proposal, RelationKind, Scope, Stance, Trace, TrustClass,
-    scope_hash,
+    PredicateDefinition, PredicateDefinitionStatus, PredicateStatus, Proposal, RelationKind, Scope,
+    Stance, Trace, TrustClass, normalize_registry_key, normalize_scope, scope_hash,
 };
 pub use ledger::{
     LedgerEvent, LedgerEventError, LedgerEventRepository, LedgerIngestResult,

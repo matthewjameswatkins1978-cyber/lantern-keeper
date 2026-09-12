@@ -2,13 +2,15 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use lighting_core::{
-    Belief, BeliefId, Claim, EpistemicError, EpistemicRepository, EpistemicRepositoryError,
-    MemoryItem, MemoryItemSearch, NewBelief, NewClaim, NewGraphRelation, NewMemoryItem,
-    PredicateStatus, Stance, Trace, TraceId, TrustClass,
+    Belief, BeliefId, Claim, DimensionDefinition, EpistemicError, EpistemicRepository,
+    EpistemicRepositoryError, MemoryItem, MemoryItemSearch, NewBelief, NewClaim, NewGraphRelation,
+    NewMemoryItem, PredicateDefinition, PredicateStatus, Stance, Trace, TraceId, TrustClass,
+    normalize_registry_key,
 };
 
 use crate::epistemic_dto::{
-    BeliefRequest, ClaimRequest, MemoryItemRequest, MemoryItemSearchRequest, RelationRequest,
+    BeliefRequest, ClaimRequest, DimensionDefinitionRequest, MemoryItemRequest,
+    MemoryItemSearchRequest, PredicateDefinitionRequest, RelationRequest,
 };
 use crate::source_dto::ApiError;
 
@@ -229,6 +231,188 @@ impl EpistemicService {
             .await
             .map_err(map_repository_error)
     }
+
+    pub async fn create_predicate_definition(
+        &self,
+        request: PredicateDefinitionRequest,
+    ) -> Result<PredicateDefinition, EpistemicOperationError> {
+        let key =
+            normalize_registry_key(&request.key, "predicate key").map_err(map_domain_error)?;
+        let value_type = required_text(request.value_type, "predicate value type")?;
+        let aliases = normalize_unique_keys(request.aliases, "predicate alias")?
+            .into_iter()
+            .filter(|alias| alias != &key)
+            .collect();
+        let allowed_dimensions =
+            normalize_unique_keys(request.allowed_dimensions, "predicate allowed dimension")?;
+        if let Some(existing) = self
+            .repo
+            .get_predicate_definition(&key)
+            .await
+            .map_err(map_repository_error)?
+        {
+            return Ok(existing);
+        }
+        let definition = PredicateDefinition {
+            key: key.clone(),
+            aliases,
+            value_type,
+            allowed_dimensions,
+            description: request.description.trim().to_owned(),
+            status: request.status,
+            created_at: Utc::now(),
+        };
+        let stored = self
+            .repo
+            .store_predicate_definition(definition)
+            .await
+            .map_err(map_repository_error)?;
+        self.append_registry_trace(
+            &request.actor_id,
+            "predicate_definition_created",
+            &stored.key,
+        )
+        .await?;
+        Ok(stored)
+    }
+
+    pub async fn get_predicate_definition(
+        &self,
+        key: &str,
+    ) -> Result<PredicateDefinition, EpistemicOperationError> {
+        let key = normalize_registry_key(key, "predicate key").map_err(map_domain_error)?;
+        self.repo
+            .get_predicate_definition(&key)
+            .await
+            .map_err(map_repository_error)?
+            .ok_or(EpistemicOperationError::NotFound)
+    }
+
+    pub async fn list_predicate_definitions(
+        &self,
+    ) -> Result<Vec<PredicateDefinition>, EpistemicOperationError> {
+        self.repo
+            .list_predicate_definitions()
+            .await
+            .map_err(map_repository_error)
+    }
+
+    pub async fn create_dimension_definition(
+        &self,
+        request: DimensionDefinitionRequest,
+    ) -> Result<DimensionDefinition, EpistemicOperationError> {
+        let key =
+            normalize_registry_key(&request.key, "dimension key").map_err(map_domain_error)?;
+        let allowed_values = normalize_unique_values(request.allowed_values);
+        if let Some(existing) = self
+            .repo
+            .get_dimension_definition(&key)
+            .await
+            .map_err(map_repository_error)?
+        {
+            return Ok(existing);
+        }
+        let definition = DimensionDefinition {
+            key: key.clone(),
+            allowed_values,
+        };
+        let stored = self
+            .repo
+            .store_dimension_definition(definition)
+            .await
+            .map_err(map_repository_error)?;
+        self.append_registry_trace(
+            &request.actor_id,
+            "dimension_definition_created",
+            &stored.key,
+        )
+        .await?;
+        Ok(stored)
+    }
+
+    pub async fn get_dimension_definition(
+        &self,
+        key: &str,
+    ) -> Result<DimensionDefinition, EpistemicOperationError> {
+        let key = normalize_registry_key(key, "dimension key").map_err(map_domain_error)?;
+        self.repo
+            .get_dimension_definition(&key)
+            .await
+            .map_err(map_repository_error)?
+            .ok_or(EpistemicOperationError::NotFound)
+    }
+
+    pub async fn list_dimension_definitions(
+        &self,
+    ) -> Result<Vec<DimensionDefinition>, EpistemicOperationError> {
+        self.repo
+            .list_dimension_definitions()
+            .await
+            .map_err(map_repository_error)
+    }
+
+    async fn append_registry_trace(
+        &self,
+        actor_id: &str,
+        event_type: &str,
+        key: &str,
+    ) -> Result<(), EpistemicOperationError> {
+        let actor_id = required_text(actor_id.to_owned(), "registry actor")?;
+        let trace = Trace {
+            id: TraceId::new(uuid::Uuid::new_v4().to_string()).map_err(|_| {
+                EpistemicOperationError::Invalid("trace ID could not be created".to_owned())
+            })?,
+            event_type: event_type.to_owned(),
+            actor_id,
+            subject_id: Some(key.to_owned()),
+            input_ids: Vec::new(),
+            output_ids: vec![key.to_owned()],
+            details: Default::default(),
+            created_at: Utc::now(),
+        };
+        self.repo
+            .append_trace(trace)
+            .await
+            .map_err(map_repository_error)?;
+        Ok(())
+    }
+}
+
+fn required_text(value: String, field: &str) -> Result<String, EpistemicOperationError> {
+    let value = value.trim().to_owned();
+    if value.is_empty() {
+        Err(EpistemicOperationError::Invalid(format!(
+            "{field} cannot be blank"
+        )))
+    } else {
+        Ok(value)
+    }
+}
+
+fn normalize_unique_keys(
+    values: Vec<String>,
+    field: &str,
+) -> Result<Vec<String>, EpistemicOperationError> {
+    let mut result = Vec::new();
+    for value in values {
+        let value = normalize_registry_key(&value, field)
+            .map_err(|error| EpistemicOperationError::Invalid(error.to_string()))?;
+        if !result.contains(&value) {
+            result.push(value);
+        }
+    }
+    Ok(result)
+}
+
+fn normalize_unique_values(values: Vec<String>) -> Vec<String> {
+    let mut result = Vec::new();
+    for value in values {
+        let value = value.trim().to_owned();
+        if !value.is_empty() && !result.contains(&value) {
+            result.push(value);
+        }
+    }
+    result
 }
 
 fn map_domain_error(error: EpistemicError) -> EpistemicOperationError {

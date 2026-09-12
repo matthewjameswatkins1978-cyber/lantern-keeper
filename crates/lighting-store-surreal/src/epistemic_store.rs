@@ -6,8 +6,9 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lighting_core::{
-    Belief, BeliefId, Claim, ClaimId, EpistemicRepository, EpistemicRepositoryError, GraphRelation,
-    MemoryItem, MemoryItemSearch, Proposal, Trace,
+    Belief, BeliefId, Claim, ClaimId, DimensionDefinition, EpistemicRepository,
+    EpistemicRepositoryError, GraphRelation, MemoryItem, MemoryItemSearch, PredicateDefinition,
+    Proposal, Trace,
 };
 use surrealdb::types::Object;
 use thiserror::Error;
@@ -38,7 +39,7 @@ impl SurrealEpistemicRepository {
 
     pub async fn migrate(&self) -> Result<(), SurrealEpistemicError> {
         self.store
-            .query(SCHEMA_MIGRATION_V7)
+            .query(SCHEMA_MIGRATION_V8)
             .await
             .map(|_| ())
             .map_err(SurrealEpistemicError::Query)
@@ -276,6 +277,131 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .collect::<Result<Vec<_>, _>>()
             .map_err(operation)
     }
+
+    async fn store_predicate_definition(
+        &self,
+        definition: PredicateDefinition,
+    ) -> Result<PredicateDefinition, EpistemicRepositoryError> {
+        if let Some(existing) = self
+            .find_by_key("predicate_definition", "key", &definition.key)
+            .await
+            .map_err(operation)?
+        {
+            return decode(existing).map_err(operation);
+        }
+        append_registry_definition(
+            &self.store,
+            "predicate_definition",
+            &definition.key,
+            &definition,
+            definition.created_at,
+        )
+        .await
+    }
+
+    async fn get_predicate_definition(
+        &self,
+        key: &str,
+    ) -> Result<Option<PredicateDefinition>, EpistemicRepositoryError> {
+        self.find_by_key("predicate_definition", "key", key)
+            .await
+            .map_err(operation)?
+            .map(decode)
+            .transpose()
+            .map_err(operation)
+    }
+
+    async fn list_predicate_definitions(
+        &self,
+    ) -> Result<Vec<PredicateDefinition>, EpistemicRepositoryError> {
+        list_registry_definitions(&self.store, "predicate_definition").await
+    }
+
+    async fn store_dimension_definition(
+        &self,
+        definition: DimensionDefinition,
+    ) -> Result<DimensionDefinition, EpistemicRepositoryError> {
+        if let Some(existing) = self
+            .find_by_key("dimension_definition", "key", &definition.key)
+            .await
+            .map_err(operation)?
+        {
+            return decode(existing).map_err(operation);
+        }
+        append_registry_definition(
+            &self.store,
+            "dimension_definition",
+            &definition.key,
+            &definition,
+            Utc::now(),
+        )
+        .await
+    }
+
+    async fn get_dimension_definition(
+        &self,
+        key: &str,
+    ) -> Result<Option<DimensionDefinition>, EpistemicRepositoryError> {
+        self.find_by_key("dimension_definition", "key", key)
+            .await
+            .map_err(operation)?
+            .map(decode)
+            .transpose()
+            .map_err(operation)
+    }
+
+    async fn list_dimension_definitions(
+        &self,
+    ) -> Result<Vec<DimensionDefinition>, EpistemicRepositoryError> {
+        list_registry_definitions(&self.store, "dimension_definition").await
+    }
+}
+
+async fn append_registry_definition<T>(
+    store: &SurrealStore,
+    table: &str,
+    key: &str,
+    value: &T,
+    created_at: DateTime<Utc>,
+) -> Result<T, EpistemicRepositoryError>
+where
+    T: serde::Serialize + Clone,
+{
+    let payload = serde_json::to_string(value)
+        .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
+    let query = format!(
+        "CREATE {table} CONTENT {{ id: $id, key: $key, payload: $payload, created_at: $created_at }}"
+    );
+    store
+        .query(query)
+        .bind(("id", key.to_owned()))
+        .bind(("key", key.to_owned()))
+        .bind(("payload", payload))
+        .bind(("created_at", created_at))
+        .await
+        .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+    Ok(value.clone())
+}
+
+async fn list_registry_definitions<T>(
+    store: &SurrealStore,
+    table: &str,
+) -> Result<Vec<T>, EpistemicRepositoryError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let query = format!("SELECT * FROM {table} ORDER BY key ASC");
+    let records: Vec<Object> = store
+        .query(query)
+        .await
+        .map_err(|error| operation(SurrealEpistemicError::Query(error)))?
+        .take(0)
+        .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+    records
+        .into_iter()
+        .map(decode)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(operation)
 }
 
 async fn append_payload<T>(
@@ -348,7 +474,7 @@ fn operation(error: impl std::error::Error + Send + Sync + 'static) -> Epistemic
     EpistemicRepositoryError::Operation(Box::new(error))
 }
 
-const SCHEMA_MIGRATION_V7: &str = r#"
+const SCHEMA_MIGRATION_V8: &str = r#"
 DEFINE TABLE IF NOT EXISTS epistemic_claim SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS payload ON epistemic_claim TYPE string;
 DEFINE FIELD IF NOT EXISTS dedupe_key ON epistemic_claim TYPE string;
@@ -389,10 +515,22 @@ DEFINE FIELD IF NOT EXISTS created_at ON memory_relation TYPE datetime;
 DEFINE INDEX IF NOT EXISTS memory_relation_dedupe ON memory_relation FIELDS dedupe_key UNIQUE;
 DEFINE INDEX IF NOT EXISTS memory_relation_resolved ON memory_relation FIELDS resolved;
 
+DEFINE TABLE IF NOT EXISTS predicate_definition SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS key ON predicate_definition TYPE string;
+DEFINE FIELD IF NOT EXISTS payload ON predicate_definition TYPE string;
+DEFINE FIELD IF NOT EXISTS created_at ON predicate_definition TYPE datetime;
+DEFINE INDEX IF NOT EXISTS predicate_definition_key ON predicate_definition FIELDS key UNIQUE;
+
+DEFINE TABLE IF NOT EXISTS dimension_definition SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS key ON dimension_definition TYPE string;
+DEFINE FIELD IF NOT EXISTS payload ON dimension_definition TYPE string;
+DEFINE FIELD IF NOT EXISTS created_at ON dimension_definition TYPE datetime;
+DEFINE INDEX IF NOT EXISTS dimension_definition_key ON dimension_definition FIELDS key UNIQUE;
+
 UPSERT __lighting_schema:bootstrap CONTENT {
     project: "Lantern Keeper",
     service: "Lighting",
-    schema_version: 7,
+    schema_version: 8,
     updated_at: time::now()
 };
 "#;

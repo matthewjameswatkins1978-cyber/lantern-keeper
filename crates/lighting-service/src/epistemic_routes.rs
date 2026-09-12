@@ -155,3 +155,97 @@ pub async fn list_unresolved_relations(
         Err(error) => error_response(error),
     }
 }
+
+pub async fn create_predicate_definition(
+    State(state): State<AppState>,
+    Json(request): Json<crate::epistemic_dto::PredicateDefinitionRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.create_predicate_definition(request).await {
+        Ok(predicate) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({"predicate": predicate})),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn list_predicate_definitions(
+    State(state): State<AppState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.list_predicate_definitions().await {
+        Ok(predicates) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"predicates": predicates})),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn get_predicate_definition(
+    Path(key): Path<String>,
+    State(state): State<AppState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.get_predicate_definition(&key).await {
+        Ok(predicate) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"predicate": predicate})),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn create_dimension_definition(
+    State(state): State<AppState>,
+    Json(request): Json<crate::epistemic_dto::DimensionDefinitionRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.create_dimension_definition(request).await {
+        Ok(dimension) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({"dimension": dimension})),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn list_dimension_definitions(
+    State(state): State<AppState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.list_dimension_definitions().await {
+        Ok(dimensions) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"dimensions": dimensions})),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn get_dimension_definition(
+    Path(key): Path<String>,
+    State(state): State<AppState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.get_dimension_definition(&key).await {
+        Ok(dimension) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"dimension": dimension})),
+        ),
+        Err(error) => error_response(error),
+    }
+}

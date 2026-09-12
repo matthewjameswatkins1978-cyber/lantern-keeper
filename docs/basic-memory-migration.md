@@ -8,8 +8,8 @@ The current importer preserves each raw Markdown note as a Lantern Source and
 records replay-safe source-ledger metadata. The importer also deterministically
 extracts observation and wiki-relation candidates without treating them as
 canonical truth. The canonical Claim/Memory Item import path is exposed by the
-new local APIs and is the next migration exercise; it must retain unknown
-categories and unresolved targets rather than guessing.
+new local APIs; it must retain unknown categories and unresolved targets rather
+than guessing.
 
 ## Import accounting checkpoint — 2026-09-12
 

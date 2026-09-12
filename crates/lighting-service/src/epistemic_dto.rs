@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 use lighting_core::{
-    Belief, Claim, Frame, GraphRelation, MemoryItem, MemoryItemKind, PredicateStatus, Stance,
-    TrustClass,
+    Belief, Claim, DimensionDefinition, Frame, GraphRelation, MemoryItem, MemoryItemKind,
+    PredicateDefinition, PredicateDefinitionStatus, PredicateStatus, Stance, TrustClass,
 };
 use serde::{Deserialize, Serialize};
 
@@ -115,6 +115,31 @@ pub struct RelationRequest {
     pub resolved: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct PredicateDefinitionRequest {
+    pub key: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    pub value_type: String,
+    #[serde(default)]
+    pub allowed_dimensions: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_predicate_definition_status")]
+    pub status: PredicateDefinitionStatus,
+    #[serde(default = "default_actor")]
+    pub actor_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DimensionDefinitionRequest {
+    pub key: String,
+    #[serde(default)]
+    pub allowed_values: Vec<String>,
+    #[serde(default = "default_actor")]
+    pub actor_id: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ClaimResponse {
     pub claim: Claim,
@@ -150,6 +175,26 @@ pub struct RelationListResponse {
     pub relations: Vec<GraphRelation>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct PredicateDefinitionResponse {
+    pub predicate: PredicateDefinition,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PredicateDefinitionListResponse {
+    pub predicates: Vec<PredicateDefinition>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DimensionDefinitionResponse {
+    pub dimension: DimensionDefinition,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DimensionDefinitionListResponse {
+    pub dimensions: Vec<DimensionDefinition>,
+}
+
 fn default_true() -> bool {
     true
 }
@@ -176,4 +221,10 @@ fn default_origin() -> String {
 }
 fn default_relation_confidence() -> f32 {
     1.0
+}
+fn default_predicate_definition_status() -> PredicateDefinitionStatus {
+    PredicateDefinitionStatus::Active
+}
+fn default_actor() -> String {
+    "lucy".to_owned()
 }

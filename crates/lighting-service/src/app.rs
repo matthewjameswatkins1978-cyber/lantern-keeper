@@ -126,6 +126,24 @@ pub fn build_router(state: AppState) -> Router {
                     "/api/v1/relations",
                     axum::routing::post(epistemic_routes::store_relation)
                         .get(epistemic_routes::list_unresolved_relations),
+                )
+                .route(
+                    "/api/v1/predicates",
+                    axum::routing::post(epistemic_routes::create_predicate_definition)
+                        .get(epistemic_routes::list_predicate_definitions),
+                )
+                .route(
+                    "/api/v1/predicates/{key}",
+                    axum::routing::get(epistemic_routes::get_predicate_definition),
+                )
+                .route(
+                    "/api/v1/dimensions",
+                    axum::routing::post(epistemic_routes::create_dimension_definition)
+                        .get(epistemic_routes::list_dimension_definitions),
+                )
+                .route(
+                    "/api/v1/dimensions/{key}",
+                    axum::routing::get(epistemic_routes::get_dimension_definition),
                 ),
         )
         .merge(
