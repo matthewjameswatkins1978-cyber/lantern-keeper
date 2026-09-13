@@ -3,9 +3,9 @@
 ## Repository
 
 - Active line: `feature/lantern-full-move`
-- Current feature checkpoint: `30d61f7`
+- Current feature checkpoint: `b2b7aa7`
 - Canonical `master`: `a44554b7050e9b3dd2178eede99b67184d89d12c`
-- Feature checkout is clean at the pushed MCP and correction-targeting checkpoint.
+- Feature checkout is clean at the pushed MCP and correction-search checkpoint.
 - `master` remains unchanged by the feature work.
 
 ## Phase
