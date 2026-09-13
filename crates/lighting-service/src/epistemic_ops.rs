@@ -41,6 +41,7 @@ pub struct ReconciliationResult {
 pub struct CorrectionResult {
     pub source_id: String,
     pub episode_id: String,
+    pub context_pack_id: Option<String>,
     pub claim: Claim,
     pub reconciliation: ReconciliationResult,
 }
@@ -167,6 +168,28 @@ impl EpistemicService {
                 "correction target must be an active belief".to_owned(),
             ));
         }
+        let context_pack_id = request
+            .context_pack_id
+            .as_deref()
+            .map(|value| {
+                ContextPackId::new(value.trim().to_owned()).map_err(|_| {
+                    EpistemicOperationError::Invalid("context pack ID cannot be blank".to_owned())
+                })
+            })
+            .transpose()?;
+        if let Some(pack_id) = context_pack_id.as_ref() {
+            let pack = self
+                .repo
+                .get_context_pack(pack_id)
+                .await
+                .map_err(map_repository_error)?
+                .ok_or(EpistemicOperationError::NotFound)?;
+            if !pack.selected_ids.iter().any(|id| id == target.id.as_str()) {
+                return Err(EpistemicOperationError::Invalid(
+                    "context pack does not contain the correction target".to_owned(),
+                ));
+            }
+        }
         let correction_text = required_text(request.correction_text, "correction text")?;
         let replacement_value = required_text(request.replacement_value, "replacement value")?;
         let (source_id, episode_id) = self.record_correction_evidence(&correction_text).await?;
@@ -217,6 +240,7 @@ impl EpistemicService {
         Ok(CorrectionResult {
             source_id,
             episode_id,
+            context_pack_id: context_pack_id.map(|id| id.to_string()),
             claim,
             reconciliation,
         })

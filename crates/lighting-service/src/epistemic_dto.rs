@@ -69,6 +69,8 @@ pub struct CorrectionRequest {
     pub correction_text: String,
     pub replacement_value: String,
     #[serde(default)]
+    pub context_pack_id: Option<String>,
+    #[serde(default)]
     pub scope: BTreeMap<String, String>,
 }
 

@@ -222,6 +222,7 @@ async fn correction_records_evidence_and_reconciles_one_target()
             target_belief_id: old.id.to_string(),
             correction_text: "No, I use Zed on Mac.".to_owned(),
             replacement_value: "Zed".to_owned(),
+            context_pack_id: None,
             scope: BTreeMap::new(),
         })
         .await?;
