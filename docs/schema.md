@@ -11,11 +11,13 @@ The durable model is one graph with several record types:
 | Organisation | Project, typed relations | Useful scope and graph structure |
 
 The core types live in `lighting-core` and have no storage dependency. The
-SurrealDB adapter lives in `lighting-store-surreal`; its migration is schema
-version 7. Records carry stable IDs, timestamps, and deterministic keys where
+SurrealDB adapter lives in `lighting-store-surreal`; its current epistemic
+migration is schema version 9. Records carry stable IDs, timestamps, and deterministic keys where
 replay matters. Sources, Episodes, and Claims have no ordinary update/delete
 repository operations.
 
 Belief identity is `holder + subject + predicate + canonical scope`, not merely
 subject plus predicate. `scope_hash` is calculated from sorted key/value pairs.
 Stale is independent of belief state and increases dependency generation.
+Belief projections retain Claim IDs and prior Belief IDs in their lineage;
+value/state changes are also written to immutable `belief_revision` records.

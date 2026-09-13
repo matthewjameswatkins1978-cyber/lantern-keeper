@@ -20,7 +20,7 @@ use tracing_subscriber::EnvFilter;
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 4317;
 const EXPECTED_SURREALDB_VERSION: &str = "3.3.0-beta.4";
-const EXPECTED_SCHEMA_VERSION: i64 = 8;
+const EXPECTED_SCHEMA_VERSION: i64 = 9;
 
 fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();

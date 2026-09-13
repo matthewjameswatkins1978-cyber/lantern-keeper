@@ -3,16 +3,16 @@
 ## Repository
 
 - Active line: `feature/lantern-full-move`
-- Current feature checkpoint: `c2cdfd92863ce043c3751bcfb85a8d8785558e2f`
+- Current feature checkpoint: `df956d26a333d042ff325f5c909d6767a4a8a3ed`
 - Canonical `master`: `a44554b7050e9b3dd2178eede99b67184d89d12c`
-- Feature checkout was clean before this spring-clean change.
+- Feature checkout is clean at the pushed durable-reconciliation checkpoint.
 - `master` remains unchanged by the feature work.
 
 ## Phase
 
 Foundation modernisation and Basic Memory import accounting are complete.
-Spring cleaning is in progress. The next implementation phase is durable
-belief reconciliation and the correction-aware Context Compiler.
+Spring cleaning is complete. Durable Claim-to-Belief reconciliation and
+immutable Belief revision history are now the active implementation phase.
 
 ## Works today
 
@@ -21,6 +21,9 @@ belief reconciliation and the correction-aware Context Compiler.
 - Sources, Episodes, Projects, Claims, Beliefs, soft Memory Items, relations,
   registries, traces, proposals, export, import accounting, lexical recall,
   context, and the optional Tethers preview are present in the tree.
+- Direct Claims can be durably reconciled into current Beliefs. Supersession
+  preserves the old projection, records immutable revisions, and retains
+  Claim-to-Belief lineage in one transactional store operation.
 - Predicate and dimension normalization, explicit unmapped Claims, pure
   reconciliation decisions, echo suppression, direct-holder gates, and
   transitive stale propagation are implemented.
@@ -29,7 +32,6 @@ belief reconciliation and the correction-aware Context Compiler.
 
 ## Still missing or partial
 
-- Durable Claim-to-Belief transitions and full Belief history.
 - Correction workflow, persisted Context Pack traces, and stale-aware reads.
 - Fused retrieval, bounded graph projection, expanded LanternBench,
   Foreman/Dreamer operations, restore proof, and a real Lucy-native MCP path.
@@ -43,12 +45,13 @@ particular editor. Plain `pwsh -NoProfile` validation is the acceptance target.
 
 ## Recovery and private state
 
-The unfinished reconciliation draft is preserved in the stash named
+The original unfinished reconciliation draft remains preserved in the stash named
 `preserve unfinished reconciliation draft before spring clean 2026-09-13` and
 at `recovery/pre-spring-clean-c2cdfd9`. Private migration material remains in
 `.private-migration/` and must not be committed or deleted.
 
 ## Next verified step
 
-Finish the spring-clean inventory, validate a clean plain-shell rebuild, push
-the cleanup to `feature/lantern-full-move`, and leave `master` untouched.
+Implement correction and stale-aware reads, then checkpoint them on
+`feature/lantern-full-move`; leave `master` untouched until all cutover gates
+are green.

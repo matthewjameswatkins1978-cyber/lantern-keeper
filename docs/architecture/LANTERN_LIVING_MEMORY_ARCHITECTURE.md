@@ -11,19 +11,21 @@ Matthew remains the ultimate authority about Matthew.
 ## Current vertical slice
 
 The repository now contains the typed epistemic vocabulary and durable
-SurrealDB-backed stores for Claims, Beliefs, soft Memory Items, Traces, and
-Proposals. The HTTP surface exposes capture, belief projection/listing and
-explicit stale invalidation, plus soft-memory capture/search. The existing
+SurrealDB-backed stores for Claims, Beliefs, immutable Belief revisions, soft
+Memory Items, Traces, and Proposals. The HTTP surface exposes capture,
+durable Claim-to-Belief reconciliation, belief projection/listing and explicit
+stale invalidation, plus soft-memory capture/search. The existing
 Source, Episode, project, ledger, retrieval, export, and Tethers-preview
 surfaces remain intact.
 
 Claims are append-only. Beliefs are read projections and may be invalidated
-without changing their truth state. Staleness is therefore separate from
-`active`, `disputed`, `superseded`, and `archived` state. Imported Basic Memory
-material remains evidence until a later reconciliation step assigns an
-appropriate trust class.
+without changing their truth state. Reconciliation preserves superseded
+projections and records the transition, supporting Claim IDs, and prior
+projection lineage. Staleness is therefore separate from `active`, `disputed`,
+`superseded`, and `archived` state. Imported Basic Memory material remains
+evidence until a later reconciliation step assigns an appropriate trust class.
 
-The experimental SurrealDB adapter stores an engine-independent JSON payload
+The SurrealDB adapter stores an engine-independent JSON payload
 with indexed operational fields. This keeps the domain model independent of
 SurrealDB while allowing deterministic deduplication and safe recovery export.
 
