@@ -135,6 +135,9 @@ fn call_tool(
                 &[
                     "kind",
                     "content",
+                    "subject_key",
+                    "predicate_key",
+                    "scope",
                     "source_id",
                     "episode_id",
                     "originator_actor_id",
@@ -143,14 +146,71 @@ fn call_tool(
                     "salience",
                 ],
             )?;
-            required_string(arguments, "kind")?;
-            required_string(arguments, "content")?;
-            post_json(
-                client,
-                service_url,
-                "/api/v1/memory-items",
-                Value::Object(arguments.clone()),
-            )
+            let kind = required_string(arguments, "kind")?;
+            let content = required_string(arguments, "content")?;
+            if kind == "claim" {
+                let predicate_key = required_string(arguments, "predicate_key")?;
+                let subject_key = arguments
+                    .get("subject_key")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or("matthew");
+                let holder = arguments
+                    .get("holder_actor_id")
+                    .cloned()
+                    .unwrap_or_else(|| json!("matthew"));
+                let originator = arguments
+                    .get("originator_actor_id")
+                    .cloned()
+                    .unwrap_or_else(|| holder.clone());
+                let claim = json!({
+                    "subject_key": subject_key,
+                    "value": content,
+                    "source_id": arguments.get("source_id").cloned().unwrap_or(Value::Null),
+                    "episode_id": arguments.get("episode_id").cloned().unwrap_or(Value::Null),
+                    "evidence_span": Value::Null,
+                    "predicate_key": predicate_key,
+                    "predicate_candidate": Value::Null,
+                    "predicate_status": Value::Null,
+                    "scope": arguments.get("scope").cloned().unwrap_or_else(|| json!({})),
+                    "polarity": true,
+                    "originator_actor_id": originator.clone(),
+                    "speaker_actor_id": originator,
+                    "transmitter_actor_id": arguments.get("transmitter_actor_id").cloned().unwrap_or(Value::Null),
+                    "holder_actor_id": holder,
+                    "stance": "endorsing",
+                    "framing_path": [],
+                    "confidence": arguments.get("salience").and_then(Value::as_f64).unwrap_or(0.8),
+                    "known_at": Value::Null,
+                    "valid_from": Value::Null,
+                    "valid_to": Value::Null,
+                    "extractor": "lucy_mcp",
+                    "extractor_version": "1"
+                });
+                let captured = post_json(client, service_url, "/api/v1/claims", claim)?;
+                let claim_id = captured
+                    .get("claim")
+                    .and_then(|claim| claim.get("id"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "claim capture returned no claim ID".to_owned())?;
+                let reconciliation = post_json(
+                    client,
+                    service_url,
+                    &format!("/api/v1/claims/{claim_id}/reconcile"),
+                    json!({"independent_evidence": false}),
+                )?;
+                Ok(json!({
+                    "claim": captured.get("claim").cloned().unwrap_or(Value::Null),
+                    "reconciliation": reconciliation
+                }))
+            } else {
+                post_json(
+                    client,
+                    service_url,
+                    "/api/v1/memory-items",
+                    Value::Object(arguments.clone()),
+                )
+            }
         }
         "lantern_search" => {
             reject_unknown(arguments, &["phrase", "include_archived", "limit"])?;
@@ -474,6 +534,9 @@ fn tool_definitions() -> Vec<Value> {
             json!({
                 "type": "object", "properties": {
                     "kind": {"type": "string"}, "content": {"type": "string"},
+                    "subject_key": {"type": ["string", "null"]},
+                    "predicate_key": {"type": ["string", "null"]},
+                    "scope": {"type": "object", "additionalProperties": {"type": "string"}},
                     "source_id": {"type": ["string", "null"]}, "episode_id": {"type": ["string", "null"]},
                     "originator_actor_id": {"type": ["string", "null"]}, "transmitter_actor_id": {"type": ["string", "null"]},
                     "holder_actor_id": {"type": ["string", "null"]}, "salience": {"type": "number", "minimum": 0, "maximum": 1}

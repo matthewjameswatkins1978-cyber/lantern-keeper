@@ -11,6 +11,11 @@ the Lucy client. The bridge exposes only `lantern_context`, `lantern_remember`,
 `lantern_foreman_queue`, and `lantern_foreman_review`. It rejects unknown tool
 arguments and never exposes raw database mutation.
 
+`lantern_remember` defaults to a soft Memory Item. Lucy may explicitly send
+`kind: "claim"` with a registered `predicate_key` and optional subject/scope;
+the bridge then captures and reconciles the Claim in one response. Unknown
+predicates remain unmapped and are not silently promoted.
+
 `lantern_why` accepts exactly one of `belief_id`, `memory_id`, or `query`. A
 belief ID returns its recorded Claim and revision lineage. A memory ID returns
 the memory item and its recorded source/episode/actor provenance. A natural
