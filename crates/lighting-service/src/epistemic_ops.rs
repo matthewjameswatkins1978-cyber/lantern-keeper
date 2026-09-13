@@ -627,6 +627,7 @@ impl EpistemicService {
             .await
             .map_err(map_repository_error)?
             .into_iter()
+            .filter(|belief| include_stale || belief.state == BeliefState::Active)
             .map(|belief| (belief_relevance(&belief, &tokens, &BTreeMap::new()), belief))
             .filter(|(score, _)| *score > 0)
             .collect::<Vec<_>>();

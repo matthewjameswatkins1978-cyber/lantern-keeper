@@ -251,6 +251,19 @@ async fn correction_records_evidence_and_reconciles_one_target()
         })
         .await?;
 
+    let ambiguous = service
+        .record_correction(CorrectionRequest {
+            target_belief_id: None,
+            target_query: Some("editor".to_owned()),
+            correction_text: "This deliberately ambiguous correction must not apply.".to_owned(),
+            replacement_value: "ignored".to_owned(),
+            context_pack_id: None,
+            scope: BTreeMap::new(),
+        })
+        .await
+        .expect_err("ambiguous target queries must not mutate memory");
+    assert!(ambiguous.to_string().contains("ambiguous"));
+
     let correction = service
         .record_correction(CorrectionRequest {
             target_belief_id: None,
@@ -294,6 +307,15 @@ async fn correction_records_evidence_and_reconciles_one_target()
         lighting_core::BeliefState::Superseded
     );
     assert!(
+        service.search_beliefs("VS Code", false).await?.is_empty(),
+        "ordinary belief search must not return superseded history"
+    );
+    assert_eq!(
+        service.search_beliefs("VS Code", true).await?.len(),
+        1,
+        "explicit historical search should retain the superseded belief"
+    );
+    assert!(
         repository
             .get_belief(&dependent.id)
             .await?
@@ -301,19 +323,6 @@ async fn correction_records_evidence_and_reconciles_one_target()
             .stale,
         "correction must invalidate dependent projections"
     );
-
-    let ambiguous = service
-        .record_correction(CorrectionRequest {
-            target_belief_id: None,
-            target_query: Some("editor".to_owned()),
-            correction_text: "This deliberately ambiguous correction must not apply.".to_owned(),
-            replacement_value: "ignored".to_owned(),
-            context_pack_id: None,
-            scope: BTreeMap::new(),
-        })
-        .await
-        .expect_err("ambiguous target queries must not mutate memory");
-    assert!(ambiguous.to_string().contains("ambiguous"));
 
     let _ = std::fs::remove_dir_all(path);
     Ok(())
