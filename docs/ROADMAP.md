@@ -1,99 +1,64 @@
 # Lantern Keeper Roadmap
 
-A local-first shared memory layer for future ChatGPT and Codex workflows.
+Lantern Keeper is a local-first epistemic memory. The canonical architecture
+and safety boundaries are described in the current guides linked from the
+[README](../README.md).
 
-Canonical joint architecture:
-[`architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md`](architecture/TETHERS_LANTERN_KEEPER_CANONICAL_ARCHITECTURE.md)
+## Done on the canonical master baseline
 
-That report is the accepted target architecture and build order for Lantern
-Keeper plus Tethers. This roadmap records Lantern Keeper's project-local
-Done / Next / Later view.
+- Rust workspace and layered `lighting-core`, store, service, CLI, and app
+  boundaries.
+- Exact Source storage, duplicate detection, UTF-8-safe Episode ranges, and
+  Project/Marker links.
+- Deterministic Source-backed retrieval with exact excerpts and a Codex
+  handoff context package.
+- Idempotent result writeback into the same Project memory.
+- Localhost-only service behaviour, validation, integration tests, and the
+  complete first-proof demonstration.
+- Preview-only Tethers endpoint with no Lantern memory mutation.
 
-## Done
+## Verified on the current feature line
 
-The original hackathon MVP sequence is complete as the working
-source-backed memory loop:
+The `feature/lantern-full-move` line at `345c468` adds the current epistemic
+slice without changing the authority boundary:
 
-1. Repository and runnable Lighting skeleton.
-2. Source domain and validation.
-3. SurrealDB source storage, duplicates and restart persistence.
-4. Source HTTP API and CLI.
-5. Projects, Episodes and Markers.
-6. Markdown-heading Episode creation and manual Marker association.
-7. Deterministic retrieval, explanation and source-range return.
-8. CLI retrieval and a small evaluation dataset.
-9. Basic Markdown/JSON ContextPackage for a coding handoff.
-10. End-to-end demonstration, failure checks, baseline, and phase report.
+- Source / Episode / Claim / Belief separation and soft Memory Items;
+- perspective, provenance, predicate, and scope handling;
+- durable reconciliation, corrections, immutable revisions, lineage, and stale
+  invalidation;
+- bounded deterministic Context Packs and retrieval traces;
+- candidate-only Proposal/Trace governance and bounded Foreman review;
+- logical export/restore, Basic Memory accounting, LanternBench, and local MCP.
 
-This proof preserves authoritative Sources, creates bounded Episodes, links
-them to Projects and Markers, retrieves deterministic Codex handoff context,
-and records completed results back into the Project.
+That line is not yet accepted into `master`. The connected Lucy proof,
+provenance-complete live capture, shadow comparison, final delta, and cutover
+remain gates. See [`CURRENT.md`](../CURRENT.md).
 
-## Immediate recovery and restart gates
+## Next
 
-Before Memory implementation, complete and record:
-
-1. Windows local checkout archaeology and preservation of all local-only work.
-2. Rust 1.98.1 formatting, compilation, Clippy and test validation.
-3. Separate SurrealDB 3.3.0-beta.4 compatibility experiment, with fallback
-   to the locked 3.2.1 client if required.
-4. README/CURRENT/ROADMAP reconciliation and a clean `master` baseline.
-
-The repository must not begin the canonical Memory model until these gates are
-understood. The detailed takeover packet defines the later LK-N1 through LK-N18
-sequence, including recovery, reconciliation, retrieval, MCP, Basic Memory
-replication, shadow use and reversible cutover.
-
-## Next implementation
-
-Build Lantern Keeper's minimum memory foundation for the later joint runtime
-slice. The first implementation should stay inside Lantern Keeper's memory
-responsibility and expose capabilities to Tethers later, rather than embedding
-Tethers runtime logic.
-
-1. Inspect the actual repository, migrations and service boundaries against the
-   five durable concepts: Project, Source, Episode, Memory and Link.
-2. Add or adapt the smallest durable `Memory` model needed for:
-   - kinds: `fact`, `decision`, `constraint`, `preference`, `idea`, `task`,
-     `finding`, `experience`;
-   - states: `active`, `superseded`, `archived`;
-   - confidence, importance, provenance, reinforcement and supersession data.
-3. Define proposal handling responsibilities for new, reinforcing,
-   correcting, superseding, conflicting and insufficient candidates.
-4. Define the first public service/capability surface:
-   `lantern.context.retrieve`, `lantern.episode.record`,
-   `lantern.memory.propose`, `lantern.memory.get`, and
-   `lantern.memory.search`.
-5. Keep retrieval bounded and explainable: project/state filters, exact IDs and
-   terms, full-text search, recent Project items, direct graph links,
-   deterministic ranking, stable tie-breaking, and fixed context-pack sections.
-6. Treat AI as optional bounded judgement or compression over structured inputs
-   and candidate sets. AI never owns storage rules, permissions, provenance or
-   state transitions.
-
-## Principles
-
-- Local-first.
-- Source material is authoritative and must never be logged casually.
-- Lantern Keeper is the memory system, not the workflow engine.
-- Tethers coordinates Lantern Keeper through public capabilities exposed by
-  Lantern Keeper.
-- The durable concepts are Project, Source, Episode, Memory and Link.
-- Minimalist, Living Memory and Archivist are configuration profiles over one
-  pipeline, not separate implementations.
-- Retrieval is concrete machinery, not "AI finds the right memories."
-- `lighting-core` must not depend on SurrealDB or HTTP frameworks.
-- Build one narrow end-to-end capability, test it, freeze it, then improve the weakest real behaviour.
+1. Complete the MCP contract and real Lucy-native client proof.
+2. Prove exact Source/Episode provenance for ordinary factual live capture and
+   its correction path.
+3. Run Basic Memory shadow comparison, final-delta accounting, and exception
+   review.
+4. Qualify restore/restart retrieval and accept the feature line before
+   describing it as shipped on `master`.
 
 ## Later
 
-- Automatic conversation ingestion
-- Automatic episode detection
-- Embeddings and vector search
-- ChatGPT/Codex/MCP connectors beyond the first deliberately integrated route
-- Cloud services and synchronisation
-- Graphical user interface
-- Task automation, decisions, and report ingestion
-- Multi-user collaboration
-- Broad graph expansion or ontology generation
-- Separate implementations for retention profiles
+- exact typed/fused retrieval and richer graph-backed project associations;
+- bounded graph expansion and optional semantic candidates;
+- Dreamer operations after candidate, review, and replay behaviour are
+  independently qualified;
+- hosted/cloud sync, GUI workflows, universal importers, recommendations,
+  automatic conversation observation, and multi-user collaboration.
+
+## Principles
+
+- Evidence is append-oriented and inspectable.
+- Corrections preserve history rather than rewriting it.
+- No inferred consensus, self-citation laundering, or silent attribution.
+- Soft memory remains soft until explicit governed promotion.
+- AI proposes; bounded Foreman governance decides; Matthew remains the final
+  human authority.
+- Retrieval is bounded, deterministic, explainable, and local-first.
