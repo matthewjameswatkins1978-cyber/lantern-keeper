@@ -148,6 +148,23 @@ fn main() -> anyhow::Result<()> {
                 },
             )
         }
+        Command::ContextPack {
+            query,
+            actor,
+            item_budget,
+            json,
+        } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(
+                &url,
+                CliCommand::ContextPack {
+                    query,
+                    actor,
+                    item_budget,
+                    json,
+                },
+            )
+        }
         Command::MemorySupersede { memory_id, json } => {
             let url = cli.service_url.unwrap_or_else(default_service_url);
             run_cli_command(&url, CliCommand::MemorySupersede { memory_id, json })
@@ -344,6 +361,16 @@ enum Command {
         project_id: Option<String>,
         #[arg(long)]
         query: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compile a typed deterministic Context Pack.
+    ContextPack {
+        query: String,
+        #[arg(long)]
+        actor: Option<String>,
+        #[arg(long, default_value_t = 10)]
+        item_budget: usize,
         #[arg(long)]
         json: bool,
     },

@@ -90,6 +90,12 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             query,
             json,
         } => cmd_context(&client, project_id.as_deref(), query.as_deref(), json),
+        CliCommand::ContextPack {
+            query,
+            actor,
+            item_budget,
+            json,
+        } => cmd_context_pack(&client, &query, actor.as_deref(), item_budget, json),
         CliCommand::MemorySupersede { memory_id, json } => {
             cmd_memory_supersede(&client, &memory_id, json)
         }
@@ -254,6 +260,16 @@ pub enum CliCommand {
         project_id: Option<String>,
         #[arg(long)]
         query: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compile a typed deterministic Context Pack from epistemic memory.
+    ContextPack {
+        query: String,
+        #[arg(long)]
+        actor: Option<String>,
+        #[arg(long, default_value_t = 10)]
+        item_budget: usize,
         #[arg(long)]
         json: bool,
     },
@@ -2202,6 +2218,35 @@ fn cmd_context(
     if json {
         println!("{}", serde_json::to_string_pretty(&body).unwrap());
     } else if let Some(context) = body["context"].as_str() {
+        print!("{context}");
+    }
+    Ok(())
+}
+
+fn cmd_context_pack(
+    client: &HttpClient,
+    query: &str,
+    actor: Option<&str>,
+    item_budget: usize,
+    json: bool,
+) -> anyhow::Result<()> {
+    if query.trim().is_empty() {
+        bail!("context query must not be blank");
+    }
+    let response = client
+        .post_json(
+            "/api/v1/epistemic/context",
+            &serde_json::json!({
+                "query": query,
+                "actor": actor,
+                "item_budget": item_budget,
+            }),
+        )
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else if let Some(context) = body["context"]["generated_context"].as_str() {
         print!("{context}");
     }
     Ok(())
