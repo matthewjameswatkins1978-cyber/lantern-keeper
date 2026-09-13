@@ -3,9 +3,9 @@
 ## Repository
 
 - Active line: `feature/lantern-full-move`
-- Current feature checkpoint: `387690b`
+- Current feature checkpoint: `30d61f7`
 - Canonical `master`: `a44554b7050e9b3dd2178eede99b67184d89d12c`
-- Feature checkout is clean at the pushed MCP and correction CLI checkpoint.
+- Feature checkout is clean at the pushed MCP and correction-targeting checkpoint.
 - `master` remains unchanged by the feature work.
 
 ## Phase
@@ -48,8 +48,9 @@ Foreman review are now implemented on the feature line.
 
 ## Still missing or partial
 
-- Natural-language correction targeting and full response-context bridge
-  linkage remain partial; correction still requires an explicit belief target.
+- Natural-language correction targeting is now ambiguity-safe but requires one
+  uniquely matching active belief; full response-context bridge linkage remains
+  partial.
 - Exact typed/fused retrieval, bounded graph projection, expanded LanternBench, Dreamer
   operations, restore proof, and a real Lucy-native MCP path remain.
 - Full MCP contract coverage, real Lucy-native proof, Basic Memory shadow

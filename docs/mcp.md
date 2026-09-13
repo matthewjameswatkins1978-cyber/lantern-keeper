@@ -20,6 +20,8 @@ without choosing one.
 
 The command-line equivalent for recording a correction is
 `lighting correction record <belief-id> <correction-text> <replacement-value>`.
+The MCP correction tool also accepts `target_query` when it resolves to exactly
+one active belief; ambiguous and empty queries are rejected without mutation.
 
 A real Lucy-native client proof remains a cutover gate. The bridge is local and
 delegates to the existing service, so it must not be bound as unauthenticated
