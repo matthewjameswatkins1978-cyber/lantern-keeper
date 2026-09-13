@@ -146,14 +146,79 @@ fn call_tool(
             )
         }
         "lantern_why" => {
-            reject_unknown(arguments, &["belief_id"])?;
-            let belief_id = required_string(arguments, "belief_id")?;
-            reject_path_segment(&belief_id)?;
-            get_json(
-                client,
-                service_url,
-                &format!("/api/v1/beliefs/{belief_id}/explain"),
-            )
+            reject_unknown(arguments, &["belief_id", "memory_id", "query"])?;
+            match parse_why_target(arguments)? {
+                WhyTarget::Belief(belief_id) => {
+                    reject_path_segment(&belief_id)?;
+                    get_json(
+                        client,
+                        service_url,
+                        &format!("/api/v1/beliefs/{belief_id}/explain"),
+                    )
+                }
+                WhyTarget::Memory(memory_id) => {
+                    reject_path_segment(&memory_id)?;
+                    let body = post_json(
+                        client,
+                        service_url,
+                        "/api/v1/memory-items/search",
+                        json!({"include_archived": true, "limit": 0}),
+                    )?;
+                    let memory_item = body
+                        .get("memory_items")
+                        .and_then(Value::as_array)
+                        .and_then(|items| {
+                            items.iter().find(|item| {
+                                item.get("id").and_then(Value::as_str) == Some(memory_id.as_str())
+                            })
+                        })
+                        .cloned()
+                        .ok_or_else(|| format!("memory item not found: {memory_id}"))?;
+                    Ok(json!({
+                        "memory_item": memory_item,
+                        "provenance": {
+                            "source_id": memory_item.get("source_id").cloned().unwrap_or(Value::Null),
+                            "episode_id": memory_item.get("episode_id").cloned().unwrap_or(Value::Null),
+                            "originator_actor_id": memory_item.get("originator_actor_id").cloned().unwrap_or(Value::Null),
+                            "transmitter_actor_id": memory_item.get("transmitter_actor_id").cloned().unwrap_or(Value::Null),
+                            "holder_actor_id": memory_item.get("holder_actor_id").cloned().unwrap_or(Value::Null),
+                        }
+                    }))
+                }
+                WhyTarget::Query(query) => {
+                    let matches = get_json_query(
+                        client,
+                        service_url,
+                        "/api/v1/beliefs/search",
+                        &[("query", query.as_str()), ("include_stale", "false")],
+                    )?;
+                    let beliefs = matches
+                        .get("beliefs")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    if beliefs.len() != 1 {
+                        return Ok(json!({
+                            "ambiguous": beliefs.len() > 1,
+                            "query": query,
+                            "beliefs": beliefs,
+                        }));
+                    }
+                    let belief_id =
+                        beliefs[0]
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| {
+                                "belief search returned a record without an ID".to_owned()
+                            })?;
+                    reject_path_segment(belief_id)?;
+                    get_json(
+                        client,
+                        service_url,
+                        &format!("/api/v1/beliefs/{belief_id}/explain"),
+                    )
+                }
+            }
         }
         "lantern_correct" => {
             reject_unknown(
@@ -220,6 +285,43 @@ fn required_string(
         .ok_or_else(|| format!("tool argument '{key}' must be a nonblank string"))
 }
 
+enum WhyTarget {
+    Belief(String),
+    Memory(String),
+    Query(String),
+}
+
+fn parse_why_target(arguments: &serde_json::Map<String, Value>) -> Result<WhyTarget, String> {
+    let mut targets = ["belief_id", "memory_id", "query"]
+        .into_iter()
+        .filter_map(|key| {
+            arguments
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| (key, value.to_owned()))
+        });
+    let Some((key, value)) = targets.next() else {
+        return Err(
+            "lantern_why requires exactly one nonblank target: belief_id, memory_id, or query"
+                .to_owned(),
+        );
+    };
+    if targets.next().is_some() {
+        return Err(
+            "lantern_why requires exactly one nonblank target: belief_id, memory_id, or query"
+                .to_owned(),
+        );
+    }
+    Ok(match key {
+        "belief_id" => WhyTarget::Belief(value),
+        "memory_id" => WhyTarget::Memory(value),
+        "query" => WhyTarget::Query(value),
+        _ => unreachable!("target keys are fixed above"),
+    })
+}
+
 fn reject_unknown(
     arguments: &serde_json::Map<String, Value>,
     allowed: &[&str],
@@ -246,6 +348,20 @@ fn get_json(
 ) -> Result<Value, String> {
     let response = client
         .get(format!("{}{}", service_url.trim_end_matches('/'), path))
+        .send()
+        .map_err(|error| format!("request failed: {error}"))?;
+    decode_response(response)
+}
+
+fn get_json_query(
+    client: &reqwest::blocking::Client,
+    service_url: &str,
+    path: &str,
+    query: &[(&str, &str)],
+) -> Result<Value, String> {
+    let response = client
+        .get(format!("{}{}", service_url.trim_end_matches('/'), path))
+        .query(query)
         .send()
         .map_err(|error| format!("request failed: {error}"))?;
     decode_response(response)
@@ -343,10 +459,19 @@ fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "lantern_why",
-            "Explain a belief from its recorded evidence",
+            "Explain a belief or memory from recorded provenance; natural queries must resolve uniquely",
             json!({
-                "type": "object", "properties": {"belief_id": {"type": "string"}},
-                "required": ["belief_id"], "additionalProperties": false
+                "type": "object", "properties": {
+                    "belief_id": {"type": "string"},
+                    "memory_id": {"type": "string"},
+                    "query": {"type": "string"}
+                },
+                "oneOf": [
+                    {"required": ["belief_id"]},
+                    {"required": ["memory_id"]},
+                    {"required": ["query"]}
+                ],
+                "additionalProperties": false
             }),
         ),
         tool(
@@ -408,5 +533,18 @@ mod tests {
         let arguments = serde_json::from_value(json!({"query": "x", "surprise": true})).unwrap();
         let error = reject_unknown(&arguments, &["query"]).expect_err("unknown field must fail");
         assert!(error.contains("surprise"));
+    }
+
+    #[test]
+    fn why_requires_one_target() {
+        let arguments = serde_json::from_value(json!({"query": "editor"})).unwrap();
+        assert!(matches!(
+            parse_why_target(&arguments),
+            Ok(WhyTarget::Query(query)) if query == "editor"
+        ));
+
+        let arguments =
+            serde_json::from_value(json!({"belief_id": "b", "query": "editor"})).unwrap();
+        assert!(parse_why_target(&arguments).is_err());
     }
 }

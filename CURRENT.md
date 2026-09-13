@@ -3,9 +3,9 @@
 ## Repository
 
 - Active line: `feature/lantern-full-move`
-- Current feature checkpoint: `6bd7b85`
+- Current feature checkpoint: `171373a`
 - Canonical `master`: `a44554b7050e9b3dd2178eede99b67184d89d12c`
-- Feature checkout is clean at the pushed Foreman/retrieval checkpoint.
+- Feature checkout is clean at the pushed MCP checkpoint.
 - `master` remains unchanged by the feature work.
 
 ## Phase
@@ -37,7 +37,9 @@ Foreman review are now implemented on the feature line.
   promotion.
 - A local stdio MCP bridge now exposes bounded context, remember, search,
   provenance, correction, status, and Lucy-owned Foreman tools over the
-  existing HTTP service. A real supported Lucy client proof is still required.
+  existing HTTP service. `lantern_why` supports belief IDs, memory IDs, and
+  ambiguity-safe natural queries. A real supported Lucy client proof is still
+  required.
 - Predicate and dimension normalization, explicit unmapped Claims, pure
   reconciliation decisions, echo suppression, direct-holder gates, and
   transitive stale propagation are implemented.
@@ -47,7 +49,7 @@ Foreman review are now implemented on the feature line.
 ## Still missing or partial
 
 - Natural-language correction targeting and full response-context bridge
-  linkage remain partial; explicit target IDs are required today.
+  linkage remain partial; correction still requires an explicit belief target.
 - Exact typed/fused retrieval, bounded graph projection, expanded LanternBench, Dreamer
   operations, restore proof, and a real Lucy-native MCP path remain.
 - Full MCP contract coverage, real Lucy-native proof, Basic Memory shadow

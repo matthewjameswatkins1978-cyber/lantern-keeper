@@ -11,6 +11,13 @@ the Lucy client. The bridge exposes only `lantern_context`, `lantern_remember`,
 `lantern_foreman_queue`, and `lantern_foreman_review`. It rejects unknown tool
 arguments and never exposes raw database mutation.
 
+`lantern_why` accepts exactly one of `belief_id`, `memory_id`, or `query`. A
+belief ID returns its recorded Claim and revision lineage. A memory ID returns
+the memory item and its recorded source/episode/actor provenance. A natural
+query uses deterministic belief search and returns an explanation only when it
+has one unambiguous match; multiple matches are returned as an ambiguity result
+without choosing one.
+
 A real Lucy-native client proof remains a cutover gate. The bridge is local and
 delegates to the existing service, so it must not be bound as unauthenticated
 remote write infrastructure.
