@@ -3,7 +3,7 @@
 ## Repository
 
 - Active line: `feature/lantern-full-move`
-- Current feature checkpoint: `6733dfd`
+- Current feature checkpoint: `6bd7b85`
 - Canonical `master`: `a44554b7050e9b3dd2178eede99b67184d89d12c`
 - Feature checkout is clean at the pushed Foreman/retrieval checkpoint.
 - `master` remains unchanged by the feature work.
