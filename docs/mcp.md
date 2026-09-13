@@ -18,6 +18,9 @@ query uses deterministic belief search and returns an explanation only when it
 has one unambiguous match; multiple matches are returned as an ambiguity result
 without choosing one.
 
+The command-line equivalent for recording a correction is
+`lighting correction record <belief-id> <correction-text> <replacement-value>`.
+
 A real Lucy-native client proof remains a cutover gate. The bridge is local and
 delegates to the existing service, so it must not be bound as unauthenticated
 remote write infrastructure.
