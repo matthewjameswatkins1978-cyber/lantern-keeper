@@ -18,13 +18,13 @@ pub mod source;
 pub mod source_outline;
 
 pub use epistemic::{
-    Actor, Belief, BeliefState, Claim, ContextPack, DimensionDefinition, EpistemicError,
-    EpistemicRepository, EpistemicRepositoryError, Frame, FrameAction, GraphRelation, MemoryItem,
-    MemoryItemKind, MemoryItemSearch, NewBelief, NewClaim, NewGraphRelation, NewMemoryItem,
-    PredicateDefinition, PredicateDefinitionStatus, PredicateStatus, Proposal,
-    ReconciliationAction, ReconciliationDecision, RelationKind, Scope, Stance, Trace, TrustClass,
-    normalize_registry_key, normalize_scope, propagate_stale_beliefs, reconcile_claim, scope_hash,
-    scopes_overlap,
+    Actor, Belief, BeliefLineage, BeliefRevision, BeliefState, Claim, ContextPack,
+    DimensionDefinition, EpistemicError, EpistemicRepository, EpistemicRepositoryError, Frame,
+    FrameAction, GraphRelation, MemoryItem, MemoryItemKind, MemoryItemSearch, NewBelief, NewClaim,
+    NewGraphRelation, NewMemoryItem, PredicateDefinition, PredicateDefinitionStatus,
+    PredicateStatus, Proposal, ReconciliationAction, ReconciliationDecision, RelationKind, Scope,
+    Stance, Trace, TrustClass, normalize_registry_key, normalize_scope, propagate_stale_beliefs,
+    reconcile_claim, scope_hash, scopes_overlap,
 };
 pub use ledger::{
     LedgerEvent, LedgerEventError, LedgerEventRepository, LedgerIngestResult,
@@ -103,6 +103,7 @@ identifier_type!(TopicId);
 identifier_type!(MemoryId);
 identifier_type!(ClaimId);
 identifier_type!(BeliefId);
+identifier_type!(BeliefRevisionId);
 identifier_type!(MemoryItemId);
 identifier_type!(TraceId);
 identifier_type!(ProposalId);

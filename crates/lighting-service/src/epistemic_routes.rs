@@ -54,6 +54,20 @@ pub async fn list_claims(
     }
 }
 
+pub async fn reconcile_claim(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::epistemic_dto::ReconcileClaimRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.reconcile_claim(&id, request).await {
+        Ok(result) => (StatusCode::OK, Json(serde_json::json!(result))),
+        Err(error) => error_response(error),
+    }
+}
+
 pub async fn create_belief(
     State(state): State<AppState>,
     Json(request): Json<BeliefRequest>,

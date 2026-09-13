@@ -107,6 +107,10 @@ pub fn build_router(state: AppState) -> Router {
                         .get(epistemic_routes::list_claims),
                 )
                 .route(
+                    "/api/v1/claims/{claim_id}/reconcile",
+                    axum::routing::post(epistemic_routes::reconcile_claim),
+                )
+                .route(
                     "/api/v1/beliefs",
                     axum::routing::post(epistemic_routes::create_belief)
                         .get(epistemic_routes::list_beliefs),

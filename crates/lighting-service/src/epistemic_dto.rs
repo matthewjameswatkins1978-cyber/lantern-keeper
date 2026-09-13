@@ -58,6 +58,12 @@ pub struct ClaimListQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ReconcileClaimRequest {
+    #[serde(default)]
+    pub independent_evidence: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct BeliefRequest {
     pub holder_key: String,
     pub subject_key: String,

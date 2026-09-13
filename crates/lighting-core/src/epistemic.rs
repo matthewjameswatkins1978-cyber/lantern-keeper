@@ -11,7 +11,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{BeliefId, ClaimId, ContextPackId, MemoryItemId, ProposalId, TraceId};
+use crate::{
+    BeliefId, BeliefRevisionId, ClaimId, ContextPackId, MemoryItemId, ProposalId, TraceId,
+};
 
 pub type Scope = BTreeMap<String, String>;
 
@@ -296,6 +298,8 @@ pub struct Belief {
     pub stale_since: Option<DateTime<Utc>>,
     pub stale_reason: Option<String>,
     pub dependency_generation: u64,
+    #[serde(default)]
+    pub lineage: BeliefLineage,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -324,6 +328,7 @@ impl Belief {
             stale_since: None,
             stale_reason: None,
             dependency_generation: 0,
+            lineage: BeliefLineage::default(),
             created_at: input.created_at,
             updated_at: input.created_at,
         })
@@ -337,6 +342,35 @@ impl Belief {
         self.dependency_generation = self.dependency_generation.saturating_add(1);
         self.updated_at = at;
     }
+}
+
+/// Durable links that explain how a Belief was formed and changed.
+///
+/// These are identifiers rather than embedded records so the current Belief
+/// projection stays small and historical evidence remains immutable elsewhere.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BeliefLineage {
+    #[serde(default)]
+    pub supporting_claim_ids: Vec<String>,
+    #[serde(default)]
+    pub contradictory_claim_ids: Vec<String>,
+    #[serde(default)]
+    pub prior_belief_id: Option<String>,
+    #[serde(default)]
+    pub derived_from_belief_ids: Vec<String>,
+}
+
+/// An immutable record of a current-projection transition.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BeliefRevision {
+    pub id: BeliefRevisionId,
+    pub belief_id: BeliefId,
+    pub previous_value: Option<String>,
+    pub new_value: Option<String>,
+    pub claim_id: Option<ClaimId>,
+    pub transition_type: ReconciliationAction,
+    pub trace_id: TraceId,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug)]
@@ -558,6 +592,18 @@ pub trait EpistemicRepository: Send + Sync {
         reason: &str,
         at: DateTime<Utc>,
     ) -> Result<Belief, EpistemicRepositoryError>;
+    async fn apply_belief_transition(
+        &self,
+        previous: Option<Belief>,
+        current: Option<Belief>,
+        revisions: Vec<BeliefRevision>,
+        trace: Trace,
+        stale_beliefs: Vec<Belief>,
+    ) -> Result<Option<Belief>, EpistemicRepositoryError>;
+    async fn list_belief_revisions(
+        &self,
+        belief_id: &BeliefId,
+    ) -> Result<Vec<BeliefRevision>, EpistemicRepositoryError>;
     async fn store_memory_item(
         &self,
         item: MemoryItem,

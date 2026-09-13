@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lighting_core::{
-    Belief, BeliefId, Claim, ClaimId, DimensionDefinition, EpistemicRepository,
+    Belief, BeliefId, BeliefRevision, Claim, ClaimId, DimensionDefinition, EpistemicRepository,
     EpistemicRepositoryError, GraphRelation, MemoryItem, MemoryItemSearch, PredicateDefinition,
     Proposal, Trace,
 };
@@ -39,7 +39,7 @@ impl SurrealEpistemicRepository {
 
     pub async fn migrate(&self) -> Result<(), SurrealEpistemicError> {
         self.store
-            .query(SCHEMA_MIGRATION_V8)
+            .query(SCHEMA_MIGRATION_V9)
             .await
             .map(|_| ())
             .map_err(SurrealEpistemicError::Query)
@@ -174,6 +174,138 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .await
             .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
         Ok(belief)
+    }
+
+    async fn apply_belief_transition(
+        &self,
+        previous: Option<Belief>,
+        current: Option<Belief>,
+        revisions: Vec<BeliefRevision>,
+        trace: Trace,
+        stale_beliefs: Vec<Belief>,
+    ) -> Result<Option<Belief>, EpistemicRepositoryError> {
+        let mut statements = vec!["BEGIN TRANSACTION".to_owned()];
+
+        if previous.is_some() {
+            statements.push(
+                "UPDATE belief SET payload = $previous_payload, stale = $previous_stale, state = $previous_state, updated_at = $previous_updated_at WHERE id = type::record('belief', $previous_id)".to_owned(),
+            );
+        }
+
+        if let Some(current) = current.as_ref() {
+            let statement = if previous
+                .as_ref()
+                .is_some_and(|previous| previous.id == current.id)
+            {
+                "UPDATE belief SET payload = $current_payload, stale = $current_stale, state = $current_state, updated_at = $current_updated_at WHERE id = type::record('belief', $current_id)"
+            } else {
+                "CREATE belief CONTENT { id: $current_id, payload: $current_payload, stale: $current_stale, state: $current_state, updated_at: $current_updated_at }"
+            };
+            statements.push(statement.to_owned());
+        }
+
+        for index in 0..stale_beliefs.len() {
+            let payload_name = format!("stale_{index}_payload");
+            let id_name = format!("stale_{index}_id");
+            statements.push(format!(
+                "UPDATE belief SET payload = ${payload_name}, stale = true, updated_at = ${id_name}_updated_at WHERE id = type::record('belief', ${id_name})"
+            ));
+        }
+
+        let trace_payload = serde_json::to_string(&trace)
+            .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
+        statements.push(
+            "CREATE trace CONTENT { id: $trace_id, payload: $trace_payload, created_at: $trace_created_at }".to_owned(),
+        );
+
+        for (index, _) in revisions.iter().enumerate() {
+            let id_name = format!("revision_{index}_id");
+            let belief_id_name = format!("revision_{index}_belief_id");
+            let payload_name = format!("revision_{index}_payload");
+            let created_at_name = format!("revision_{index}_created_at");
+            statements.push(format!(
+                "CREATE belief_revision CONTENT {{ id: ${id_name}, belief_id: ${belief_id_name}, payload: ${payload_name}, created_at: ${created_at_name} }}"
+            ));
+        }
+
+        let query_text = format!("{}; COMMIT TRANSACTION", statements.join("; "));
+        let mut query = self.store.query(query_text);
+        if let Some(previous) = previous.as_ref() {
+            query = query
+                .bind(("previous_id", previous.id.as_str()))
+                .bind((
+                    "previous_payload",
+                    serde_json::to_string(previous)
+                        .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?,
+                ))
+                .bind(("previous_stale", previous.stale))
+                .bind(("previous_state", belief_state(previous)))
+                .bind(("previous_updated_at", previous.updated_at));
+        }
+        if let Some(current) = current.as_ref() {
+            query = query
+                .bind(("current_id", current.id.as_str()))
+                .bind((
+                    "current_payload",
+                    serde_json::to_string(current)
+                        .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?,
+                ))
+                .bind(("current_stale", current.stale))
+                .bind(("current_state", belief_state(current)))
+                .bind(("current_updated_at", current.updated_at));
+        }
+        for (index, stale) in stale_beliefs.iter().enumerate() {
+            let id_name = format!("stale_{index}_id");
+            query = query
+                .bind((id_name.clone(), stale.id.as_str()))
+                .bind((
+                    format!("stale_{index}_payload"),
+                    serde_json::to_string(stale)
+                        .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?,
+                ))
+                .bind((format!("{id_name}_updated_at"), stale.updated_at));
+        }
+        query = query
+            .bind(("trace_id", trace.id.as_str()))
+            .bind(("trace_payload", trace_payload))
+            .bind(("trace_created_at", trace.created_at));
+        for (index, revision) in revisions.iter().enumerate() {
+            query = query
+                .bind((format!("revision_{index}_id"), revision.id.as_str()))
+                .bind((
+                    format!("revision_{index}_belief_id"),
+                    revision.belief_id.as_str(),
+                ))
+                .bind((
+                    format!("revision_{index}_payload"),
+                    serde_json::to_string(revision)
+                        .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?,
+                ))
+                .bind((format!("revision_{index}_created_at"), revision.created_at));
+        }
+        query
+            .await
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        Ok(current)
+    }
+
+    async fn list_belief_revisions(
+        &self,
+        belief_id: &BeliefId,
+    ) -> Result<Vec<BeliefRevision>, EpistemicRepositoryError> {
+        let records: Vec<Object> = self
+            .store
+            .query("SELECT * FROM belief_revision WHERE belief_id = $belief_id ORDER BY created_at ASC, id ASC")
+            .bind(("belief_id", belief_id.as_str()))
+            .await
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?
+            .take(0)
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        records
+            .into_iter()
+            .map(decode)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(operation)
     }
 
     async fn store_memory_item(
@@ -502,7 +634,16 @@ fn operation(error: impl std::error::Error + Send + Sync + 'static) -> Epistemic
     EpistemicRepositoryError::Operation(Box::new(error))
 }
 
-const SCHEMA_MIGRATION_V8: &str = r#"
+fn belief_state(belief: &Belief) -> &'static str {
+    match belief.state {
+        lighting_core::BeliefState::Active => "active",
+        lighting_core::BeliefState::Disputed => "disputed",
+        lighting_core::BeliefState::Superseded => "superseded",
+        lighting_core::BeliefState::Archived => "archived",
+    }
+}
+
+const SCHEMA_MIGRATION_V9: &str = r#"
 DEFINE TABLE IF NOT EXISTS epistemic_claim SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS payload ON epistemic_claim TYPE string;
 DEFINE FIELD IF NOT EXISTS dedupe_key ON epistemic_claim TYPE string;
@@ -515,6 +656,12 @@ DEFINE FIELD IF NOT EXISTS stale ON belief TYPE bool;
 DEFINE FIELD IF NOT EXISTS state ON belief TYPE string;
 DEFINE FIELD IF NOT EXISTS updated_at ON belief TYPE datetime;
 DEFINE INDEX IF NOT EXISTS belief_stale ON belief FIELDS stale;
+
+DEFINE TABLE IF NOT EXISTS belief_revision SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS belief_id ON belief_revision TYPE string;
+DEFINE FIELD IF NOT EXISTS payload ON belief_revision TYPE string;
+DEFINE FIELD IF NOT EXISTS created_at ON belief_revision TYPE datetime;
+DEFINE INDEX IF NOT EXISTS belief_revision_belief ON belief_revision FIELDS belief_id;
 
 DEFINE TABLE IF NOT EXISTS memory_item SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS payload ON memory_item TYPE string;
@@ -558,7 +705,7 @@ DEFINE INDEX IF NOT EXISTS dimension_definition_key ON dimension_definition FIEL
 UPSERT __lighting_schema:bootstrap CONTENT {
     project: "Lantern Keeper",
     service: "Lighting",
-    schema_version: 8,
+    schema_version: 9,
     updated_at: time::now()
 };
 "#;

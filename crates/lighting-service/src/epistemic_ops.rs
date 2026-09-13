@@ -1,16 +1,17 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use chrono::Utc;
 use lighting_core::{
-    Belief, BeliefId, Claim, DimensionDefinition, EpistemicError, EpistemicRepository,
-    EpistemicRepositoryError, MemoryItem, MemoryItemSearch, NewBelief, NewClaim, NewGraphRelation,
-    NewMemoryItem, PredicateDefinition, PredicateStatus, Stance, Trace, TraceId, TrustClass,
-    normalize_registry_key,
+    Belief, BeliefId, BeliefLineage, BeliefRevision, BeliefRevisionId, BeliefState, Claim,
+    DimensionDefinition, EpistemicError, EpistemicRepository, EpistemicRepositoryError, MemoryItem,
+    MemoryItemSearch, NewBelief, NewClaim, NewGraphRelation, NewMemoryItem, PredicateDefinition,
+    PredicateStatus, ReconciliationAction, ReconciliationDecision, Stance, Trace, TraceId,
+    TrustClass, normalize_registry_key, reconcile_claim,
 };
 
 use crate::epistemic_dto::{
     BeliefRequest, ClaimRequest, DimensionDefinitionRequest, MemoryItemRequest,
-    MemoryItemSearchRequest, PredicateDefinitionRequest, RelationRequest,
+    MemoryItemSearchRequest, PredicateDefinitionRequest, ReconcileClaimRequest, RelationRequest,
 };
 use crate::source_dto::ApiError;
 
@@ -24,6 +25,13 @@ pub enum EpistemicOperationError {
     NotFound,
     #[error("epistemic repository operation failed")]
     Repository(#[source] Box<dyn std::error::Error + Send + Sync>),
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ReconciliationResult {
+    pub claim: Claim,
+    pub decision: ReconciliationDecision,
+    pub belief: Option<Belief>,
 }
 
 impl From<EpistemicOperationError> for ApiError {
@@ -103,6 +111,184 @@ impl EpistemicService {
             .map_err(map_repository_error)
     }
 
+    pub async fn reconcile_claim(
+        &self,
+        id: &str,
+        request: ReconcileClaimRequest,
+    ) -> Result<ReconciliationResult, EpistemicOperationError> {
+        let id = lighting_core::ClaimId::new(id.to_owned())
+            .map_err(|_| EpistemicOperationError::Invalid("claim ID cannot be blank".to_owned()))?;
+        let claim = self
+            .repo
+            .get_claim(&id)
+            .await
+            .map_err(map_repository_error)?
+            .ok_or(EpistemicOperationError::NotFound)?;
+        let existing = self
+            .repo
+            .list_beliefs(true)
+            .await
+            .map_err(map_repository_error)?
+            .into_iter()
+            .filter(|belief| {
+                claim.predicate_key.as_ref() == Some(&belief.predicate_key)
+                    && claim.subject_key == belief.subject_key
+                    && claim.holder_actor_id.as_deref() == Some(belief.holder_key.as_str())
+                    && claim.scope_hash == belief.scope_hash
+                    && belief.state == BeliefState::Active
+            })
+            .max_by_key(|belief| belief.updated_at);
+        let decision = reconcile_claim(&claim, existing.as_ref(), request.independent_evidence);
+        let now = Utc::now();
+        let trace_id = new_trace_id()?;
+        let mut previous = None;
+        let mut current = None;
+        let mut result_belief = existing.clone();
+        let mut revisions = Vec::new();
+        match decision.action {
+            ReconciliationAction::Create => {
+                let belief = belief_from_claim(&claim, now, None)?;
+                revisions.push(make_revision(
+                    &belief,
+                    None,
+                    Some(claim.value.clone()),
+                    Some(&claim),
+                    decision.action,
+                    &trace_id,
+                    now,
+                )?);
+                result_belief = Some(belief.clone());
+                current = Some(belief);
+            }
+            ReconciliationAction::Reinforce => {
+                let old = existing.clone().ok_or(EpistemicOperationError::NotFound)?;
+                let mut belief = old.clone();
+                push_unique(
+                    &mut belief.lineage.supporting_claim_ids,
+                    claim.id.to_string(),
+                );
+                belief.confidence = (belief.confidence + claim.confidence * 0.1).min(1.0);
+                belief.stale = false;
+                belief.stale_since = None;
+                belief.stale_reason = None;
+                belief.updated_at = now;
+                revisions.push(make_revision(
+                    &belief,
+                    Some(old.current_value.clone()),
+                    Some(belief.current_value.clone()),
+                    Some(&claim),
+                    decision.action,
+                    &trace_id,
+                    now,
+                )?);
+                previous = Some(old);
+                result_belief = Some(belief.clone());
+                current = Some(belief);
+            }
+            ReconciliationAction::Supersede => {
+                let old = existing.clone().ok_or(EpistemicOperationError::NotFound)?;
+                let mut historical = old.clone();
+                historical.state = BeliefState::Superseded;
+                historical.known_to = Some(claim.known_at);
+                historical.updated_at = now;
+                push_unique(
+                    &mut historical.lineage.supporting_claim_ids,
+                    claim.id.to_string(),
+                );
+                let replacement = belief_from_claim(&claim, now, Some(&old))?;
+                revisions.push(make_revision(
+                    &historical,
+                    Some(old.current_value.clone()),
+                    None,
+                    Some(&claim),
+                    decision.action,
+                    &trace_id,
+                    now,
+                )?);
+                revisions.push(make_revision(
+                    &replacement,
+                    Some(old.current_value.clone()),
+                    Some(replacement.current_value.clone()),
+                    Some(&claim),
+                    decision.action,
+                    &trace_id,
+                    now,
+                )?);
+                previous = Some(historical);
+                result_belief = Some(replacement.clone());
+                current = Some(replacement);
+            }
+            ReconciliationAction::Contradict | ReconciliationAction::Dispute => {
+                let old = existing.clone().ok_or(EpistemicOperationError::NotFound)?;
+                let mut belief = old.clone();
+                push_unique(
+                    &mut belief.lineage.contradictory_claim_ids,
+                    claim.id.to_string(),
+                );
+                if decision.action == ReconciliationAction::Dispute {
+                    belief.state = BeliefState::Disputed;
+                }
+                belief.updated_at = now;
+                revisions.push(make_revision(
+                    &belief,
+                    Some(old.current_value.clone()),
+                    Some(belief.current_value.clone()),
+                    Some(&claim),
+                    decision.action,
+                    &trace_id,
+                    now,
+                )?);
+                previous = Some(old);
+                result_belief = Some(belief.clone());
+                current = Some(belief);
+            }
+            _ => {}
+        }
+        let mut details = BTreeMap::new();
+        details.insert(
+            "action".to_owned(),
+            serde_json::to_string(&decision.action).unwrap_or_else(|_| "unknown".to_owned()),
+        );
+        details.insert("reason".to_owned(), decision.reason.clone());
+        details.insert(
+            "independent_evidence".to_owned(),
+            request.independent_evidence.to_string(),
+        );
+        if let Some(old) = previous.as_ref() {
+            details.insert("old_value".to_owned(), old.current_value.clone());
+        }
+        if let Some(new) = current.as_ref() {
+            details.insert("new_value".to_owned(), new.current_value.clone());
+        }
+        let mut input_ids = vec![claim.id.to_string()];
+        if let Some(old) = previous.as_ref() {
+            input_ids.push(old.id.to_string());
+        }
+        let trace = Trace {
+            id: trace_id,
+            event_type: "claim_reconciled".to_owned(),
+            actor_id: "lucy".to_owned(),
+            subject_id: Some(claim.subject_key.clone()),
+            input_ids,
+            output_ids: current
+                .as_ref()
+                .map(|belief| vec![belief.id.to_string()])
+                .unwrap_or_default(),
+            details,
+            created_at: now,
+        };
+        let belief = self
+            .repo
+            .apply_belief_transition(previous, current, revisions, trace, Vec::new())
+            .await
+            .map_err(map_repository_error)?;
+        Ok(ReconciliationResult {
+            claim,
+            decision,
+            belief: belief.or(result_belief),
+        })
+    }
+
     pub async fn create_belief(
         &self,
         request: BeliefRequest,
@@ -121,27 +307,36 @@ impl EpistemicService {
             created_at: now,
         })
         .map_err(map_domain_error)?;
-        let stored = self
-            .repo
-            .store_belief(belief)
-            .await
-            .map_err(map_repository_error)?;
+        let trace_id = new_trace_id()?;
         let trace = Trace {
-            id: TraceId::new(uuid::Uuid::new_v4().to_string()).map_err(|_| {
-                EpistemicOperationError::Invalid("trace ID could not be created".to_owned())
-            })?,
+            id: trace_id.clone(),
             event_type: "belief_created".to_owned(),
-            actor_id: stored.holder_key.clone(),
-            subject_id: Some(stored.subject_key.clone()),
+            actor_id: belief.holder_key.clone(),
+            subject_id: Some(belief.subject_key.clone()),
             input_ids: Vec::new(),
-            output_ids: vec![stored.id.to_string()],
+            output_ids: vec![belief.id.to_string()],
             details: Default::default(),
             created_at: now,
         };
-        self.repo
-            .append_trace(trace)
+        let revision = make_revision(
+            &belief,
+            None,
+            Some(belief.current_value.clone()),
+            None,
+            ReconciliationAction::Create,
+            &trace_id,
+            now,
+        )?;
+        let stored = self
+            .repo
+            .apply_belief_transition(None, Some(belief), vec![revision], trace, Vec::new())
             .await
-            .map_err(map_repository_error)?;
+            .map_err(map_repository_error)?
+            .ok_or_else(|| {
+                EpistemicOperationError::Invalid(
+                    "belief transition did not produce a belief".to_owned(),
+                )
+            })?;
         Ok(stored)
     }
 
@@ -415,6 +610,78 @@ impl EpistemicService {
             .await
             .map_err(map_repository_error)?;
         Ok(())
+    }
+}
+
+fn belief_from_claim(
+    claim: &Claim,
+    now: chrono::DateTime<Utc>,
+    prior: Option<&Belief>,
+) -> Result<Belief, EpistemicOperationError> {
+    let holder = claim.holder_actor_id.clone().ok_or_else(|| {
+        EpistemicOperationError::Invalid("reconciliation requires a holder actor".to_owned())
+    })?;
+    let predicate = claim.predicate_key.clone().ok_or_else(|| {
+        EpistemicOperationError::Invalid("reconciliation requires a resolved predicate".to_owned())
+    })?;
+    let mut belief = Belief::new(NewBelief {
+        holder_key: holder.clone(),
+        subject_key: claim.subject_key.clone(),
+        predicate_key: predicate,
+        current_value: claim.value.clone(),
+        scope: claim.scope.clone(),
+        confidence: claim.confidence,
+        trust_class: if holder == claim.originator_actor_id {
+            TrustClass::Direct
+        } else {
+            TrustClass::Derived
+        },
+        known_from: claim.known_at,
+        valid_from: claim.valid_from,
+        created_at: now,
+    })
+    .map_err(map_domain_error)?;
+    belief.valid_to = claim.valid_to;
+    belief.lineage = BeliefLineage {
+        supporting_claim_ids: vec![claim.id.to_string()],
+        contradictory_claim_ids: Vec::new(),
+        prior_belief_id: prior.map(|belief| belief.id.to_string()),
+        derived_from_belief_ids: Vec::new(),
+    };
+    Ok(belief)
+}
+
+fn make_revision(
+    belief: &Belief,
+    previous_value: Option<String>,
+    new_value: Option<String>,
+    claim: Option<&Claim>,
+    transition_type: ReconciliationAction,
+    trace_id: &TraceId,
+    created_at: chrono::DateTime<Utc>,
+) -> Result<BeliefRevision, EpistemicOperationError> {
+    Ok(BeliefRevision {
+        id: BeliefRevisionId::new(uuid::Uuid::new_v4().to_string()).map_err(|_| {
+            EpistemicOperationError::Invalid("belief revision ID could not be created".to_owned())
+        })?,
+        belief_id: belief.id.clone(),
+        previous_value,
+        new_value,
+        claim_id: claim.map(|claim| claim.id.clone()),
+        transition_type,
+        trace_id: trace_id.clone(),
+        created_at,
+    })
+}
+
+fn new_trace_id() -> Result<TraceId, EpistemicOperationError> {
+    TraceId::new(uuid::Uuid::new_v4().to_string())
+        .map_err(|_| EpistemicOperationError::Invalid("trace ID could not be created".to_owned()))
+}
+
+fn push_unique(values: &mut Vec<String>, value: String) {
+    if !values.contains(&value) {
+        values.push(value);
     }
 }
 
