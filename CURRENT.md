@@ -35,6 +35,9 @@ Foreman review are now implemented on the feature line.
   provenance explanation, and stale listing. Foreman supports a bounded queue
   and traced accept/reject/modify/defer decisions without direct belief
   promotion.
+- A local stdio MCP bridge now exposes bounded context, remember, search,
+  provenance, correction, status, and Lucy-owned Foreman tools over the
+  existing HTTP service. A real supported Lucy client proof is still required.
 - Predicate and dimension normalization, explicit unmapped Claims, pure
   reconciliation decisions, echo suppression, direct-holder gates, and
   transitive stale propagation are implemented.
@@ -47,7 +50,8 @@ Foreman review are now implemented on the feature line.
   linkage remain partial; explicit target IDs are required today.
 - Exact typed/fused retrieval, bounded graph projection, expanded LanternBench, Dreamer
   operations, restore proof, and a real Lucy-native MCP path remain.
-- Basic Memory shadow comparison, final delta, and cutover.
+- Full MCP contract coverage, real Lucy-native proof, Basic Memory shadow
+  comparison, final delta, and cutover.
 
 ## Environment
 

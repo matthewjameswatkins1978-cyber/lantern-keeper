@@ -739,14 +739,57 @@ impl EpistemicService {
             .phrase
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty());
-        self.repo
+        let Some(phrase) = phrase else {
+            return self
+                .repo
+                .search_memory_items(&MemoryItemSearch {
+                    phrase: None,
+                    include_archived: request.include_archived,
+                    limit: request.limit,
+                })
+                .await
+                .map_err(map_repository_error);
+        };
+        let tokens = context_tokens(&phrase);
+        if tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+        let memories = self
+            .repo
             .search_memory_items(&MemoryItemSearch {
-                phrase,
+                phrase: None,
                 include_archived: request.include_archived,
-                limit: request.limit,
+                limit: 0,
             })
             .await
-            .map_err(map_repository_error)
+            .map_err(map_repository_error)?;
+        let mut matches = memories
+            .into_iter()
+            .filter_map(|memory| {
+                let content = memory.content.to_ascii_lowercase();
+                let score = tokens
+                    .iter()
+                    .filter(|token| content.contains(token.as_str()))
+                    .count() as i32;
+                (score > 0).then_some((score, memory))
+            })
+            .collect::<Vec<_>>();
+        matches.sort_by(|(left_score, left), (right_score, right)| {
+            right_score
+                .cmp(left_score)
+                .then_with(|| {
+                    right
+                        .salience
+                        .partial_cmp(&left.salience)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| right.created_at.cmp(&left.created_at))
+                .then_with(|| left.id.to_string().cmp(&right.id.to_string()))
+        });
+        if request.limit > 0 {
+            matches.truncate(request.limit);
+        }
+        Ok(matches.into_iter().map(|(_, memory)| memory).collect())
     }
 
     pub async fn compile_context(

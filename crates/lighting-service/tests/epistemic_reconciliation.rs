@@ -354,9 +354,19 @@ async fn context_compiler_returns_bounded_typed_pack_and_persists_it()
     assert_eq!(pack.retrieval_trace.item_budget, 2);
     assert!(pack.selected_ids.len() <= 2);
     assert_eq!(pack.current_beliefs, vec![belief]);
-    assert_eq!(pack.soft_memories, vec![memory]);
+    assert_eq!(pack.soft_memories, vec![memory.clone()]);
     assert!(pack.retrieval_trace.candidate_scores.len() >= 2);
     assert!(pack.episode_refs.is_empty());
+    assert_eq!(
+        service
+            .search_soft(lighting_service::epistemic_dto::MemoryItemSearchRequest {
+                phrase: Some("ants games".to_owned()),
+                include_archived: false,
+                limit: 10,
+            })
+            .await?,
+        vec![memory.clone()]
+    );
     assert!(pack.generated_context.contains("Matthew beliefs"));
     assert!(
         pack.generated_context

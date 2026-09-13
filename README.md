@@ -88,7 +88,7 @@ material. Stop the Lighting service before exporting embedded storage.
 - `docs/recovery.md` — export and recovery procedure
 - `docs/LANTERNBENCH.md` — behavioural benchmark
 - `docs/windows-worker-notes.md` — Windows-specific development notes
-- `docs/mcp.md` — current API boundary and future Lucy-native contract
+- `docs/mcp.md` — local stdio bridge and Lucy-native proof gate
 - `docs/history/` — selected historical context only
 
 The optional Tethers preview is explicitly bounded and does not define

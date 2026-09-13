@@ -17,6 +17,8 @@ use tokio::net::TcpListener;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+mod mcp;
+
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 4317;
 const EXPECTED_SURREALDB_VERSION: &str = "3.3.0-beta.4";
@@ -43,6 +45,10 @@ fn main() -> anyhow::Result<()> {
         Command::Version => {
             println!("Lighting {} (Lantern Keeper)", env!("CARGO_PKG_VERSION"));
             Ok(())
+        }
+        Command::Mcp => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            mcp::run(&url)
         }
         Command::Doctor { json } => {
             init_tracing();
@@ -268,6 +274,8 @@ enum Command {
     Serve,
     /// Print the Lighting version.
     Version,
+    /// Run the local stdio MCP bridge over the Lighting HTTP service.
+    Mcp,
     /// Inspect the local Lantern and SurrealDB development baseline.
     Doctor {
         /// Output JSON only.

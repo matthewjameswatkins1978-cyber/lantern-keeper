@@ -2014,6 +2014,8 @@ dependencies = [
  "lighting-core",
  "lighting-service",
  "lighting-store-surreal",
+ "reqwest",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",
