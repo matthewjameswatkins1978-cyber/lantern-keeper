@@ -3,9 +3,9 @@
 ## Repository
 
 - Active line: `feature/lantern-full-move`
-- Current feature checkpoint: `b2b7aa7`
+- Current feature checkpoint: `199f4db`
 - Canonical `master`: `a44554b7050e9b3dd2178eede99b67184d89d12c`
-- Feature checkout is clean at the pushed MCP and correction-search checkpoint.
+- Feature checkout is clean at the pushed correction-search checkpoint.
 - `master` remains unchanged by the feature work.
 
 ## Phase
@@ -59,8 +59,10 @@ Foreman review are now implemented on the feature line.
 ## Environment
 
 The Rust MSVC target needs the installed Microsoft C++ Build Tools and Windows
-SDK libraries, but Lantern does not require the Visual Studio IDE or a
-particular editor. Plain `pwsh -NoProfile` validation is the acceptance target.
+SDK libraries. The user-level `LIB` and `LIBPATH` values now point to the
+validated VC and Windows SDK x64 libraries, excluding the unusable ATL/MFC
+entry. Lantern does not require the Visual Studio IDE or a particular editor;
+plain `pwsh -NoProfile` validation passes with the normal machine environment.
 
 ## Recovery and private state
 
@@ -71,7 +73,6 @@ at `recovery/pre-spring-clean-c2cdfd9`. Private migration material remains in
 
 ## Next verified step
 
-Run the complete workspace lane, then expand Context Compiler retrieval and
-LanternBench behaviour before beginning MCP or cutover work. Keep
-`master` untouched until every cutover gate
-are green.
+Expand Context Compiler retrieval and LanternBench behaviour, then prove export
+and restore before beginning Lucy-native and cutover work. Keep `master`
+untouched until every cutover gate is green.
