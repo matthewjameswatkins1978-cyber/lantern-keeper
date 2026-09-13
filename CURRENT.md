@@ -3,9 +3,9 @@
 ## Repository
 
 - Active line: `feature/lantern-full-move`
-- Current feature checkpoint: LanternBench behavioural checkpoint (`5a33abc`)
+- Current feature checkpoint: MCP capture and restart-proof checkpoint (`3a18ea2`)
 - Canonical `master`: `a44554b7050e9b3dd2178eede99b67184d89d12c`
-- Feature checkout is clean at the pushed correction-search checkpoint.
+- Feature checkout is clean at the pushed MCP checkpoint.
 - `master` remains unchanged by the feature work.
 
 ## Phase
@@ -40,8 +40,10 @@ are now implemented on the feature line.
   promotion.
 - A local stdio MCP bridge now exposes bounded context, remember, search,
   provenance, correction, status, and Lucy-owned Foreman tools over the
-  existing HTTP service. `lantern_why` supports belief IDs, memory IDs, and
-  ambiguity-safe natural queries. A real supported Lucy client proof is still
+  existing HTTP service. Soft memories remain the default; an explicit
+  `kind: "claim"` packet can capture and reconcile a registered predicate in
+  one response. `lantern_why` supports belief IDs, memory IDs, and
+  ambiguity-safe natural queries. A real connected Lucy client proof is still
   required.
 - Predicate and dimension normalization, explicit unmapped Claims, pure
   reconciliation decisions, echo suppression, direct-holder gates, and
@@ -55,7 +57,8 @@ are now implemented on the feature line.
   uniquely matching active belief; full response-context bridge linkage remains
   partial.
 - Exact typed/fused retrieval, graph-backed project associations, bounded graph
-  projection, Dreamer operations, and a real Lucy-native MCP path remain.
+  projection, Dreamer operations, and a real connected Lucy-native client path
+  remain.
 - Restore has passed a real 1,479-record export/restore parity drill, but a
   service-level retrieval-after-restore and real Lucy restart proof remain.
 - Full MCP contract coverage, real Lucy-native proof, Basic Memory shadow
@@ -79,6 +82,6 @@ at `recovery/pre-spring-clean-c2cdfd9`. Private migration material remains in
 
 ## Next verified step
 
-Run the LanternBench checkpoint, then prove the real Lucy-facing MCP sequence
-across a Lantern restart. Keep `master` untouched until every cutover gate is
-green.
+Complete the MCP contract/connected Lucy proof, then run Basic Memory shadow
+comparison and final-delta accounting. Keep `master` untouched until every
+cutover gate is green.
