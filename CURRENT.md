@@ -3,7 +3,7 @@
 ## Repository
 
 - Active line: `feature/lantern-full-move`
-- Current feature checkpoint: LanternBench behavioural checkpoint (`83e1a9f`)
+- Current feature checkpoint: LanternBench behavioural checkpoint (`5a33abc`)
 - Canonical `master`: `a44554b7050e9b3dd2178eede99b67184d89d12c`
 - Feature checkout is clean at the pushed correction-search checkpoint.
 - `master` remains unchanged by the feature work.
