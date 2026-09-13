@@ -62,7 +62,8 @@ The Rust MSVC target needs the installed Microsoft C++ Build Tools and Windows
 SDK libraries. The user-level `LIB` and `LIBPATH` values now point to the
 validated VC and Windows SDK x64 libraries, excluding the unusable ATL/MFC
 entry. Lantern does not require the Visual Studio IDE or a particular editor;
-plain `pwsh -NoProfile` validation passes with the normal machine environment.
+plain `pwsh -NoProfile` validation passes after opening a new shell so it
+inherits the updated user environment.
 
 ## Recovery and private state
 
