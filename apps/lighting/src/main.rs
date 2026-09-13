@@ -502,7 +502,11 @@ async fn serve() -> anyhow::Result<()> {
     let memory_service = MemoryService::new(Arc::clone(&memory_repo));
     let ledger_repo = SurrealLedgerRepository::new(store.clone());
     let ledger_service = LedgerService::new(Arc::new(ledger_repo));
-    let epistemic_service = lighting_service::EpistemicService::new(Arc::new(epistemic_repo));
+    let epistemic_service = lighting_service::EpistemicService::new_with_evidence(
+        Arc::new(epistemic_repo),
+        Arc::clone(&source_repo),
+        Arc::clone(&mp_repo),
+    );
     let tethers_client = match TethersEngineClient::from_env() {
         Ok(client) => Some(client),
         Err(TethersEngineError::MissingEnginePath) => None,

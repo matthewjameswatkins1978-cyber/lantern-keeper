@@ -438,6 +438,21 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .map_err(operation)
     }
 
+    async fn list_relations(&self) -> Result<Vec<GraphRelation>, EpistemicRepositoryError> {
+        let records: Vec<Object> = self
+            .store
+            .query("SELECT * FROM memory_relation ORDER BY created_at ASC, id ASC")
+            .await
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?
+            .take(0)
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        records
+            .into_iter()
+            .map(decode)
+            .collect::<Result<Vec<GraphRelation>, _>>()
+            .map_err(operation)
+    }
+
     async fn store_predicate_definition(
         &self,
         definition: PredicateDefinition,

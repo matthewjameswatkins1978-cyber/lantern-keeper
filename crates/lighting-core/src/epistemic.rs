@@ -624,6 +624,7 @@ pub trait EpistemicRepository: Send + Sync {
     async fn list_unresolved_relations(
         &self,
     ) -> Result<Vec<GraphRelation>, EpistemicRepositoryError>;
+    async fn list_relations(&self) -> Result<Vec<GraphRelation>, EpistemicRepositoryError>;
     async fn store_predicate_definition(
         &self,
         definition: PredicateDefinition,

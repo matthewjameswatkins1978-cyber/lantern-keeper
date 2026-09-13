@@ -4,9 +4,13 @@ use chrono::{Duration, Utc};
 use lighting_core::{EpistemicRepository, ReconciliationAction, Stance};
 use lighting_service::{
     EpistemicService,
-    epistemic_dto::{ClaimRequest, PredicateDefinitionRequest, ReconcileClaimRequest},
+    epistemic_dto::{
+        BeliefRequest, ClaimRequest, CorrectionRequest, PredicateDefinitionRequest,
+        ReconcileClaimRequest, RelationRequest,
+    },
 };
 use lighting_store_surreal::{StoreConfig, SurrealEpistemicRepository, SurrealStore};
+use lighting_store_surreal::{SurrealMemoryPathRepository, SurrealSourceRepository};
 use uuid::Uuid;
 
 fn embedded_config(path: PathBuf) -> StoreConfig {
@@ -142,6 +146,124 @@ async fn claim_reconciliation_persists_history_and_lineage()
         old_revisions
             .iter()
             .all(|revision| revision.claim_id.is_some())
+    );
+
+    let _ = std::fs::remove_dir_all(path);
+    Ok(())
+}
+
+#[tokio::test]
+async fn correction_records_evidence_and_reconciles_one_target()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = test_path();
+    let store = SurrealStore::connect(&embedded_config(path.clone())).await?;
+    store.initialise_schema().await?;
+    let repository = SurrealEpistemicRepository::new(store.clone());
+    repository.migrate().await?;
+    let source_repository = SurrealSourceRepository::new(store.clone());
+    source_repository.migrate().await?;
+    let memory_path_repository = SurrealMemoryPathRepository::new(store);
+    memory_path_repository.migrate().await?;
+    let service = EpistemicService::new_with_evidence(
+        Arc::new(repository.clone()),
+        Arc::new(source_repository),
+        Arc::new(memory_path_repository),
+    );
+
+    service
+        .create_predicate_definition(PredicateDefinitionRequest {
+            key: "preferred_editor".to_owned(),
+            aliases: Vec::new(),
+            value_type: "text".to_owned(),
+            allowed_dimensions: vec!["os".to_owned()],
+            description: "Matthew's preferred editor".to_owned(),
+            status: lighting_core::PredicateDefinitionStatus::Active,
+            actor_id: "lucy".to_owned(),
+        })
+        .await?;
+    let first = service
+        .capture_claim(claim_request("VS Code", Utc::now() - Duration::minutes(2)))
+        .await?;
+    let created = service
+        .reconcile_claim(
+            first.id.as_str(),
+            ReconcileClaimRequest {
+                independent_evidence: false,
+            },
+        )
+        .await?;
+    let old = created.belief.expect("initial belief should exist");
+    let dependent = service
+        .create_belief(BeliefRequest {
+            holder_key: "lucy".to_owned(),
+            subject_key: "editor_setup".to_owned(),
+            predicate_key: "uses_editor".to_owned(),
+            current_value: "Zed plugins".to_owned(),
+            scope: BTreeMap::from([(String::from("os"), String::from("macos"))]),
+            confidence: 0.7,
+            trust_class: Some(lighting_core::TrustClass::Derived),
+            known_from: None,
+            valid_from: None,
+        })
+        .await?;
+    service
+        .store_relation(RelationRequest {
+            in_id: old.id.to_string(),
+            out_id: dependent.id.to_string(),
+            relation_type: "depends_on".to_owned(),
+            origin: "test".to_owned(),
+            confidence: 1.0,
+            resolved: true,
+        })
+        .await?;
+
+    let correction = service
+        .record_correction(CorrectionRequest {
+            target_belief_id: old.id.to_string(),
+            correction_text: "No, I use Zed on Mac.".to_owned(),
+            replacement_value: "Zed".to_owned(),
+            scope: BTreeMap::new(),
+        })
+        .await?;
+    assert!(!correction.source_id.is_empty());
+    assert!(!correction.episode_id.is_empty());
+    assert_eq!(correction.claim.originator_actor_id, "matthew");
+    assert_eq!(
+        correction.claim.source_id.as_deref(),
+        Some(correction.source_id.as_str())
+    );
+    assert_eq!(
+        correction.claim.episode_id.as_deref(),
+        Some(correction.episode_id.as_str())
+    );
+    assert_eq!(
+        correction.reconciliation.decision.action,
+        ReconciliationAction::Supersede
+    );
+    assert_eq!(
+        correction
+            .reconciliation
+            .belief
+            .as_ref()
+            .expect("replacement belief should exist")
+            .current_value,
+        "Zed"
+    );
+    assert_eq!(
+        repository
+            .get_belief(&old.id)
+            .await?
+            .expect("old belief remains")
+            .state,
+        lighting_core::BeliefState::Superseded
+    );
+    assert!(
+        repository
+            .get_belief(&dependent.id)
+            .await?
+            .expect("dependent belief remains")
+            .stale,
+        "correction must invalidate dependent projections"
     );
 
     let _ = std::fs::remove_dir_all(path);

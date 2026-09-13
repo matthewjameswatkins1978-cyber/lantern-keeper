@@ -64,6 +64,15 @@ pub struct ReconcileClaimRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct CorrectionRequest {
+    pub target_belief_id: String,
+    pub correction_text: String,
+    pub replacement_value: String,
+    #[serde(default)]
+    pub scope: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct BeliefRequest {
     pub holder_key: String,
     pub subject_key: String,

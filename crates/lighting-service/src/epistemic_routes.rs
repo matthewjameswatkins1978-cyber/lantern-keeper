@@ -6,7 +6,9 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    epistemic_dto::{BeliefRequest, ClaimRequest, MemoryItemRequest, MemoryItemSearchRequest},
+    epistemic_dto::{
+        BeliefRequest, ClaimRequest, CorrectionRequest, MemoryItemRequest, MemoryItemSearchRequest,
+    },
     epistemic_ops::EpistemicOperationError,
     state::AppState,
 };
@@ -50,6 +52,22 @@ pub async fn list_claims(
     };
     match service.list_claims(query.unmapped).await {
         Ok(claims) => (StatusCode::OK, Json(serde_json::json!({"claims": claims}))),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn record_correction(
+    State(state): State<AppState>,
+    Json(request): Json<CorrectionRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.record_correction(request).await {
+        Ok(result) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({"correction": result})),
+        ),
         Err(error) => error_response(error),
     }
 }

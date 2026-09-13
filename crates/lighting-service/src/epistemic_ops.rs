@@ -3,14 +3,16 @@ use std::{collections::BTreeMap, sync::Arc};
 use chrono::Utc;
 use lighting_core::{
     Belief, BeliefId, BeliefLineage, BeliefRevision, BeliefRevisionId, BeliefState, Claim,
-    DimensionDefinition, EpistemicError, EpistemicRepository, EpistemicRepositoryError, MemoryItem,
-    MemoryItemSearch, NewBelief, NewClaim, NewGraphRelation, NewMemoryItem, PredicateDefinition,
-    PredicateStatus, ReconciliationAction, ReconciliationDecision, Stance, Trace, TraceId,
-    TrustClass, normalize_registry_key, reconcile_claim,
+    DimensionDefinition, Episode, EpisodeTitle, EpistemicError, EpistemicRepository,
+    EpistemicRepositoryError, MemoryItem, MemoryItemSearch, MemoryPathRepository, NewBelief,
+    NewClaim, NewGraphRelation, NewMemoryItem, NewSource, PredicateDefinition, PredicateStatus,
+    ReconciliationAction, ReconciliationDecision, SourceContent, SourceKind, SourceRepository,
+    SourceTitle, Stance, StoreSourceResult, Trace, TraceId, TrustClass, normalize_registry_key,
+    propagate_stale_beliefs, reconcile_claim,
 };
 
 use crate::epistemic_dto::{
-    BeliefRequest, ClaimRequest, DimensionDefinitionRequest, MemoryItemRequest,
+    BeliefRequest, ClaimRequest, CorrectionRequest, DimensionDefinitionRequest, MemoryItemRequest,
     MemoryItemSearchRequest, PredicateDefinitionRequest, ReconcileClaimRequest, RelationRequest,
 };
 use crate::source_dto::ApiError;
@@ -34,6 +36,14 @@ pub struct ReconciliationResult {
     pub belief: Option<Belief>,
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct CorrectionResult {
+    pub source_id: String,
+    pub episode_id: String,
+    pub claim: Claim,
+    pub reconciliation: ReconciliationResult,
+}
+
 impl From<EpistemicOperationError> for ApiError {
     fn from(error: EpistemicOperationError) -> Self {
         match error {
@@ -54,11 +64,29 @@ impl From<EpistemicOperationError> for ApiError {
 #[derive(Clone)]
 pub struct EpistemicService {
     repo: Arc<dyn EpistemicRepository>,
+    source_repo: Option<Arc<dyn SourceRepository>>,
+    memory_path_repo: Option<Arc<dyn MemoryPathRepository>>,
 }
 
 impl EpistemicService {
     pub fn new(repo: Arc<dyn EpistemicRepository>) -> Self {
-        Self { repo }
+        Self {
+            repo,
+            source_repo: None,
+            memory_path_repo: None,
+        }
+    }
+
+    pub fn new_with_evidence(
+        repo: Arc<dyn EpistemicRepository>,
+        source_repo: Arc<dyn SourceRepository>,
+        memory_path_repo: Arc<dyn MemoryPathRepository>,
+    ) -> Self {
+        Self {
+            repo,
+            source_repo: Some(source_repo),
+            memory_path_repo: Some(memory_path_repo),
+        }
     }
 
     pub async fn capture_claim(
@@ -111,6 +139,80 @@ impl EpistemicService {
             .map_err(map_repository_error)
     }
 
+    pub async fn record_correction(
+        &self,
+        request: CorrectionRequest,
+    ) -> Result<CorrectionResult, EpistemicOperationError> {
+        let target_id =
+            BeliefId::new(request.target_belief_id.trim().to_owned()).map_err(|_| {
+                EpistemicOperationError::Invalid("target belief ID cannot be blank".to_owned())
+            })?;
+        let target = self
+            .repo
+            .get_belief(&target_id)
+            .await
+            .map_err(map_repository_error)?
+            .ok_or(EpistemicOperationError::NotFound)?;
+        if target.state != BeliefState::Active {
+            return Err(EpistemicOperationError::Invalid(
+                "correction target must be an active belief".to_owned(),
+            ));
+        }
+        let correction_text = required_text(request.correction_text, "correction text")?;
+        let replacement_value = required_text(request.replacement_value, "replacement value")?;
+        let (source_id, episode_id) = self.record_correction_evidence(&correction_text).await?;
+        let now = Utc::now();
+        let claim = Claim::new(NewClaim {
+            episode_id: Some(episode_id.clone()),
+            source_id: Some(source_id.clone()),
+            evidence_span: Some((0, correction_text.len())),
+            subject_key: target.subject_key.clone(),
+            predicate_key: Some(target.predicate_key.clone()),
+            predicate_candidate: None,
+            predicate_status: PredicateStatus::Resolved,
+            value: replacement_value,
+            scope: if request.scope.is_empty() {
+                target.scope.clone()
+            } else {
+                request.scope
+            },
+            polarity: true,
+            originator_actor_id: "matthew".to_owned(),
+            speaker_actor_id: "matthew".to_owned(),
+            transmitter_actor_id: None,
+            holder_actor_id: Some(target.holder_key.clone()),
+            stance: Stance::Endorsing,
+            framing_path: Vec::new(),
+            confidence: 1.0,
+            known_at: now,
+            valid_from: Some(now),
+            valid_to: None,
+            extractor: "matthew_correction".to_owned(),
+            extractor_version: "1".to_owned(),
+            created_at: now,
+        })
+        .map_err(map_domain_error)?;
+        let claim = self
+            .repo
+            .store_claim(claim)
+            .await
+            .map_err(map_repository_error)?;
+        let reconciliation = self
+            .reconcile_claim(
+                claim.id.as_str(),
+                ReconcileClaimRequest {
+                    independent_evidence: true,
+                },
+            )
+            .await?;
+        Ok(CorrectionResult {
+            source_id,
+            episode_id,
+            claim,
+            reconciliation,
+        })
+    }
+
     pub async fn reconcile_claim(
         &self,
         id: &str,
@@ -124,12 +226,13 @@ impl EpistemicService {
             .await
             .map_err(map_repository_error)?
             .ok_or(EpistemicOperationError::NotFound)?;
-        let existing = self
+        let all_beliefs = self
             .repo
             .list_beliefs(true)
             .await
-            .map_err(map_repository_error)?
-            .into_iter()
+            .map_err(map_repository_error)?;
+        let existing = all_beliefs
+            .iter()
             .filter(|belief| {
                 claim.predicate_key.as_ref() == Some(&belief.predicate_key)
                     && claim.subject_key == belief.subject_key
@@ -137,10 +240,36 @@ impl EpistemicService {
                     && claim.scope_hash == belief.scope_hash
                     && belief.state == BeliefState::Active
             })
-            .max_by_key(|belief| belief.updated_at);
+            .max_by_key(|belief| belief.updated_at)
+            .cloned();
         let decision = reconcile_claim(&claim, existing.as_ref(), request.independent_evidence);
         let now = Utc::now();
         let trace_id = new_trace_id()?;
+        let mut stale_updates = Vec::new();
+        if let Some(upstream) = existing.as_ref()
+            && matches!(
+                decision.action,
+                ReconciliationAction::Supersede | ReconciliationAction::Dispute
+            )
+        {
+            let relations = self
+                .repo
+                .list_relations()
+                .await
+                .map_err(map_repository_error)?;
+            let mut projections = all_beliefs.clone();
+            let stale_ids = propagate_stale_beliefs(
+                &mut projections,
+                &relations,
+                upstream.id.as_str(),
+                "upstream belief changed",
+                now,
+            );
+            stale_updates = projections
+                .into_iter()
+                .filter(|belief| stale_ids.contains(&belief.id.to_string()))
+                .collect();
+        }
         let mut previous = None;
         let mut current = None;
         let mut result_belief = existing.clone();
@@ -254,6 +383,10 @@ impl EpistemicService {
             "independent_evidence".to_owned(),
             request.independent_evidence.to_string(),
         );
+        details.insert(
+            "stale_dependency_count".to_owned(),
+            stale_updates.len().to_string(),
+        );
         if let Some(old) = previous.as_ref() {
             details.insert("old_value".to_owned(), old.current_value.clone());
         }
@@ -279,7 +412,7 @@ impl EpistemicService {
         };
         let belief = self
             .repo
-            .apply_belief_transition(previous, current, revisions, trace, Vec::new())
+            .apply_belief_transition(previous, current, revisions, trace, stale_updates)
             .await
             .map_err(map_repository_error)?;
         Ok(ReconciliationResult {
@@ -584,6 +717,67 @@ impl EpistemicService {
             ));
         }
         Ok((None, Some(normalized), PredicateStatus::Unmapped))
+    }
+
+    async fn record_correction_evidence(
+        &self,
+        correction_text: &str,
+    ) -> Result<(String, String), EpistemicOperationError> {
+        let source_repo = self.source_repo.as_ref().ok_or_else(|| {
+            EpistemicOperationError::Invalid(
+                "correction evidence storage is not configured".to_owned(),
+            )
+        })?;
+        let memory_path_repo = self.memory_path_repo.as_ref().ok_or_else(|| {
+            EpistemicOperationError::Invalid(
+                "correction evidence storage is not configured".to_owned(),
+            )
+        })?;
+        let source = lighting_core::Source::create(NewSource {
+            kind: SourceKind::PlainText,
+            title: SourceTitle::new("Matthew correction")
+                .map_err(|error| EpistemicOperationError::Invalid(error.to_string()))?,
+            content: SourceContent::new(correction_text.to_owned())
+                .map_err(|error| EpistemicOperationError::Invalid(error.to_string()))?,
+        });
+        let source_id = match source_repo
+            .store(source)
+            .await
+            .map_err(|error| EpistemicOperationError::Repository(Box::new(error)))?
+        {
+            StoreSourceResult::Stored(source) => source.id().clone(),
+            StoreSourceResult::Duplicate { existing_id, .. } => existing_id,
+        };
+        let source = source_repo
+            .get(&source_id)
+            .await
+            .map_err(|error| EpistemicOperationError::Repository(Box::new(error)))?
+            .ok_or_else(|| {
+                EpistemicOperationError::Invalid(
+                    "stored correction Source could not be reloaded".to_owned(),
+                )
+            })?;
+        let end_byte = source.content().as_bytes().len();
+        let episode = if let Some(existing) = memory_path_repo
+            .find_episode_by_source_range(&source_id, 0, end_byte)
+            .await
+            .map_err(|error| EpistemicOperationError::Repository(Box::new(error)))?
+        {
+            existing
+        } else {
+            let range =
+                lighting_core::SourceRange::new(source_id.clone(), 0, end_byte, source.content())
+                    .map_err(|error| EpistemicOperationError::Invalid(error.to_string()))?;
+            memory_path_repo
+                .create_episode(Episode::new(
+                    EpisodeTitle::new("Matthew correction")
+                        .map_err(|error| EpistemicOperationError::Invalid(error.to_string()))?,
+                    range,
+                ))
+                .await
+                .map_err(|error| EpistemicOperationError::Repository(Box::new(error)))?
+        };
+        Ok((source_id.as_str().to_owned(), episode.id().to_string()))
     }
 
     async fn append_registry_trace(
