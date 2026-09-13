@@ -411,14 +411,17 @@ impl EpistemicRepository for SurrealEpistemicRepository {
         &self,
         proposal: Proposal,
     ) -> Result<Proposal, EpistemicRepositoryError> {
-        append_payload(
-            &self.store,
-            "proposal",
-            proposal.id.as_str(),
-            &proposal,
-            proposal.created_at,
-        )
-        .await
+        let payload = serde_json::to_string(&proposal)
+            .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
+        self.store
+            .query("CREATE proposal CONTENT { id: $id, payload: $payload, status: $status, created_at: $created_at }")
+            .bind(("id", proposal.id.as_str()))
+            .bind(("payload", payload))
+            .bind(("status", proposal.status.clone()))
+            .bind(("created_at", proposal.created_at))
+            .await
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        Ok(proposal)
     }
 
     async fn list_proposals(
@@ -426,9 +429,9 @@ impl EpistemicRepository for SurrealEpistemicRepository {
         limit: usize,
     ) -> Result<Vec<Proposal>, EpistemicRepositoryError> {
         let query = if limit > 0 {
-            "SELECT * FROM proposal WHERE payload CONTAINS '\"status\":\"pending\"' ORDER BY created_at ASC, id ASC LIMIT $limit"
+            "SELECT * FROM proposal WHERE status = 'pending' OR payload CONTAINS '\"status\":\"pending\"' ORDER BY created_at ASC, id ASC LIMIT $limit"
         } else {
-            "SELECT * FROM proposal WHERE payload CONTAINS '\"status\":\"pending\"' ORDER BY created_at ASC, id ASC"
+            "SELECT * FROM proposal WHERE status = 'pending' OR payload CONTAINS '\"status\":\"pending\"' ORDER BY created_at ASC, id ASC"
         };
         let mut request = self.store.query(query);
         if limit > 0 {
@@ -465,10 +468,11 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
         self.store
             .query(
-                "UPDATE proposal SET payload = $payload WHERE id = type::record('proposal', $id)",
+                "UPDATE proposal SET payload = $payload, status = $status WHERE id = type::record('proposal', $id)",
             )
             .bind(("id", proposal.id.as_str()))
             .bind(("payload", payload))
+            .bind(("status", proposal.status.clone()))
             .await
             .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
         Ok(proposal)
@@ -777,6 +781,7 @@ DEFINE FIELD IF NOT EXISTS created_at ON trace TYPE datetime;
 
 DEFINE TABLE IF NOT EXISTS proposal SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS payload ON proposal TYPE string;
+DEFINE FIELD IF NOT EXISTS status ON proposal TYPE string;
 DEFINE FIELD IF NOT EXISTS created_at ON proposal TYPE datetime;
 
 DEFINE TABLE IF NOT EXISTS memory_relation SCHEMAFULL;
