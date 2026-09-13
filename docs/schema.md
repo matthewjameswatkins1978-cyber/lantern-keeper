@@ -21,3 +21,6 @@ subject plus predicate. `scope_hash` is calculated from sorted key/value pairs.
 Stale is independent of belief state and increases dependency generation.
 Belief projections retain Claim IDs and prior Belief IDs in their lineage;
 value/state changes are also written to immutable `belief_revision` records.
+Context Packs are bounded, stable-ID read projections persisted with their
+typed selected records and retrieval trace. Foreman decisions update only
+Proposal state and append a Trace; they do not promote canonical Beliefs.

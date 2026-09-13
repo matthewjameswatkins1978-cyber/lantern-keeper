@@ -3,16 +3,17 @@
 ## Repository
 
 - Active line: `feature/lantern-full-move`
-- Current feature checkpoint: `df956d26a333d042ff325f5c909d6767a4a8a3ed`
+- Current feature checkpoint: `52d87a6`
 - Canonical `master`: `a44554b7050e9b3dd2178eede99b67184d89d12c`
-- Feature checkout is clean at the pushed durable-reconciliation checkpoint.
+- Feature checkout is clean at the pushed Foreman/retrieval checkpoint.
 - `master` remains unchanged by the feature work.
 
 ## Phase
 
 Foundation modernisation and Basic Memory import accounting are complete.
-Spring cleaning is complete. Durable Claim-to-Belief reconciliation and
-immutable Belief revision history are now the active implementation phase.
+Spring cleaning is complete. Durable Claim-to-Belief reconciliation,
+correction, stale invalidation, deterministic Context Packs, and bounded
+Foreman review are now implemented on the feature line.
 
 ## Works today
 
@@ -24,6 +25,15 @@ immutable Belief revision history are now the active implementation phase.
 - Direct Claims can be durably reconciled into current Beliefs. Supersession
   preserves the old projection, records immutable revisions, and retains
   Claim-to-Belief lineage in one transactional store operation.
+- Direct Matthew corrections are preserved as Source/Episode evidence and can
+  be linked to the exact Context Pack that influenced the correction.
+- Deterministic Context Packs have stable IDs, typed Matthew/Lucy/shared/legacy
+  sections, bounded selection, stale exclusions, retrieval lanes, persistence,
+  and compiler traces.
+- Belief inspection supports get, lexical search, immutable history,
+  provenance explanation, and stale listing. Foreman supports a bounded queue
+  and traced accept/reject/modify/defer decisions without direct belief
+  promotion.
 - Predicate and dimension normalization, explicit unmapped Claims, pure
   reconciliation decisions, echo suppression, direct-holder gates, and
   transitive stale propagation are implemented.
@@ -32,9 +42,10 @@ immutable Belief revision history are now the active implementation phase.
 
 ## Still missing or partial
 
-- Correction workflow, persisted Context Pack traces, and stale-aware reads.
-- Fused retrieval, bounded graph projection, expanded LanternBench,
-  Foreman/Dreamer operations, restore proof, and a real Lucy-native MCP path.
+- Natural-language correction targeting and full response-context bridge
+  linkage remain partial; explicit target IDs are required today.
+- Fused retrieval, bounded graph projection, expanded LanternBench, Dreamer
+  operations, restore proof, and a real Lucy-native MCP path remain.
 - Basic Memory shadow comparison, final delta, and cutover.
 
 ## Environment
@@ -52,6 +63,7 @@ at `recovery/pre-spring-clean-c2cdfd9`. Private migration material remains in
 
 ## Next verified step
 
-Implement correction and stale-aware reads, then checkpoint them on
-`feature/lantern-full-move`; leave `master` untouched until all cutover gates
+Run the complete workspace lane, then expand Context Compiler retrieval and
+LanternBench behaviour before beginning MCP or cutover work. Keep
+`master` untouched until every cutover gate
 are green.
