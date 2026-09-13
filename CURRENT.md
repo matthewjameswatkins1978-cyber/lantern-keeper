@@ -3,7 +3,7 @@
 ## Repository
 
 - Active line: `feature/lantern-full-move`
-- Current feature checkpoint: `52d87a6`
+- Current feature checkpoint: `c95bf24` (pending provenance/history checkpoint)
 - Canonical `master`: `a44554b7050e9b3dd2178eede99b67184d89d12c`
 - Feature checkout is clean at the pushed Foreman/retrieval checkpoint.
 - `master` remains unchanged by the feature work.
@@ -28,7 +28,8 @@ Foreman review are now implemented on the feature line.
 - Direct Matthew corrections are preserved as Source/Episode evidence and can
   be linked to the exact Context Pack that influenced the correction.
 - Deterministic Context Packs have stable IDs, typed Matthew/Lucy/shared/legacy
-  sections, bounded selection, stale exclusions, retrieval lanes, persistence,
+  sections, separate historical beliefs, bounded selection, stale exclusions,
+  source/episode provenance, candidate scores, retrieval lanes, persistence,
   and compiler traces.
 - Belief inspection supports get, lexical search, immutable history,
   provenance explanation, and stale listing. Foreman supports a bounded queue
@@ -44,7 +45,7 @@ Foreman review are now implemented on the feature line.
 
 - Natural-language correction targeting and full response-context bridge
   linkage remain partial; explicit target IDs are required today.
-- Fused retrieval, bounded graph projection, expanded LanternBench, Dreamer
+- Exact typed/fused retrieval, bounded graph projection, expanded LanternBench, Dreamer
   operations, restore proof, and a real Lucy-native MCP path remain.
 - Basic Memory shadow comparison, final delta, and cutover.
 

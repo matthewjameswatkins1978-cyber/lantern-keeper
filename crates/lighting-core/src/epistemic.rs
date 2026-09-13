@@ -501,6 +501,8 @@ pub struct ContextPack {
     #[serde(default)]
     pub current_beliefs: Vec<Belief>,
     #[serde(default)]
+    pub historical_beliefs: Vec<Belief>,
+    #[serde(default)]
     pub lucy_beliefs: Vec<Belief>,
     #[serde(default)]
     pub shared_beliefs: Vec<Belief>,
@@ -510,6 +512,8 @@ pub struct ContextPack {
     pub soft_memories: Vec<MemoryItem>,
     #[serde(default)]
     pub source_refs: Vec<String>,
+    #[serde(default)]
+    pub episode_refs: Vec<String>,
     #[serde(default)]
     pub retrieval_trace: ContextTrace,
 }
@@ -528,6 +532,8 @@ pub struct ContextTrace {
     pub excluded_stale_ids: Vec<String>,
     #[serde(default)]
     pub lanes: Vec<String>,
+    #[serde(default)]
+    pub candidate_scores: BTreeMap<String, i32>,
     pub item_budget: usize,
 }
 

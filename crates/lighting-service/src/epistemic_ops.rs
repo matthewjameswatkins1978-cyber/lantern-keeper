@@ -773,7 +773,17 @@ impl EpistemicService {
         let query_tokens = context_tokens(&query);
         let mut belief_candidates: Vec<(i32, Belief)> = all_beliefs
             .into_iter()
-            .map(|belief| (belief_relevance(&belief, &query_tokens, &scope), belief))
+            .map(|belief| {
+                let state_bonus = if belief.state == BeliefState::Active {
+                    2
+                } else {
+                    0
+                };
+                (
+                    belief_relevance(&belief, &query_tokens, &scope) + state_bonus,
+                    belief,
+                )
+            })
             .filter(|(score, belief)| *score > 0 || belief.stale)
             .collect();
         belief_candidates.sort_by(|(left_score, left), (right_score, right)| {
@@ -802,6 +812,13 @@ impl EpistemicService {
             .iter()
             .map(|(_, memory)| memory.id.to_string())
             .collect::<Vec<_>>();
+        let mut candidate_scores = std::collections::BTreeMap::new();
+        for (score, belief) in &belief_candidates {
+            candidate_scores.insert(belief.id.to_string(), *score);
+        }
+        for (score, memory) in &memory_candidates {
+            candidate_scores.insert(memory.id.to_string(), *score);
+        }
         let omitted_stale_ids = belief_candidates
             .iter()
             .filter(|(_, belief)| belief.stale)
@@ -840,32 +857,70 @@ impl EpistemicService {
             selected_ids: selected_ids.clone(),
             excluded_stale_ids: omitted_stale_ids.clone(),
             lanes: vec!["typed-belief".to_owned(), "lexical-soft-memory".to_owned()],
+            candidate_scores,
             item_budget,
         };
         let current_beliefs = selected_beliefs
             .iter()
-            .filter(|belief| belief.holder_key == "matthew")
+            .filter(|belief| belief.state == BeliefState::Active && belief.holder_key == "matthew")
+            .cloned()
+            .collect::<Vec<_>>();
+        let historical_beliefs = selected_beliefs
+            .iter()
+            .filter(|belief| belief.state != BeliefState::Active)
             .cloned()
             .collect::<Vec<_>>();
         let lucy_beliefs = selected_beliefs
             .iter()
-            .filter(|belief| belief.holder_key == "lucy")
+            .filter(|belief| belief.state == BeliefState::Active && belief.holder_key == "lucy")
             .cloned()
             .collect::<Vec<_>>();
         let shared_beliefs = selected_beliefs
             .iter()
-            .filter(|belief| belief.holder_key.starts_with("shared:"))
+            .filter(|belief| {
+                belief.state == BeliefState::Active && belief.holder_key.starts_with("shared:")
+            })
             .cloned()
             .collect::<Vec<_>>();
         let legacy_beliefs = selected_beliefs
             .iter()
-            .filter(|belief| belief.holder_key.starts_with("legacy:"))
+            .filter(|belief| {
+                belief.state == BeliefState::Active && belief.holder_key.starts_with("legacy:")
+            })
             .cloned()
             .collect::<Vec<_>>();
-        let source_refs = selected_memories
-            .iter()
-            .filter_map(|memory| memory.source_id.clone())
-            .collect::<Vec<_>>();
+        let claims = self
+            .repo
+            .list_claims(false)
+            .await
+            .map_err(map_repository_error)?;
+        let mut source_refs = Vec::new();
+        let mut episode_refs = Vec::new();
+        for memory in &selected_memories {
+            if let Some(source_id) = &memory.source_id {
+                push_unique(&mut source_refs, source_id.clone());
+            }
+            if let Some(episode_id) = &memory.episode_id {
+                push_unique(&mut episode_refs, episode_id.clone());
+            }
+        }
+        for belief in &selected_beliefs {
+            for claim_id in belief
+                .lineage
+                .supporting_claim_ids
+                .iter()
+                .chain(belief.lineage.contradictory_claim_ids.iter())
+            {
+                if let Some(claim) = claims.iter().find(|claim| claim.id.as_str() == claim_id) {
+                    if let Some(source_id) = &claim.source_id {
+                        push_unique(&mut source_refs, source_id.clone());
+                    }
+                    if let Some(episode_id) = &claim.episode_id {
+                        push_unique(&mut episode_refs, episode_id.clone());
+                    }
+                }
+            }
+        }
         let mut generated_context = render_context(
             &query,
             &current_beliefs,
@@ -875,6 +930,7 @@ impl EpistemicService {
             &selected_memories,
             &omitted_stale_ids,
         );
+        insert_historical_beliefs(&mut generated_context, &historical_beliefs);
         if let Some(intent) = request
             .intent
             .as_deref()
@@ -893,11 +949,13 @@ impl EpistemicService {
             actor: request.actor,
             scope,
             current_beliefs,
+            historical_beliefs,
             lucy_beliefs,
             shared_beliefs,
             legacy_beliefs,
             soft_memories: selected_memories,
             source_refs,
+            episode_refs,
             retrieval_trace,
         };
         self.repo
@@ -1311,6 +1369,17 @@ fn render_context(
         }
     }
     rendered
+}
+
+fn insert_historical_beliefs(rendered: &mut String, beliefs: &[Belief]) {
+    let mut section = String::new();
+    render_belief_section(&mut section, "Historical beliefs", beliefs);
+    let marker = "## Stale exclusions\n";
+    if let Some(index) = rendered.find(marker) {
+        rendered.insert_str(index, &section);
+    } else {
+        rendered.push_str(&section);
+    }
 }
 
 fn render_belief_section(rendered: &mut String, title: &str, beliefs: &[Belief]) {

@@ -151,6 +151,37 @@ async fn claim_reconciliation_persists_history_and_lineage()
             .all(|revision| revision.claim_id.is_some())
     );
 
+    let historical_pack = service
+        .compile_context(ContextCompileRequest {
+            query: "Zed editor".to_owned(),
+            actor: Some("lucy".to_owned()),
+            scope: BTreeMap::from([(String::from("os"), String::from("macos"))]),
+            intent: None,
+            item_budget: 10,
+        })
+        .await?;
+    assert_eq!(
+        historical_pack.current_beliefs,
+        vec![current.clone()],
+        "only the active projection belongs in current context"
+    );
+    assert_eq!(historical_pack.historical_beliefs, vec![historical]);
+    assert!(
+        historical_pack
+            .generated_context
+            .contains("Historical beliefs")
+    );
+    assert!(
+        historical_pack
+            .source_refs
+            .contains(&"source:editor-preference".to_owned())
+    );
+    assert!(
+        historical_pack
+            .episode_refs
+            .contains(&"episode:editor-preference".to_owned())
+    );
+
     let _ = std::fs::remove_dir_all(path);
     Ok(())
 }
@@ -324,6 +355,8 @@ async fn context_compiler_returns_bounded_typed_pack_and_persists_it()
     assert!(pack.selected_ids.len() <= 2);
     assert_eq!(pack.current_beliefs, vec![belief]);
     assert_eq!(pack.soft_memories, vec![memory]);
+    assert!(pack.retrieval_trace.candidate_scores.len() >= 2);
+    assert!(pack.episode_refs.is_empty());
     assert!(pack.generated_context.contains("Matthew beliefs"));
     assert!(
         pack.generated_context
