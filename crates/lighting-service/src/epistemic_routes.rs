@@ -137,6 +137,89 @@ pub async fn list_beliefs(
     }
 }
 
+pub async fn get_belief(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.get_belief(&id).await {
+        Ok(belief) => (StatusCode::OK, Json(serde_json::json!({"belief": belief}))),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn belief_history(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.belief_history(&id).await {
+        Ok(revisions) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"revisions": revisions})),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BeliefSearchQuery {
+    pub query: String,
+    #[serde(default)]
+    pub include_stale: bool,
+}
+
+pub async fn search_beliefs(
+    State(state): State<AppState>,
+    Query(query): Query<BeliefSearchQuery>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service
+        .search_beliefs(&query.query, query.include_stale)
+        .await
+    {
+        Ok(beliefs) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"beliefs": beliefs})),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn explain_belief(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.explain_belief(&id).await {
+        Ok(explanation) => (StatusCode::OK, Json(serde_json::json!(explanation))),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn list_stale_beliefs(
+    State(state): State<AppState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.list_stale_beliefs().await {
+        Ok(beliefs) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"beliefs": beliefs})),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
 pub async fn mark_belief_stale(
     Path(id): Path<String>,
     State(state): State<AppState>,

@@ -108,6 +108,33 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             PredicateCommand::Aliases { key, json } => cmd_predicate_aliases(&client, &key, json),
             PredicateCommand::Unmapped { json } => cmd_predicate_unmapped(&client, json),
         },
+        CliCommand::Belief { command } => match command {
+            BeliefCommand::Get { belief_id, json } => cmd_belief_get(&client, &belief_id, json),
+            BeliefCommand::Search {
+                query,
+                include_stale,
+                json,
+            } => cmd_belief_search(&client, &query, include_stale, json),
+            BeliefCommand::History { belief_id, json } => {
+                cmd_belief_history(&client, &belief_id, json)
+            }
+            BeliefCommand::Explain { belief_id, json } => {
+                cmd_belief_explain(&client, &belief_id, json)
+            }
+            BeliefCommand::Stale { json } => cmd_belief_stale(&client, json),
+        },
+        CliCommand::CorrectionRecord {
+            target_belief_id,
+            correction_text,
+            replacement_value,
+            json,
+        } => cmd_correction_record(
+            &client,
+            &target_belief_id,
+            &correction_text,
+            &replacement_value,
+            json,
+        ),
         CliCommand::ProjectHandoff { project_id, json } => {
             cmd_project_handoff(&client, &project_id, json)
         }
@@ -269,6 +296,19 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: PredicateCommand,
     },
+    /// Inspect reconciled Belief projections and their evidence.
+    Belief {
+        #[command(subcommand)]
+        command: BeliefCommand,
+    },
+    /// Record a direct Matthew correction against one active Belief.
+    CorrectionRecord {
+        target_belief_id: String,
+        correction_text: String,
+        replacement_value: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// Produce a Codex-ready handoff for a Project.
     ProjectHandoff {
         /// Project ID (UUID).
@@ -356,6 +396,41 @@ pub enum PredicateCommand {
     },
 }
 
+#[derive(Debug, Subcommand, Clone)]
+pub enum BeliefCommand {
+    /// Get one belief projection.
+    Get {
+        belief_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Search belief projections by deterministic lexical matching.
+    Search {
+        query: String,
+        #[arg(long)]
+        include_stale: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show immutable revisions for one belief.
+    History {
+        belief_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Explain one belief from stored revisions and Claims.
+    Explain {
+        belief_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List stale belief projections.
+    Stale {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 // ---------------------------------------------------------------------------
 // HTTP client
 // ---------------------------------------------------------------------------
@@ -380,6 +455,22 @@ impl HttpClient {
         let url = format!("{}{path}", self.base_url);
         self.client
             .get(&url)
+            .send()
+            .map_err(|e| CliError::Connection {
+                url: url.clone(),
+                source: e,
+            })
+    }
+
+    fn get_query(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<reqwest::blocking::Response, CliError> {
+        let url = format!("{}{path}", self.base_url);
+        self.client
+            .get(&url)
+            .query(query)
             .send()
             .map_err(|e| CliError::Connection {
                 url: url.clone(),
@@ -2112,6 +2203,126 @@ fn cmd_context(
         println!("{}", serde_json::to_string_pretty(&body).unwrap());
     } else if let Some(context) = body["context"].as_str() {
         print!("{context}");
+    }
+    Ok(())
+}
+
+fn cmd_belief_get(client: &HttpClient, belief_id: &str, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get(&format!("/api/v1/beliefs/{belief_id}"))
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else {
+        println!("{}", serde_json::to_string_pretty(&body["belief"])?);
+    }
+    Ok(())
+}
+
+fn cmd_belief_search(
+    client: &HttpClient,
+    query: &str,
+    include_stale: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let response = client
+        .get_query(
+            "/api/v1/beliefs/search",
+            &[
+                ("query", query),
+                (
+                    "include_stale",
+                    if include_stale { "true" } else { "false" },
+                ),
+            ],
+        )
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else {
+        for belief in body["beliefs"].as_array().into_iter().flatten() {
+            println!(
+                "- [{}] {}.{} = {}{}",
+                belief["holder_key"],
+                belief["subject_key"],
+                belief["predicate_key"],
+                belief["current_value"],
+                if belief["stale"].as_bool().unwrap_or(false) {
+                    " [STALE]"
+                } else {
+                    ""
+                }
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_belief_history(client: &HttpClient, belief_id: &str, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get(&format!("/api/v1/beliefs/{belief_id}/history"))
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    let value = if json { &body } else { &body["revisions"] };
+    println!("{}", serde_json::to_string_pretty(value)?);
+    Ok(())
+}
+
+fn cmd_belief_explain(client: &HttpClient, belief_id: &str, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get(&format!("/api/v1/beliefs/{belief_id}/explain"))
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    println!("{}", serde_json::to_string_pretty(&body)?);
+    if !json {
+        println!("Belief explanation returned with stored Claims and revisions.");
+    }
+    Ok(())
+}
+
+fn cmd_belief_stale(client: &HttpClient, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get("/api/v1/beliefs/stale")
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    println!("{}", serde_json::to_string_pretty(&body)?);
+    if !json {
+        println!("Stale projections are excluded from current Context Packs.");
+    }
+    Ok(())
+}
+
+fn cmd_correction_record(
+    client: &HttpClient,
+    target_belief_id: &str,
+    correction_text: &str,
+    replacement_value: &str,
+    json: bool,
+) -> anyhow::Result<()> {
+    if correction_text.trim().is_empty() || replacement_value.trim().is_empty() {
+        bail!("correction text and replacement value must not be blank");
+    }
+    let response = client
+        .post_json(
+            "/api/v1/corrections",
+            &serde_json::json!({
+                "target_belief_id": target_belief_id,
+                "correction_text": correction_text,
+                "replacement_value": replacement_value,
+            }),
+        )
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else {
+        println!("Correction recorded for belief {target_belief_id}.");
+        println!(
+            "{}",
+            body["correction"]["reconciliation"]["decision"]["action"]
+        );
     }
     Ok(())
 }

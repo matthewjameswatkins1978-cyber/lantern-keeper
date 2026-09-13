@@ -124,6 +124,26 @@ pub fn build_router(state: AppState) -> Router {
                         .get(epistemic_routes::list_beliefs),
                 )
                 .route(
+                    "/api/v1/beliefs/search",
+                    axum::routing::get(epistemic_routes::search_beliefs),
+                )
+                .route(
+                    "/api/v1/beliefs/stale",
+                    axum::routing::get(epistemic_routes::list_stale_beliefs),
+                )
+                .route(
+                    "/api/v1/beliefs/{belief_id}",
+                    axum::routing::get(epistemic_routes::get_belief),
+                )
+                .route(
+                    "/api/v1/beliefs/{belief_id}/history",
+                    axum::routing::get(epistemic_routes::belief_history),
+                )
+                .route(
+                    "/api/v1/beliefs/{belief_id}/explain",
+                    axum::routing::get(epistemic_routes::explain_belief),
+                )
+                .route(
                     "/api/v1/beliefs/{belief_id}/stale",
                     axum::routing::post(epistemic_routes::mark_belief_stale),
                 )

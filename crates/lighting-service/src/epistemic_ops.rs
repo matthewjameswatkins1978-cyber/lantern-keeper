@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use chrono::Utc;
 use lighting_core::{
-    Belief, BeliefId, BeliefLineage, BeliefRevision, BeliefRevisionId, BeliefState, Claim,
+    Belief, BeliefId, BeliefLineage, BeliefRevision, BeliefRevisionId, BeliefState, Claim, ClaimId,
     ContextPack, ContextPackId, ContextTrace, DimensionDefinition, Episode, EpisodeTitle,
     EpistemicError, EpistemicRepository, EpistemicRepositoryError, MemoryItem, MemoryItemSearch,
     MemoryPathRepository, NewBelief, NewClaim, NewGraphRelation, NewMemoryItem, NewSource,
@@ -43,6 +43,14 @@ pub struct CorrectionResult {
     pub episode_id: String,
     pub claim: Claim,
     pub reconciliation: ReconciliationResult,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct BeliefExplanation {
+    pub belief: Belief,
+    pub revisions: Vec<BeliefRevision>,
+    pub supporting_claims: Vec<Claim>,
+    pub contradictory_claims: Vec<Claim>,
 }
 
 impl From<EpistemicOperationError> for ApiError {
@@ -482,6 +490,99 @@ impl EpistemicService {
             .list_beliefs(include_stale)
             .await
             .map_err(map_repository_error)
+    }
+
+    pub async fn get_belief(&self, id: &str) -> Result<Belief, EpistemicOperationError> {
+        let id = BeliefId::new(id.trim().to_owned()).map_err(|_| {
+            EpistemicOperationError::Invalid("belief ID cannot be blank".to_owned())
+        })?;
+        self.repo
+            .get_belief(&id)
+            .await
+            .map_err(map_repository_error)?
+            .ok_or(EpistemicOperationError::NotFound)
+    }
+
+    pub async fn belief_history(
+        &self,
+        id: &str,
+    ) -> Result<Vec<BeliefRevision>, EpistemicOperationError> {
+        let belief = self.get_belief(id).await?;
+        self.repo
+            .list_belief_revisions(&belief.id)
+            .await
+            .map_err(map_repository_error)
+    }
+
+    pub async fn explain_belief(
+        &self,
+        id: &str,
+    ) -> Result<BeliefExplanation, EpistemicOperationError> {
+        let belief = self.get_belief(id).await?;
+        let revisions = self
+            .repo
+            .list_belief_revisions(&belief.id)
+            .await
+            .map_err(map_repository_error)?;
+        let claims = self
+            .repo
+            .list_claims(false)
+            .await
+            .map_err(map_repository_error)?;
+        let supporting = belief
+            .lineage
+            .supporting_claim_ids
+            .iter()
+            .filter_map(|id| ClaimId::new(id.clone()).ok())
+            .filter_map(|id| claims.iter().find(|claim| claim.id == id).cloned())
+            .collect();
+        let contradictory = belief
+            .lineage
+            .contradictory_claim_ids
+            .iter()
+            .filter_map(|id| ClaimId::new(id.clone()).ok())
+            .filter_map(|id| claims.iter().find(|claim| claim.id == id).cloned())
+            .collect();
+        Ok(BeliefExplanation {
+            belief,
+            revisions,
+            supporting_claims: supporting,
+            contradictory_claims: contradictory,
+        })
+    }
+
+    pub async fn search_beliefs(
+        &self,
+        query: &str,
+        include_stale: bool,
+    ) -> Result<Vec<Belief>, EpistemicOperationError> {
+        let query = required_text(query.to_owned(), "belief search query")?;
+        let tokens = context_tokens(&query);
+        let mut results = self
+            .repo
+            .list_beliefs(include_stale)
+            .await
+            .map_err(map_repository_error)?
+            .into_iter()
+            .map(|belief| (belief_relevance(&belief, &tokens, &BTreeMap::new()), belief))
+            .filter(|(score, _)| *score > 0)
+            .collect::<Vec<_>>();
+        results.sort_by(|(left_score, left), (right_score, right)| {
+            right_score
+                .cmp(left_score)
+                .then_with(|| right.updated_at.cmp(&left.updated_at))
+                .then_with(|| left.id.to_string().cmp(&right.id.to_string()))
+        });
+        Ok(results.into_iter().map(|(_, belief)| belief).collect())
+    }
+
+    pub async fn list_stale_beliefs(&self) -> Result<Vec<Belief>, EpistemicOperationError> {
+        Ok(self
+            .list_beliefs(true)
+            .await?
+            .into_iter()
+            .filter(|belief| belief.stale)
+            .collect())
     }
 
     pub async fn mark_belief_stale(
