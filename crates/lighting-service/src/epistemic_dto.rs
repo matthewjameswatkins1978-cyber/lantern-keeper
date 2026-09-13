@@ -65,7 +65,10 @@ pub struct ReconcileClaimRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct CorrectionRequest {
-    pub target_belief_id: String,
+    #[serde(default)]
+    pub target_belief_id: Option<String>,
+    #[serde(default)]
+    pub target_query: Option<String>,
     pub correction_text: String,
     pub replacement_value: String,
     #[serde(default)]

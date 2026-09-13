@@ -225,13 +225,27 @@ fn call_tool(
                 arguments,
                 &[
                     "target_belief_id",
+                    "target_query",
                     "correction_text",
                     "replacement_value",
                     "context_pack_id",
                     "scope",
                 ],
             )?;
-            required_string(arguments, "target_belief_id")?;
+            let has_belief_id = arguments
+                .get("target_belief_id")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty());
+            let has_target_query = arguments
+                .get("target_query")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty());
+            if has_belief_id == has_target_query {
+                return Err(
+                    "lantern_correct requires exactly one nonblank target: target_belief_id or target_query"
+                        .to_owned(),
+                );
+            }
             required_string(arguments, "correction_text")?;
             required_string(arguments, "replacement_value")?;
             post_json(
@@ -480,9 +494,14 @@ fn tool_definitions() -> Vec<Value> {
             json!({
                 "type": "object", "properties": {
                     "target_belief_id": {"type": "string"}, "correction_text": {"type": "string"},
+                    "target_query": {"type": "string"},
                     "replacement_value": {"type": "string"}, "context_pack_id": {"type": ["string", "null"]},
                     "scope": {"type": "object", "additionalProperties": {"type": "string"}}
-                }, "required": ["target_belief_id", "correction_text", "replacement_value"], "additionalProperties": false
+                }, "required": ["correction_text", "replacement_value"],
+                "oneOf": [
+                    {"required": ["target_belief_id"]},
+                    {"required": ["target_query"]}
+                ], "additionalProperties": false
             }),
         ),
         tool(

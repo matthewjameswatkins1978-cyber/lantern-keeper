@@ -154,10 +154,48 @@ impl EpistemicService {
         &self,
         request: CorrectionRequest,
     ) -> Result<CorrectionResult, EpistemicOperationError> {
-        let target_id =
-            BeliefId::new(request.target_belief_id.trim().to_owned()).map_err(|_| {
+        let target_id = match (
+            request
+                .target_belief_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
+            request
+                .target_query
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
+        ) {
+            (Some(_), Some(_)) => {
+                return Err(EpistemicOperationError::Invalid(
+                    "correction requires exactly one target: target_belief_id or target_query"
+                        .to_owned(),
+                ));
+            }
+            (Some(value), None) => BeliefId::new(value.to_owned()).map_err(|_| {
                 EpistemicOperationError::Invalid("target belief ID cannot be blank".to_owned())
-            })?;
+            })?,
+            (None, Some(query)) => {
+                let matches = self.search_beliefs(query, false).await?;
+                if matches.len() != 1 {
+                    return Err(EpistemicOperationError::Invalid(if matches.is_empty() {
+                        "correction target query matched no active belief".to_owned()
+                    } else {
+                        format!(
+                            "correction target query is ambiguous ({} active beliefs matched)",
+                            matches.len()
+                        )
+                    }));
+                }
+                matches[0].id.clone()
+            }
+            (None, None) => {
+                return Err(EpistemicOperationError::Invalid(
+                    "correction requires exactly one target: target_belief_id or target_query"
+                        .to_owned(),
+                ));
+            }
+        };
         let target = self
             .repo
             .get_belief(&target_id)

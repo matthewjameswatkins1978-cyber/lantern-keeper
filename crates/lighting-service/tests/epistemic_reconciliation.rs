@@ -253,7 +253,8 @@ async fn correction_records_evidence_and_reconciles_one_target()
 
     let correction = service
         .record_correction(CorrectionRequest {
-            target_belief_id: old.id.to_string(),
+            target_belief_id: None,
+            target_query: Some("preferred".to_owned()),
             correction_text: "No, I use Zed on Mac.".to_owned(),
             replacement_value: "Zed".to_owned(),
             context_pack_id: None,
@@ -300,6 +301,19 @@ async fn correction_records_evidence_and_reconciles_one_target()
             .stale,
         "correction must invalidate dependent projections"
     );
+
+    let ambiguous = service
+        .record_correction(CorrectionRequest {
+            target_belief_id: None,
+            target_query: Some("editor".to_owned()),
+            correction_text: "This deliberately ambiguous correction must not apply.".to_owned(),
+            replacement_value: "ignored".to_owned(),
+            context_pack_id: None,
+            scope: BTreeMap::new(),
+        })
+        .await
+        .expect_err("ambiguous target queries must not mutate memory");
+    assert!(ambiguous.to_string().contains("ambiguous"));
 
     let _ = std::fs::remove_dir_all(path);
     Ok(())
