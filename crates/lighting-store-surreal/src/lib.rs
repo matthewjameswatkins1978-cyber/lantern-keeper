@@ -15,7 +15,7 @@ pub mod source_store;
 pub use config::{RedactedStoreConfig, StoreConfig};
 pub use connection::{StoreError, SurrealStore};
 pub use epistemic_store::{SurrealEpistemicError, SurrealEpistemicRepository};
-pub use export::{ExportError, ExportSummary};
+pub use export::{ExportError, ExportSummary, RestoreSummary};
 pub use ledger_store::SurrealLedgerRepository;
 pub use memory_path_store::SurrealMemoryPathRepository;
 pub use memory_store::SurrealMemoryRepository;

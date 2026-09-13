@@ -233,6 +233,18 @@ fn main() -> anyhow::Result<()> {
                     .context("Lighting export task panicked")?
             })
         }
+        Command::Restore { input } => {
+            init_tracing();
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("failed to create tokio runtime")?;
+            rt.block_on(async {
+                tokio::spawn(restore_data(input))
+                    .await
+                    .context("Lighting restore task panicked")?
+            })
+        }
         Command::ProjectHandoff { project_id, json } => {
             let url = cli.service_url.unwrap_or_else(default_service_url);
             run_cli_command(&url, CliCommand::ProjectHandoff { project_id, json })
@@ -446,6 +458,12 @@ enum Command {
         /// Destination directory for manifest.json and NDJSON files.
         output: std::path::PathBuf,
     },
+    /// Restore a logical export into the configured schema-initialised store.
+    /// Use an isolated LIGHTING_SURREAL_PATH for recovery drills.
+    Restore {
+        /// Source directory containing manifest.json and NDJSON files.
+        input: std::path::PathBuf,
+    },
     /// Produce a Codex-ready handoff for a Project.
     ProjectHandoff {
         /// Project ID (UUID).
@@ -646,6 +664,43 @@ async fn export_data(output: std::path::PathBuf) -> anyhow::Result<()> {
         .export_to(&output)
         .await
         .context("failed to export Lantern records")?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
+}
+
+async fn restore_data(input: std::path::PathBuf) -> anyhow::Result<()> {
+    let store_config = StoreConfig::from_env();
+    let store = SurrealStore::connect(&store_config)
+        .await
+        .context("failed to connect to the configured Lantern store")?;
+    store
+        .initialise_schema()
+        .await
+        .context("failed to initialise the base Lantern schema")?;
+    SurrealSourceRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the Source schema")?;
+    SurrealMemoryPathRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the project/memory-path schema")?;
+    SurrealMemoryRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the Living Memory schema")?;
+    SurrealLedgerRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the source-ledger event schema")?;
+    SurrealEpistemicRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the canonical epistemic schema")?;
+    let summary = store
+        .restore_from(&input)
+        .await
+        .context("failed to restore Lantern records")?;
     println!("{}", serde_json::to_string_pretty(&summary)?);
     Ok(())
 }
