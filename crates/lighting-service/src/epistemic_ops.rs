@@ -1054,27 +1054,12 @@ impl EpistemicService {
         let mut estimated_token_usage =
             estimate_tokens(&format!("# Lantern Context\n\nQuery: {query}\n"));
         let history_requested = history_requested(&query_tokens);
-        let active_value_tokens = belief_candidates
-            .iter()
-            .filter(|(_, _, belief)| belief.state == BeliefState::Active)
-            .flat_map(|(_, _, belief)| context_tokens(&belief.current_value))
-            .collect::<Vec<_>>();
         for (_, _, belief) in belief_candidates {
             if selected_beliefs.len() + selected_memories.len() >= item_budget {
                 break;
             }
             let item_tokens = estimate_belief_tokens(&belief);
-            let historical_value_requested = belief.state != BeliefState::Active
-                && query_tokens.iter().any(|token| {
-                    belief
-                        .current_value
-                        .to_ascii_lowercase()
-                        .contains(token.as_str())
-                        && !active_value_tokens.contains(token)
-                });
-            let eligible = belief.state == BeliefState::Active
-                || history_requested
-                || historical_value_requested;
+            let eligible = belief.state == BeliefState::Active || history_requested;
             if eligible
                 && !belief.stale
                 && estimated_token_usage.saturating_add(item_tokens) <= token_budget
@@ -1568,7 +1553,50 @@ fn context_tokens(query: &str) -> Vec<String> {
         .split(|character: char| !character.is_ascii_alphanumeric())
         .filter(|token| token.len() >= 2)
         .map(str::to_ascii_lowercase)
+        .filter(|token| !is_lexical_stopword(token))
         .collect()
+}
+
+fn is_lexical_stopword(token: &str) -> bool {
+    matches!(
+        token,
+        "a" | "an"
+            | "and"
+            | "are"
+            | "as"
+            | "at"
+            | "be"
+            | "but"
+            | "by"
+            | "do"
+            | "does"
+            | "for"
+            | "from"
+            | "how"
+            | "i"
+            | "if"
+            | "in"
+            | "is"
+            | "it"
+            | "me"
+            | "my"
+            | "of"
+            | "on"
+            | "or"
+            | "that"
+            | "the"
+            | "this"
+            | "to"
+            | "was"
+            | "what"
+            | "when"
+            | "where"
+            | "which"
+            | "who"
+            | "why"
+            | "with"
+            | "you"
+    )
 }
 
 fn history_requested(query_tokens: &[String]) -> bool {
@@ -1607,11 +1635,16 @@ fn belief_relevance_details(
     let searchable = format!(
         "{} {} {} {}",
         belief.holder_key, belief.subject_key, belief.predicate_key, belief.current_value
-    )
-    .to_ascii_lowercase();
+    );
+    let searchable_tokens = context_tokens(&searchable);
     let token_hits = query_tokens
         .iter()
-        .filter(|token| searchable.contains(token.as_str()))
+        .filter(|token| !is_generic_belief_identity(token))
+        .filter(|token| {
+            searchable_tokens
+                .iter()
+                .any(|candidate| candidate == *token)
+        })
         .count() as i32;
     let scope_matches = requested_scope
         .iter()
@@ -1632,11 +1665,19 @@ fn belief_relevance_details(
     (token_hits + scope_matches * 3, reasons)
 }
 
+fn is_generic_belief_identity(token: &str) -> bool {
+    matches!(token, "matthew" | "lucy" | "shared" | "legacy")
+}
+
 fn memory_relevance_details(memory: &MemoryItem, query_tokens: &[String]) -> (i32, Vec<String>) {
-    let searchable = memory.content.to_ascii_lowercase();
+    let searchable_tokens = context_tokens(&memory.content);
     let token_hits = query_tokens
         .iter()
-        .filter(|token| searchable.contains(token.as_str()))
+        .filter(|token| {
+            searchable_tokens
+                .iter()
+                .any(|candidate| candidate == *token)
+        })
         .count() as i32;
     let mut reasons = Vec::new();
     if token_hits > 0 {
@@ -1826,5 +1867,31 @@ fn map_repository_error(error: EpistemicRepositoryError) -> EpistemicOperationEr
     match error {
         EpistemicRepositoryError::NotFound => EpistemicOperationError::NotFound,
         EpistemicRepositoryError::Operation(error) => EpistemicOperationError::Repository(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unrelated_belief_is_not_selected_for_holder_only_query() {
+        let now = Utc::now();
+        let belief = Belief::new(NewBelief {
+            holder_key: "matthew".to_owned(),
+            subject_key: "matthew".to_owned(),
+            predicate_key: "connected_client_test_colour".to_owned(),
+            current_value: "green".to_owned(),
+            scope: BTreeMap::new(),
+            confidence: 1.0,
+            trust_class: TrustClass::Direct,
+            known_from: now,
+            valid_from: Some(now),
+            created_at: now,
+        })
+        .expect("test belief is valid");
+        let tokens = context_tokens("How do Matthew and Lucy work together?");
+
+        assert_eq!(belief_relevance(&belief, &tokens, &BTreeMap::new()), 0);
     }
 }
