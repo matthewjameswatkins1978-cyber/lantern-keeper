@@ -141,6 +141,20 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             &replacement_value,
             json,
         ),
+        CliCommand::Correction { command } => match command {
+            CorrectionCommand::Record {
+                target_belief_id,
+                correction_text,
+                replacement_value,
+                json,
+            } => cmd_correction_record(
+                &client,
+                &target_belief_id,
+                &correction_text,
+                &replacement_value,
+                json,
+            ),
+        },
         CliCommand::ProjectHandoff { project_id, json } => {
             cmd_project_handoff(&client, &project_id, json)
         }
@@ -325,6 +339,11 @@ pub enum CliCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Record or inspect corrections through the canonical correction surface.
+    Correction {
+        #[command(subcommand)]
+        command: CorrectionCommand,
+    },
     /// Produce a Codex-ready handoff for a Project.
     ProjectHandoff {
         /// Project ID (UUID).
@@ -381,6 +400,18 @@ pub enum CliCommand {
         #[arg(long, value_parser = ["markdown", "plain_text"])]
         kind: Option<String>,
         /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum CorrectionCommand {
+    /// Record a direct Matthew correction against one active Belief.
+    Record {
+        target_belief_id: String,
+        correction_text: String,
+        replacement_value: String,
         #[arg(long)]
         json: bool,
     },

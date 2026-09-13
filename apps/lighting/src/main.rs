@@ -2,7 +2,9 @@ use std::{env, net::SocketAddr, sync::Arc};
 
 use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
-use lighting_cli::{CliCommand, default_service_url, run_cli_command, validate_service_url};
+use lighting_cli::{
+    CliCommand, CorrectionCommand, default_service_url, run_cli_command, validate_service_url,
+};
 use lighting_service::source_ops::SourceService;
 use lighting_service::tethers_engine_client::{TethersEngineClient, TethersEngineError};
 use lighting_service::{
@@ -175,6 +177,27 @@ fn main() -> anyhow::Result<()> {
             let url = cli.service_url.unwrap_or_else(default_service_url);
             run_cli_command(&url, CliCommand::MemorySupersede { memory_id, json })
         }
+        Command::Correction { command } => match command {
+            CorrectionCommand::Record {
+                target_belief_id,
+                correction_text,
+                replacement_value,
+                json,
+            } => {
+                let url = cli.service_url.unwrap_or_else(default_service_url);
+                run_cli_command(
+                    &url,
+                    CliCommand::Correction {
+                        command: CorrectionCommand::Record {
+                            target_belief_id,
+                            correction_text,
+                            replacement_value,
+                            json,
+                        },
+                    },
+                )
+            }
+        },
         Command::LedgerIngest { path, json } => {
             let url = cli.service_url.unwrap_or_else(default_service_url);
             run_cli_command(&url, CliCommand::LedgerIngest { path, json })
@@ -387,6 +410,11 @@ enum Command {
         memory_id: String,
         #[arg(long)]
         json: bool,
+    },
+    /// Record or inspect corrections through the canonical correction surface.
+    Correction {
+        #[command(subcommand)]
+        command: CorrectionCommand,
     },
     /// Ingest one event or an events JSON array into the append-only ledger.
     LedgerIngest {
