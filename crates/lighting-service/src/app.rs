@@ -107,6 +107,10 @@ pub fn build_router(state: AppState) -> Router {
                         .get(epistemic_routes::list_claims),
                 )
                 .route(
+                    "/api/v1/claims/live",
+                    axum::routing::post(epistemic_routes::capture_live_claim),
+                )
+                .route(
                     "/api/v1/corrections",
                     axum::routing::post(epistemic_routes::record_correction),
                 )

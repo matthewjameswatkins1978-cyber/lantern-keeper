@@ -7,7 +7,8 @@ use serde::Deserialize;
 
 use crate::{
     epistemic_dto::{
-        BeliefRequest, ClaimRequest, CorrectionRequest, MemoryItemRequest, MemoryItemSearchRequest,
+        BeliefRequest, ClaimRequest, CorrectionRequest, LiveClaimRequest, MemoryItemRequest,
+        MemoryItemSearchRequest,
     },
     epistemic_ops::EpistemicOperationError,
     state::AppState,
@@ -39,6 +40,19 @@ pub async fn capture_claim(
             StatusCode::CREATED,
             Json(serde_json::json!({"claim": claim})),
         ),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn capture_live_claim(
+    State(state): State<AppState>,
+    Json(request): Json<LiveClaimRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.capture_live_claim(request).await {
+        Ok(result) => (StatusCode::CREATED, Json(serde_json::json!(result))),
         Err(error) => error_response(error),
     }
 }

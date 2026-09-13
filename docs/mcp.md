@@ -11,10 +11,19 @@ the Lucy client. The bridge exposes only `lantern_context`, `lantern_remember`,
 `lantern_foreman_queue`, and `lantern_foreman_review`. It rejects unknown tool
 arguments and never exposes raw database mutation.
 
-`lantern_remember` defaults to a soft Memory Item. Lucy may explicitly send
-`kind: "claim"` with a registered `predicate_key` and optional subject/scope;
-the bridge then captures and reconciles the Claim in one response. Unknown
-predicates remain unmapped and are not silently promoted.
+`lantern_remember` accepts either a factual Claim or a supported soft Memory
+Item. The supported kinds are `claim`, `quote`, `idea`, `fragment`,
+`impression`, `anecdote`, `creative_seed`, `pattern_candidate`,
+`strength_observation`, `lesson`, `open_loop`, `tension`, `rejected_path`,
+`negative_constraint`, `reference`, `humour`, and `other`. There is no
+`memory` kind. Unsupported kinds are rejected before any service call.
+
+For `kind: "claim"`, `predicate_key` and `evidence_text` are required.
+`content` is the normalized Claim value; `evidence_text` is preserved exactly
+as the immutable Source content. Lantern automatically creates or reuses the
+whole-text Source and Episode, links their IDs and UTF-8 byte span to the
+Claim, and reconciles it into a Belief. Clients do not supply Source or
+Episode IDs. Unknown predicates remain unmapped and are not silently promoted.
 
 `lantern_why` accepts exactly one of `belief_id`, `memory_id`, or `query`. A
 belief ID returns its recorded Claim and revision lineage. A memory ID returns
@@ -28,9 +37,11 @@ The command-line equivalent for recording a correction is
 The MCP correction tool also accepts `target_query` when it resolves to exactly
 one active belief; ambiguous and empty queries are rejected without mutation.
 
-A real Lucy-native client proof remains a cutover gate. The bridge is local and
-delegates to the existing service, so it must not be bound as unauthenticated
-remote write infrastructure.
+A real Codex Desktop client has now completed the connected MCP lifecycle,
+including factual capture, correction, restart persistence, and provenance.
+The bridge is local and delegates to the existing service, so it must not be
+bound as unauthenticated remote write infrastructure. This Codex proof is
+distinct from the still-separate ChatGPT/Lucy product-access gate.
 
 Do not claim Lucy integration is complete until a real supported client has
 retrieved context, captured a soft memory without filing instructions, searched

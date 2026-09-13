@@ -3,9 +3,9 @@
 ## Repository
 
 - Active line: `feature/lantern-full-move`
-- Current feature checkpoint: MCP capture and restart-proof checkpoint (`3a18ea2`)
+- Current feature checkpoint: provenance-complete live factual capture (working tree)
 - Canonical `master`: `a44554b7050e9b3dd2178eede99b67184d89d12c`
-- Feature checkout is clean at the pushed MCP checkpoint.
+- Feature checkout is clean at the pushed provenance-complete capture checkpoint.
 - `master` remains unchanged by the feature work.
 
 ## Phase
@@ -40,11 +40,14 @@ are now implemented on the feature line.
   promotion.
 - A local stdio MCP bridge now exposes bounded context, remember, search,
   provenance, correction, status, and Lucy-owned Foreman tools over the
-  existing HTTP service. Soft memories remain the default; an explicit
-  `kind: "claim"` packet can capture and reconcile a registered predicate in
-  one response. `lantern_why` supports belief IDs, memory IDs, and
-  ambiguity-safe natural queries. A real connected Lucy client proof is still
-  required.
+  existing HTTP service. Soft memories remain the default. Factual
+  `kind: "claim"` capture requires exact `evidence_text`; Lantern creates or
+  reuses the Source and whole-text Episode, links their UTF-8 byte span, and
+  reconciles the normalized `content` value in one response. `lantern_why`
+  supports belief IDs, memory IDs, and ambiguity-safe natural queries.
+- Codex Desktop MCP is connected with all 8 tools. The connected lifecycle,
+  initial factual provenance, correction provenance, and restart persistence
+  are proven by the local MCP proof suite.
 - Predicate and dimension normalization, explicit unmapped Claims, pure
   reconciliation decisions, echo suppression, direct-holder gates, and
   transitive stale propagation are implemented.
@@ -57,12 +60,12 @@ are now implemented on the feature line.
   uniquely matching active belief; full response-context bridge linkage remains
   partial.
 - Exact typed/fused retrieval, graph-backed project associations, bounded graph
-  projection, Dreamer operations, and a real connected Lucy-native client path
-  remain.
+  projection, Dreamer operations, and the separate ChatGPT/Lucy-native product
+  path remain.
 - Restore has passed a real 1,479-record export/restore parity drill, but a
   service-level retrieval-after-restore and real Lucy restart proof remain.
-- Full MCP contract coverage, real Lucy-native proof, Basic Memory shadow
-  comparison, final delta, and cutover.
+- Full MCP contract coverage, Basic Memory shadow comparison, final delta, and
+  cutover.
 
 ## Environment
 

@@ -6,6 +6,24 @@ use std::{
 use serde_json::{Value, json};
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
+const SUPPORTED_MEMORY_KINDS: &[&str] = &[
+    "quote",
+    "idea",
+    "fragment",
+    "impression",
+    "anecdote",
+    "creative_seed",
+    "pattern_candidate",
+    "strength_observation",
+    "lesson",
+    "open_loop",
+    "tension",
+    "rejected_path",
+    "negative_constraint",
+    "reference",
+    "humour",
+    "other",
+];
 
 pub fn run(service_url: &str) -> anyhow::Result<()> {
     let client = reqwest::blocking::Client::builder()
@@ -135,11 +153,10 @@ fn call_tool(
                 &[
                     "kind",
                     "content",
+                    "evidence_text",
                     "subject_key",
                     "predicate_key",
                     "scope",
-                    "source_id",
-                    "episode_id",
                     "originator_actor_id",
                     "transmitter_actor_id",
                     "holder_actor_id",
@@ -150,6 +167,15 @@ fn call_tool(
             let content = required_string(arguments, "content")?;
             if kind == "claim" {
                 let predicate_key = required_string(arguments, "predicate_key")?;
+                let evidence_text = arguments
+                    .get("evidence_text")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        "lantern_remember kind=claim requires evidence_text".to_owned()
+                    })?;
+                if evidence_text.trim().is_empty() {
+                    return Err("lantern_remember evidence_text cannot be blank".to_owned());
+                }
                 let subject_key = arguments
                     .get("subject_key")
                     .and_then(Value::as_str)
@@ -163,47 +189,25 @@ fn call_tool(
                     .get("originator_actor_id")
                     .cloned()
                     .unwrap_or_else(|| holder.clone());
-                let claim = json!({
+                let live_claim = json!({
+                    "evidence_text": evidence_text,
+                    "content": content,
                     "subject_key": subject_key,
-                    "value": content,
-                    "source_id": arguments.get("source_id").cloned().unwrap_or(Value::Null),
-                    "episode_id": arguments.get("episode_id").cloned().unwrap_or(Value::Null),
-                    "evidence_span": Value::Null,
                     "predicate_key": predicate_key,
-                    "predicate_candidate": Value::Null,
-                    "predicate_status": Value::Null,
                     "scope": arguments.get("scope").cloned().unwrap_or_else(|| json!({})),
-                    "polarity": true,
-                    "originator_actor_id": originator.clone(),
-                    "speaker_actor_id": originator,
+                    "originator_actor_id": originator,
                     "transmitter_actor_id": arguments.get("transmitter_actor_id").cloned().unwrap_or(Value::Null),
                     "holder_actor_id": holder,
-                    "stance": "endorsing",
-                    "framing_path": [],
                     "confidence": arguments.get("salience").and_then(Value::as_f64).unwrap_or(0.8),
-                    "known_at": Value::Null,
-                    "valid_from": Value::Null,
-                    "valid_to": Value::Null,
-                    "extractor": "lucy_mcp",
-                    "extractor_version": "1"
                 });
-                let captured = post_json(client, service_url, "/api/v1/claims", claim)?;
-                let claim_id = captured
-                    .get("claim")
-                    .and_then(|claim| claim.get("id"))
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "claim capture returned no claim ID".to_owned())?;
-                let reconciliation = post_json(
-                    client,
-                    service_url,
-                    &format!("/api/v1/claims/{claim_id}/reconcile"),
-                    json!({"independent_evidence": false}),
-                )?;
-                Ok(json!({
-                    "claim": captured.get("claim").cloned().unwrap_or(Value::Null),
-                    "reconciliation": reconciliation
-                }))
+                post_json(client, service_url, "/api/v1/claims/live", live_claim)
             } else {
+                if !SUPPORTED_MEMORY_KINDS.contains(&kind.as_str()) {
+                    return Err(format!(
+                        "lantern_remember kind is not supported: {kind}; expected claim or one of {}",
+                        SUPPORTED_MEMORY_KINDS.join(", ")
+                    ));
+                }
                 post_json(
                     client,
                     service_url,
@@ -530,17 +534,20 @@ fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "lantern_remember",
-            "Capture a soft memory without raw database access",
+            "Capture a factual Claim or supported soft Memory Item. For kind=claim, content is the normalized value and evidence_text is the exact supporting statement; Lantern creates Source and Episode provenance automatically.",
             json!({
                 "type": "object", "properties": {
-                    "kind": {"type": "string"}, "content": {"type": "string"},
+                    "kind": {"type": "string", "enum": ["claim", "quote", "idea", "fragment", "impression", "anecdote", "creative_seed", "pattern_candidate", "strength_observation", "lesson", "open_loop", "tension", "rejected_path", "negative_constraint", "reference", "humour", "other"]}, "content": {"type": "string"},
+                    "evidence_text": {"type": "string"},
                     "subject_key": {"type": ["string", "null"]},
                     "predicate_key": {"type": ["string", "null"]},
                     "scope": {"type": "object", "additionalProperties": {"type": "string"}},
-                    "source_id": {"type": ["string", "null"]}, "episode_id": {"type": ["string", "null"]},
                     "originator_actor_id": {"type": ["string", "null"]}, "transmitter_actor_id": {"type": ["string", "null"]},
                     "holder_actor_id": {"type": ["string", "null"]}, "salience": {"type": "number", "minimum": 0, "maximum": 1}
-                }, "required": ["kind", "content"], "additionalProperties": false
+                }, "required": ["kind", "content"], "oneOf": [
+                    {"properties": {"kind": {"const": "claim"}}, "required": ["subject_key", "predicate_key", "evidence_text"]},
+                    {"properties": {"kind": {"enum": ["quote", "idea", "fragment", "impression", "anecdote", "creative_seed", "pattern_candidate", "strength_observation", "lesson", "open_loop", "tension", "rejected_path", "negative_constraint", "reference", "humour", "other"]}}}
+                ], "additionalProperties": false
             }),
         ),
         tool(
@@ -646,5 +653,28 @@ mod tests {
         let arguments =
             serde_json::from_value(json!({"belief_id": "b", "query": "editor"})).unwrap();
         assert!(parse_why_target(&arguments).is_err());
+    }
+
+    #[test]
+    fn remember_schema_requires_exact_evidence_for_claims() {
+        let remember = tool_definitions()
+            .into_iter()
+            .find(|tool| tool.get("name") == Some(&json!("lantern_remember")))
+            .expect("remember tool should be present");
+        let schema = remember
+            .get("inputSchema")
+            .expect("remember schema should be present");
+        assert_eq!(schema["properties"]["kind"]["enum"][0], "claim");
+        assert_eq!(
+            schema["oneOf"][0]["required"],
+            json!(["subject_key", "predicate_key", "evidence_text"])
+        );
+        assert!(
+            !schema["properties"]["kind"]["enum"]
+                .as_array()
+                .expect("kind enum should be an array")
+                .iter()
+                .any(|kind| kind == "memory")
+        );
     }
 }

@@ -184,6 +184,18 @@ impl EpistemicRepository for SurrealEpistemicRepository {
         trace: Trace,
         stale_beliefs: Vec<Belief>,
     ) -> Result<Option<Belief>, EpistemicRepositoryError> {
+        // A repeated Claim can intentionally produce a NoChange decision. In
+        // that case there is no projection mutation to wrap in a transaction;
+        // append the audit trace directly instead of issuing an empty
+        // BEGIN/COMMIT batch, which some SurrealDB lanes reject.
+        if previous.is_none()
+            && current.is_none()
+            && revisions.is_empty()
+            && stale_beliefs.is_empty()
+        {
+            self.append_trace(trace).await?;
+            return Ok(None);
+        }
         let mut statements = vec!["BEGIN TRANSACTION".to_owned()];
 
         if previous.is_some() {

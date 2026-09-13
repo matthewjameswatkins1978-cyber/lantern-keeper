@@ -14,8 +14,8 @@ use lighting_core::{
 
 use crate::epistemic_dto::{
     BeliefRequest, ClaimRequest, ContextCompileRequest, CorrectionRequest,
-    DimensionDefinitionRequest, ForemanReviewRequest, MemoryItemRequest, MemoryItemSearchRequest,
-    PredicateDefinitionRequest, ReconcileClaimRequest, RelationRequest,
+    DimensionDefinitionRequest, ForemanReviewRequest, LiveClaimRequest, MemoryItemRequest,
+    MemoryItemSearchRequest, PredicateDefinitionRequest, ReconcileClaimRequest, RelationRequest,
 };
 use crate::source_dto::ApiError;
 
@@ -45,6 +45,21 @@ pub struct CorrectionResult {
     pub context_pack_id: Option<String>,
     pub claim: Claim,
     pub reconciliation: ReconciliationResult,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct LiveClaimResult {
+    pub source_id: String,
+    pub episode_id: String,
+    pub evidence_span: (usize, usize),
+    pub claim: Claim,
+    pub reconciliation: ReconciliationResult,
+}
+
+struct TextEvidence {
+    source_id: String,
+    episode_id: String,
+    evidence_span: (usize, usize),
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -150,6 +165,106 @@ impl EpistemicService {
             .map_err(map_repository_error)
     }
 
+    /// Captures exact conversational evidence before creating and reconciling
+    /// its factual Claim. Clients never need to manufacture provenance IDs.
+    pub async fn capture_live_claim(
+        &self,
+        request: LiveClaimRequest,
+    ) -> Result<LiveClaimResult, EpistemicOperationError> {
+        if request.content.trim().is_empty() {
+            return Err(EpistemicOperationError::Invalid(
+                "claim content cannot be blank".to_owned(),
+            ));
+        }
+        if request.subject_key.trim().is_empty() {
+            return Err(EpistemicOperationError::Invalid(
+                "claim subject_key cannot be blank".to_owned(),
+            ));
+        }
+        let (predicate_key, predicate_candidate, predicate_status) = self
+            .resolve_predicate(Some(request.predicate_key.clone()), None)
+            .await?;
+        let evidence = self
+            .record_text_evidence("Lantern live factual capture", &request.evidence_text)
+            .await?;
+        let holder = request
+            .holder_actor_id
+            .clone()
+            .unwrap_or_else(|| request.originator_actor_id.clone());
+        let now = Utc::now();
+        let claim = Claim::new(NewClaim {
+            episode_id: Some(evidence.episode_id.clone()),
+            source_id: Some(evidence.source_id.clone()),
+            evidence_span: Some(evidence.evidence_span),
+            subject_key: request.subject_key,
+            predicate_key,
+            predicate_candidate,
+            predicate_status,
+            value: request.content,
+            scope: request.scope,
+            polarity: true,
+            originator_actor_id: request.originator_actor_id.clone(),
+            speaker_actor_id: request.originator_actor_id,
+            transmitter_actor_id: request.transmitter_actor_id,
+            holder_actor_id: Some(holder),
+            stance: Stance::Endorsing,
+            framing_path: Vec::new(),
+            confidence: request.confidence,
+            known_at: now,
+            valid_from: None,
+            valid_to: None,
+            extractor: "live_capture".to_owned(),
+            extractor_version: "1".to_owned(),
+            created_at: now,
+        })
+        .map_err(map_domain_error)?;
+        let candidate_id = claim.id.clone();
+        let claim = self
+            .repo
+            .store_claim(claim)
+            .await
+            .map_err(map_repository_error)?;
+        let reconciliation = if claim.id != candidate_id {
+            let belief = self
+                .repo
+                .list_beliefs(true)
+                .await
+                .map_err(map_repository_error)?
+                .into_iter()
+                .find(|belief| {
+                    belief.state == BeliefState::Active
+                        && belief
+                            .lineage
+                            .supporting_claim_ids
+                            .iter()
+                            .any(|id| id == claim.id.as_str())
+                });
+            ReconciliationResult {
+                claim: claim.clone(),
+                decision: ReconciliationDecision {
+                    action: ReconciliationAction::NoChange,
+                    reason: "identical live evidence was already captured".to_owned(),
+                },
+                belief,
+            }
+        } else {
+            self.reconcile_claim(
+                claim.id.as_str(),
+                ReconcileClaimRequest {
+                    independent_evidence: false,
+                },
+            )
+            .await?
+        };
+        Ok(LiveClaimResult {
+            source_id: evidence.source_id,
+            episode_id: evidence.episode_id,
+            evidence_span: evidence.evidence_span,
+            claim,
+            reconciliation,
+        })
+    }
+
     pub async fn record_correction(
         &self,
         request: CorrectionRequest,
@@ -229,14 +344,21 @@ impl EpistemicService {
                 ));
             }
         }
-        let correction_text = required_text(request.correction_text, "correction text")?;
+        let correction_text = request.correction_text;
+        if correction_text.trim().is_empty() {
+            return Err(EpistemicOperationError::Invalid(
+                "correction text cannot be blank".to_owned(),
+            ));
+        }
         let replacement_value = required_text(request.replacement_value, "replacement value")?;
-        let (source_id, episode_id) = self.record_correction_evidence(&correction_text).await?;
+        let evidence = self
+            .record_text_evidence("Matthew correction", &correction_text)
+            .await?;
         let now = Utc::now();
         let claim = Claim::new(NewClaim {
-            episode_id: Some(episode_id.clone()),
-            source_id: Some(source_id.clone()),
-            evidence_span: Some((0, correction_text.len())),
+            episode_id: Some(evidence.episode_id.clone()),
+            source_id: Some(evidence.source_id.clone()),
+            evidence_span: Some(evidence.evidence_span),
             subject_key: target.subject_key.clone(),
             predicate_key: Some(target.predicate_key.clone()),
             predicate_candidate: None,
@@ -277,8 +399,8 @@ impl EpistemicService {
             )
             .await?;
         Ok(CorrectionResult {
-            source_id,
-            episode_id,
+            source_id: evidence.source_id,
+            episode_id: evidence.episode_id,
             context_pack_id: context_pack_id.map(|id| id.to_string()),
             claim,
             reconciliation,
@@ -1309,25 +1431,27 @@ impl EpistemicService {
         Ok((None, Some(normalized), PredicateStatus::Unmapped))
     }
 
-    async fn record_correction_evidence(
+    async fn record_text_evidence(
         &self,
-        correction_text: &str,
-    ) -> Result<(String, String), EpistemicOperationError> {
+        title: &str,
+        evidence_text: &str,
+    ) -> Result<TextEvidence, EpistemicOperationError> {
+        if evidence_text.trim().is_empty() {
+            return Err(EpistemicOperationError::Invalid(
+                "evidence text cannot be blank".to_owned(),
+            ));
+        }
         let source_repo = self.source_repo.as_ref().ok_or_else(|| {
-            EpistemicOperationError::Invalid(
-                "correction evidence storage is not configured".to_owned(),
-            )
+            EpistemicOperationError::Invalid("text evidence storage is not configured".to_owned())
         })?;
         let memory_path_repo = self.memory_path_repo.as_ref().ok_or_else(|| {
-            EpistemicOperationError::Invalid(
-                "correction evidence storage is not configured".to_owned(),
-            )
+            EpistemicOperationError::Invalid("text evidence storage is not configured".to_owned())
         })?;
         let source = lighting_core::Source::create(NewSource {
             kind: SourceKind::PlainText,
-            title: SourceTitle::new("Matthew correction")
+            title: SourceTitle::new(title)
                 .map_err(|error| EpistemicOperationError::Invalid(error.to_string()))?,
-            content: SourceContent::new(correction_text.to_owned())
+            content: SourceContent::new(evidence_text.to_owned())
                 .map_err(|error| EpistemicOperationError::Invalid(error.to_string()))?,
         });
         let source_id = match source_repo
@@ -1360,14 +1484,18 @@ impl EpistemicService {
                     .map_err(|error| EpistemicOperationError::Invalid(error.to_string()))?;
             memory_path_repo
                 .create_episode(Episode::new(
-                    EpisodeTitle::new("Matthew correction")
+                    EpisodeTitle::new(title)
                         .map_err(|error| EpistemicOperationError::Invalid(error.to_string()))?,
                     range,
                 ))
                 .await
                 .map_err(|error| EpistemicOperationError::Repository(Box::new(error)))?
         };
-        Ok((source_id.as_str().to_owned(), episode.id().to_string()))
+        Ok(TextEvidence {
+            source_id: source_id.as_str().to_owned(),
+            episode_id: episode.id().to_string(),
+            evidence_span: (0, end_byte),
+        })
     }
 
     async fn append_registry_trace(

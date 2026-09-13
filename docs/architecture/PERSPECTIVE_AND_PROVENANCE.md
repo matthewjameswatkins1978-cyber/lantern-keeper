@@ -7,8 +7,12 @@ stance, and transformation. When dialogue contains quotation or relay, a
 `framing_path` records the meaningful nesting with actions such as speaking,
 quoting, endorsing, rejecting, and correcting.
 
-Claims point to an Episode or Source span where available. They are immutable
-evidence records and can remain unmapped when no canonical predicate exists.
+Claims point to an Episode or Source span where available. New factual
+conversational capture records the exact supplied evidence as a plain-text
+Source, creates or reuses a whole-text Episode, and links the Claim to that
+UTF-8 byte span before reconciliation. They are immutable evidence records and
+can remain unmapped when no canonical predicate exists. Provenance IDs are
+created by Lantern rather than by conversational clients.
 Beliefs are projections with holder, subject, predicate, scope, trust class,
 valid time, and dependency-generation fields. A migrated canonical note uses
 `legacy:shared` and `migrated_canonical` where original authorship cannot be

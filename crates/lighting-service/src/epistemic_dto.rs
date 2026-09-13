@@ -51,6 +51,29 @@ pub struct ClaimRequest {
     pub extractor_version: String,
 }
 
+/// Request for a conversational factual Claim whose evidence is captured by
+/// Lantern before the Claim is persisted.
+#[derive(Debug, Deserialize)]
+pub struct LiveClaimRequest {
+    /// Exact text supplied by the conversational client. This is preserved as
+    /// the immutable Source content without trimming or rewriting.
+    pub evidence_text: String,
+    /// Normalized value used by the Claim and Belief projection.
+    pub content: String,
+    pub subject_key: String,
+    pub predicate_key: String,
+    #[serde(default)]
+    pub scope: BTreeMap<String, String>,
+    #[serde(default = "default_matthew_actor")]
+    pub originator_actor_id: String,
+    #[serde(default)]
+    pub transmitter_actor_id: Option<String>,
+    #[serde(default)]
+    pub holder_actor_id: Option<String>,
+    #[serde(default = "default_claim_confidence")]
+    pub confidence: f32,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ClaimListQuery {
     #[serde(default)]
@@ -283,4 +306,7 @@ fn default_predicate_definition_status() -> PredicateDefinitionStatus {
 }
 fn default_actor() -> String {
     "lucy".to_owned()
+}
+fn default_matthew_actor() -> String {
+    "matthew".to_owned()
 }
