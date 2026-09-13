@@ -124,6 +124,19 @@ pub struct MemoryItemSearchRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ContextCompileRequest {
+    pub query: String,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub scope: BTreeMap<String, String>,
+    #[serde(default)]
+    pub intent: Option<String>,
+    #[serde(default = "default_context_item_budget")]
+    pub item_budget: usize,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RelationRequest {
     pub in_id: String,
     pub out_id: String,
@@ -230,6 +243,9 @@ fn default_salience() -> f32 {
 }
 fn default_limit() -> usize {
     50
+}
+fn default_context_item_budget() -> usize {
+    10
 }
 fn default_extractor() -> String {
     "manual".to_owned()

@@ -486,7 +486,7 @@ pub struct DimensionDefinition {
     pub allowed_values: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ContextPack {
     pub id: ContextPackId,
     pub query: String,
@@ -494,6 +494,41 @@ pub struct ContextPack {
     pub omitted_stale_ids: Vec<String>,
     pub generated_context: String,
     pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub scope: Scope,
+    #[serde(default)]
+    pub current_beliefs: Vec<Belief>,
+    #[serde(default)]
+    pub lucy_beliefs: Vec<Belief>,
+    #[serde(default)]
+    pub shared_beliefs: Vec<Belief>,
+    #[serde(default)]
+    pub legacy_beliefs: Vec<Belief>,
+    #[serde(default)]
+    pub soft_memories: Vec<MemoryItem>,
+    #[serde(default)]
+    pub source_refs: Vec<String>,
+    #[serde(default)]
+    pub retrieval_trace: ContextTrace,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextTrace {
+    #[serde(default)]
+    pub compiler_version: String,
+    #[serde(default)]
+    pub candidate_belief_ids: Vec<String>,
+    #[serde(default)]
+    pub candidate_memory_ids: Vec<String>,
+    #[serde(default)]
+    pub selected_ids: Vec<String>,
+    #[serde(default)]
+    pub excluded_stale_ids: Vec<String>,
+    #[serde(default)]
+    pub lanes: Vec<String>,
+    pub item_budget: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -604,6 +639,14 @@ pub trait EpistemicRepository: Send + Sync {
         &self,
         belief_id: &BeliefId,
     ) -> Result<Vec<BeliefRevision>, EpistemicRepositoryError>;
+    async fn store_context_pack(
+        &self,
+        pack: ContextPack,
+    ) -> Result<ContextPack, EpistemicRepositoryError>;
+    async fn get_context_pack(
+        &self,
+        id: &ContextPackId,
+    ) -> Result<Option<ContextPack>, EpistemicRepositoryError>;
     async fn store_memory_item(
         &self,
         item: MemoryItem,

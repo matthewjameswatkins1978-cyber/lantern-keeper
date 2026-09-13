@@ -111,6 +111,10 @@ pub fn build_router(state: AppState) -> Router {
                     axum::routing::post(epistemic_routes::record_correction),
                 )
                 .route(
+                    "/api/v1/epistemic/context",
+                    axum::routing::post(epistemic_routes::compile_context),
+                )
+                .route(
                     "/api/v1/claims/{claim_id}/reconcile",
                     axum::routing::post(epistemic_routes::reconcile_claim),
                 )

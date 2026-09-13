@@ -18,7 +18,7 @@ pub mod source;
 pub mod source_outline;
 
 pub use epistemic::{
-    Actor, Belief, BeliefLineage, BeliefRevision, BeliefState, Claim, ContextPack,
+    Actor, Belief, BeliefLineage, BeliefRevision, BeliefState, Claim, ContextPack, ContextTrace,
     DimensionDefinition, EpistemicError, EpistemicRepository, EpistemicRepositoryError, Frame,
     FrameAction, GraphRelation, MemoryItem, MemoryItemKind, MemoryItemSearch, NewBelief, NewClaim,
     NewGraphRelation, NewMemoryItem, PredicateDefinition, PredicateDefinitionStatus,

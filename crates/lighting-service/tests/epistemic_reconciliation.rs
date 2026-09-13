@@ -1,12 +1,12 @@
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use chrono::{Duration, Utc};
-use lighting_core::{EpistemicRepository, ReconciliationAction, Stance};
+use lighting_core::{EpistemicRepository, MemoryItemKind, ReconciliationAction, Stance};
 use lighting_service::{
     EpistemicService,
     epistemic_dto::{
-        BeliefRequest, ClaimRequest, CorrectionRequest, PredicateDefinitionRequest,
-        ReconcileClaimRequest, RelationRequest,
+        BeliefRequest, ClaimRequest, ContextCompileRequest, CorrectionRequest, MemoryItemRequest,
+        PredicateDefinitionRequest, ReconcileClaimRequest, RelationRequest,
     },
 };
 use lighting_store_surreal::{StoreConfig, SurrealEpistemicRepository, SurrealStore};
@@ -264,6 +264,73 @@ async fn correction_records_evidence_and_reconciles_one_target()
             .expect("dependent belief remains")
             .stale,
         "correction must invalidate dependent projections"
+    );
+
+    let _ = std::fs::remove_dir_all(path);
+    Ok(())
+}
+
+#[tokio::test]
+async fn context_compiler_returns_bounded_typed_pack_and_persists_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = test_path();
+    let store = SurrealStore::connect(&embedded_config(path.clone())).await?;
+    store.initialise_schema().await?;
+    let repository = SurrealEpistemicRepository::new(store.clone());
+    repository.migrate().await?;
+    let service = EpistemicService::new(Arc::new(repository.clone()));
+
+    let belief = service
+        .create_belief(BeliefRequest {
+            holder_key: "matthew".to_owned(),
+            subject_key: "matthew".to_owned(),
+            predicate_key: "preferred_editor".to_owned(),
+            current_value: "Zed".to_owned(),
+            scope: BTreeMap::from([(String::from("os"), String::from("macos"))]),
+            confidence: 0.9,
+            trust_class: Some(lighting_core::TrustClass::Direct),
+            known_from: None,
+            valid_from: None,
+        })
+        .await?;
+    let memory = service
+        .remember_soft(MemoryItemRequest {
+            kind: MemoryItemKind::CreativeSeed,
+            content: "An odd idea about ants playing strategy games".to_owned(),
+            source_id: None,
+            episode_id: None,
+            originator_actor_id: Some("matthew".to_owned()),
+            transmitter_actor_id: None,
+            holder_actor_id: Some("shared:matthew-lucy".to_owned()),
+            salience: 0.8,
+        })
+        .await?;
+
+    let pack = service
+        .compile_context(ContextCompileRequest {
+            query: "preferred editor ants games".to_owned(),
+            actor: Some("lucy".to_owned()),
+            scope: BTreeMap::from([(String::from("os"), String::from("Mac"))]),
+            intent: Some("retrieve useful context".to_owned()),
+            item_budget: 2,
+        })
+        .await?;
+
+    assert_eq!(pack.retrieval_trace.item_budget, 2);
+    assert!(pack.selected_ids.len() <= 2);
+    assert_eq!(pack.current_beliefs, vec![belief]);
+    assert_eq!(pack.soft_memories, vec![memory]);
+    assert!(pack.generated_context.contains("Matthew beliefs"));
+    assert!(
+        pack.generated_context
+            .contains("ants playing strategy games")
+    );
+    assert_eq!(
+        repository
+            .get_context_pack(&pack.id)
+            .await?
+            .expect("compiled context pack must be durable"),
+        pack
     );
 
     let _ = std::fs::remove_dir_all(path);

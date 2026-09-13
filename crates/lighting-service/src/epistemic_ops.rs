@@ -3,17 +3,18 @@ use std::{collections::BTreeMap, sync::Arc};
 use chrono::Utc;
 use lighting_core::{
     Belief, BeliefId, BeliefLineage, BeliefRevision, BeliefRevisionId, BeliefState, Claim,
-    DimensionDefinition, Episode, EpisodeTitle, EpistemicError, EpistemicRepository,
-    EpistemicRepositoryError, MemoryItem, MemoryItemSearch, MemoryPathRepository, NewBelief,
-    NewClaim, NewGraphRelation, NewMemoryItem, NewSource, PredicateDefinition, PredicateStatus,
-    ReconciliationAction, ReconciliationDecision, SourceContent, SourceKind, SourceRepository,
-    SourceTitle, Stance, StoreSourceResult, Trace, TraceId, TrustClass, normalize_registry_key,
-    propagate_stale_beliefs, reconcile_claim,
+    ContextPack, ContextPackId, ContextTrace, DimensionDefinition, Episode, EpisodeTitle,
+    EpistemicError, EpistemicRepository, EpistemicRepositoryError, MemoryItem, MemoryItemSearch,
+    MemoryPathRepository, NewBelief, NewClaim, NewGraphRelation, NewMemoryItem, NewSource,
+    PredicateDefinition, PredicateStatus, ReconciliationAction, ReconciliationDecision,
+    SourceContent, SourceKind, SourceRepository, SourceTitle, Stance, StoreSourceResult, Trace,
+    TraceId, TrustClass, normalize_registry_key, propagate_stale_beliefs, reconcile_claim,
 };
 
 use crate::epistemic_dto::{
-    BeliefRequest, ClaimRequest, CorrectionRequest, DimensionDefinitionRequest, MemoryItemRequest,
-    MemoryItemSearchRequest, PredicateDefinitionRequest, ReconcileClaimRequest, RelationRequest,
+    BeliefRequest, ClaimRequest, ContextCompileRequest, CorrectionRequest,
+    DimensionDefinitionRequest, MemoryItemRequest, MemoryItemSearchRequest,
+    PredicateDefinitionRequest, ReconcileClaimRequest, RelationRequest,
 };
 use crate::source_dto::ApiError;
 
@@ -542,6 +543,184 @@ impl EpistemicService {
             .map_err(map_repository_error)
     }
 
+    pub async fn compile_context(
+        &self,
+        request: ContextCompileRequest,
+    ) -> Result<ContextPack, EpistemicOperationError> {
+        let query = required_text(request.query, "context query")?;
+        let item_budget = request.item_budget.clamp(1, 100);
+        let scope = lighting_core::normalize_scope(&request.scope).map_err(map_domain_error)?;
+        let all_beliefs = self
+            .repo
+            .list_beliefs(true)
+            .await
+            .map_err(map_repository_error)?;
+        let all_memories = self
+            .repo
+            .search_memory_items(&MemoryItemSearch {
+                phrase: None,
+                include_archived: false,
+                limit: 0,
+            })
+            .await
+            .map_err(map_repository_error)?;
+        let query_tokens = context_tokens(&query);
+        let mut belief_candidates: Vec<(i32, Belief)> = all_beliefs
+            .into_iter()
+            .map(|belief| (belief_relevance(&belief, &query_tokens, &scope), belief))
+            .filter(|(score, belief)| *score > 0 || belief.stale)
+            .collect();
+        belief_candidates.sort_by(|(left_score, left), (right_score, right)| {
+            right_score
+                .cmp(left_score)
+                .then_with(|| right.updated_at.cmp(&left.updated_at))
+                .then_with(|| left.id.to_string().cmp(&right.id.to_string()))
+        });
+        let mut memory_candidates: Vec<(i32, MemoryItem)> = all_memories
+            .into_iter()
+            .map(|memory| (memory_relevance(&memory, &query_tokens), memory))
+            .filter(|(score, _)| *score > 0)
+            .collect();
+        memory_candidates.sort_by(|(left_score, left), (right_score, right)| {
+            right_score
+                .cmp(left_score)
+                .then_with(|| right.created_at.cmp(&left.created_at))
+                .then_with(|| left.id.to_string().cmp(&right.id.to_string()))
+        });
+
+        let candidate_belief_ids = belief_candidates
+            .iter()
+            .map(|(_, belief)| belief.id.to_string())
+            .collect::<Vec<_>>();
+        let candidate_memory_ids = memory_candidates
+            .iter()
+            .map(|(_, memory)| memory.id.to_string())
+            .collect::<Vec<_>>();
+        let omitted_stale_ids = belief_candidates
+            .iter()
+            .filter(|(_, belief)| belief.stale)
+            .map(|(_, belief)| belief.id.to_string())
+            .collect::<Vec<_>>();
+
+        let mut selected_beliefs = Vec::new();
+        let mut selected_memories = Vec::new();
+        for (_, belief) in belief_candidates {
+            if selected_beliefs.len() + selected_memories.len() >= item_budget {
+                break;
+            }
+            if !belief.stale {
+                selected_beliefs.push(belief);
+            }
+        }
+        for (_, memory) in memory_candidates {
+            if selected_beliefs.len() + selected_memories.len() >= item_budget {
+                break;
+            }
+            selected_memories.push(memory);
+        }
+
+        let pack_id = ContextPackId::new(uuid::Uuid::new_v4().to_string()).map_err(|_| {
+            EpistemicOperationError::Invalid("context ID could not be created".to_owned())
+        })?;
+        let selected_ids = selected_beliefs
+            .iter()
+            .map(|belief| belief.id.to_string())
+            .chain(selected_memories.iter().map(|memory| memory.id.to_string()))
+            .collect::<Vec<_>>();
+        let retrieval_trace = ContextTrace {
+            compiler_version: "deterministic-v1".to_owned(),
+            candidate_belief_ids,
+            candidate_memory_ids,
+            selected_ids: selected_ids.clone(),
+            excluded_stale_ids: omitted_stale_ids.clone(),
+            lanes: vec!["typed-belief".to_owned(), "lexical-soft-memory".to_owned()],
+            item_budget,
+        };
+        let current_beliefs = selected_beliefs
+            .iter()
+            .filter(|belief| belief.holder_key == "matthew")
+            .cloned()
+            .collect::<Vec<_>>();
+        let lucy_beliefs = selected_beliefs
+            .iter()
+            .filter(|belief| belief.holder_key == "lucy")
+            .cloned()
+            .collect::<Vec<_>>();
+        let shared_beliefs = selected_beliefs
+            .iter()
+            .filter(|belief| belief.holder_key.starts_with("shared:"))
+            .cloned()
+            .collect::<Vec<_>>();
+        let legacy_beliefs = selected_beliefs
+            .iter()
+            .filter(|belief| belief.holder_key.starts_with("legacy:"))
+            .cloned()
+            .collect::<Vec<_>>();
+        let source_refs = selected_memories
+            .iter()
+            .filter_map(|memory| memory.source_id.clone())
+            .collect::<Vec<_>>();
+        let mut generated_context = render_context(
+            &query,
+            &current_beliefs,
+            &lucy_beliefs,
+            &shared_beliefs,
+            &legacy_beliefs,
+            &selected_memories,
+            &omitted_stale_ids,
+        );
+        if let Some(intent) = request
+            .intent
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            generated_context.insert_str(0, &format!("Intent: {}\n\n", intent.trim()));
+        }
+        let created_at = Utc::now();
+        let pack = ContextPack {
+            id: pack_id,
+            query: query.clone(),
+            selected_ids,
+            omitted_stale_ids: omitted_stale_ids.clone(),
+            generated_context,
+            created_at,
+            actor: request.actor,
+            scope,
+            current_beliefs,
+            lucy_beliefs,
+            shared_beliefs,
+            legacy_beliefs,
+            soft_memories: selected_memories,
+            source_refs,
+            retrieval_trace,
+        };
+        self.repo
+            .store_context_pack(pack.clone())
+            .await
+            .map_err(map_repository_error)?;
+        let trace = Trace {
+            id: TraceId::new(uuid::Uuid::new_v4().to_string()).map_err(|_| {
+                EpistemicOperationError::Invalid("trace ID could not be created".to_owned())
+            })?,
+            event_type: "context_compiled".to_owned(),
+            actor_id: "lucy".to_owned(),
+            subject_id: Some(pack.id.to_string()),
+            input_ids: pack.selected_ids.clone(),
+            output_ids: vec![pack.id.to_string()],
+            details: BTreeMap::from([
+                ("compiler_version".to_owned(), "deterministic-v1".to_owned()),
+                ("item_budget".to_owned(), item_budget.to_string()),
+                ("query".to_owned(), query),
+            ]),
+            created_at,
+        };
+        self.repo
+            .append_trace(trace)
+            .await
+            .map_err(map_repository_error)?;
+        Ok(pack)
+    }
+
     pub async fn store_relation(
         &self,
         request: RelationRequest,
@@ -843,6 +1022,111 @@ fn belief_from_claim(
         derived_from_belief_ids: Vec::new(),
     };
     Ok(belief)
+}
+
+fn context_tokens(query: &str) -> Vec<String> {
+    query
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|token| token.len() >= 2)
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+fn belief_relevance(
+    belief: &Belief,
+    query_tokens: &[String],
+    requested_scope: &lighting_core::Scope,
+) -> i32 {
+    let searchable = format!(
+        "{} {} {} {}",
+        belief.holder_key, belief.subject_key, belief.predicate_key, belief.current_value
+    )
+    .to_ascii_lowercase();
+    let token_hits = query_tokens
+        .iter()
+        .filter(|token| searchable.contains(token.as_str()))
+        .count() as i32;
+    let scope_score = requested_scope
+        .iter()
+        .filter(|(key, value)| {
+            belief
+                .scope
+                .get((*key).as_str())
+                .is_some_and(|candidate| candidate == (*value).as_str())
+        })
+        .count() as i32
+        * 3;
+    token_hits + scope_score
+}
+
+fn memory_relevance(memory: &MemoryItem, query_tokens: &[String]) -> i32 {
+    let searchable = memory.content.to_ascii_lowercase();
+    query_tokens
+        .iter()
+        .filter(|token| searchable.contains(token.as_str()))
+        .count() as i32
+}
+
+fn render_context(
+    query: &str,
+    current_beliefs: &[Belief],
+    lucy_beliefs: &[Belief],
+    shared_beliefs: &[Belief],
+    legacy_beliefs: &[Belief],
+    soft_memories: &[MemoryItem],
+    omitted_stale_ids: &[String],
+) -> String {
+    let mut rendered = format!("# Lantern Context\n\nQuery: {query}\n");
+    rendered.push('\n');
+    render_belief_section(&mut rendered, "Matthew beliefs", current_beliefs);
+    render_belief_section(&mut rendered, "Lucy beliefs", lucy_beliefs);
+    render_belief_section(&mut rendered, "Shared beliefs", shared_beliefs);
+    render_belief_section(&mut rendered, "Legacy beliefs", legacy_beliefs);
+    rendered.push_str("## Soft memories\n");
+    if soft_memories.is_empty() {
+        rendered.push_str("None selected.\n\n");
+    } else {
+        for memory in soft_memories {
+            rendered.push_str(&format!(
+                "- [memory {}] {:?}: {}\n",
+                memory.id, memory.kind, memory.content
+            ));
+        }
+        rendered.push('\n');
+    }
+    rendered.push_str("## Stale exclusions\n");
+    if omitted_stale_ids.is_empty() {
+        rendered.push_str("None.\n");
+    } else {
+        for id in omitted_stale_ids {
+            rendered.push_str("- ");
+            rendered.push_str(id);
+            rendered.push_str(" (not injected as current context)\n");
+        }
+    }
+    rendered
+}
+
+fn render_belief_section(rendered: &mut String, title: &str, beliefs: &[Belief]) {
+    rendered.push_str("## ");
+    rendered.push_str(title);
+    rendered.push('\n');
+    if beliefs.is_empty() {
+        rendered.push_str("None selected.\n\n");
+        return;
+    }
+    for belief in beliefs {
+        rendered.push_str(&format!(
+            "- [belief {}] {}.{} = {} (confidence {:.2}, scope {:?})\n",
+            belief.id,
+            belief.subject_key,
+            belief.predicate_key,
+            belief.current_value,
+            belief.confidence,
+            belief.scope
+        ));
+    }
+    rendered.push('\n');
 }
 
 fn make_revision(

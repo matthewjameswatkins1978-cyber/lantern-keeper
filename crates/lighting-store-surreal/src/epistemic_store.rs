@@ -6,9 +6,9 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lighting_core::{
-    Belief, BeliefId, BeliefRevision, Claim, ClaimId, DimensionDefinition, EpistemicRepository,
-    EpistemicRepositoryError, GraphRelation, MemoryItem, MemoryItemSearch, PredicateDefinition,
-    Proposal, Trace,
+    Belief, BeliefId, BeliefRevision, Claim, ClaimId, ContextPack, ContextPackId,
+    DimensionDefinition, EpistemicRepository, EpistemicRepositoryError, GraphRelation, MemoryItem,
+    MemoryItemSearch, PredicateDefinition, Proposal, Trace,
 };
 use surrealdb::types::Object;
 use thiserror::Error;
@@ -305,6 +305,33 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .into_iter()
             .map(decode)
             .collect::<Result<Vec<_>, _>>()
+            .map_err(operation)
+    }
+
+    async fn store_context_pack(
+        &self,
+        pack: ContextPack,
+    ) -> Result<ContextPack, EpistemicRepositoryError> {
+        let payload = serde_json::to_string(&pack)
+            .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
+        self.store
+            .query("CREATE context_pack CONTENT { id: $id, payload: $payload, created_at: $created_at }")
+            .bind(("id", pack.id.as_str()))
+            .bind(("payload", payload))
+            .bind(("created_at", pack.created_at))
+            .await
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        Ok(pack)
+    }
+
+    async fn get_context_pack(
+        &self,
+        id: &ContextPackId,
+    ) -> Result<Option<ContextPack>, EpistemicRepositoryError> {
+        self.get_by_id("context_pack", id.as_str())
+            .await
+            .map(|record| record.map(decode).transpose())
+            .map_err(operation)?
             .map_err(operation)
     }
 
@@ -677,6 +704,10 @@ DEFINE FIELD IF NOT EXISTS belief_id ON belief_revision TYPE string;
 DEFINE FIELD IF NOT EXISTS payload ON belief_revision TYPE string;
 DEFINE FIELD IF NOT EXISTS created_at ON belief_revision TYPE datetime;
 DEFINE INDEX IF NOT EXISTS belief_revision_belief ON belief_revision FIELDS belief_id;
+
+DEFINE TABLE IF NOT EXISTS context_pack SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS payload ON context_pack TYPE string;
+DEFINE FIELD IF NOT EXISTS created_at ON context_pack TYPE datetime;
 
 DEFINE TABLE IF NOT EXISTS memory_item SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS payload ON memory_item TYPE string;

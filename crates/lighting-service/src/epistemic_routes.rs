@@ -72,6 +72,19 @@ pub async fn record_correction(
     }
 }
 
+pub async fn compile_context(
+    State(state): State<AppState>,
+    Json(request): Json<crate::epistemic_dto::ContextCompileRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.compile_context(request).await {
+        Ok(pack) => (StatusCode::OK, Json(serde_json::json!({"context": pack}))),
+        Err(error) => error_response(error),
+    }
+}
+
 pub async fn reconcile_claim(
     Path(id): Path<String>,
     State(state): State<AppState>,
