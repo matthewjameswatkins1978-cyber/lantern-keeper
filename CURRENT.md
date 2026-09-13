@@ -3,7 +3,7 @@
 ## Repository
 
 - Active line: `feature/lantern-full-move`
-- Current feature checkpoint: Context Compiler budget checkpoint (working tree)
+- Current feature checkpoint: LanternBench behavioural checkpoint (`83e1a9f`)
 - Canonical `master`: `a44554b7050e9b3dd2178eede99b67184d89d12c`
 - Feature checkout is clean at the pushed correction-search checkpoint.
 - `master` remains unchanged by the feature work.
@@ -12,9 +12,9 @@
 
 Foundation modernisation and Basic Memory import accounting are complete.
 Spring cleaning is complete. Durable Claim-to-Belief reconciliation,
-correction, stale invalidation, deterministic Context Packs, and bounded
-Foreman review are now implemented on the feature line. The next checkpoint
-adds explicit Context Compiler token/item budgets and current/history filtering.
+correction, stale invalidation, deterministic Context Packs, bounded Foreman
+review, logical export/restore, and the current LanternBench behavioural suite
+are now implemented on the feature line.
 
 ## Works today
 
@@ -55,8 +55,9 @@ adds explicit Context Compiler token/item budgets and current/history filtering.
   uniquely matching active belief; full response-context bridge linkage remains
   partial.
 - Exact typed/fused retrieval, graph-backed project associations, bounded graph
-  projection, expanded LanternBench, Dreamer operations, restore proof, and a
-  real Lucy-native MCP path remain.
+  projection, Dreamer operations, and a real Lucy-native MCP path remain.
+- Restore has passed a real 1,479-record export/restore parity drill, but a
+  service-level retrieval-after-restore and real Lucy restart proof remain.
 - Full MCP contract coverage, real Lucy-native proof, Basic Memory shadow
   comparison, final delta, and cutover.
 
@@ -78,6 +79,6 @@ at `recovery/pre-spring-clean-c2cdfd9`. Private migration material remains in
 
 ## Next verified step
 
-Expand Context Compiler retrieval and LanternBench behaviour, then prove export
-and restore before beginning Lucy-native and cutover work. Keep `master`
-untouched until every cutover gate is green.
+Run the LanternBench checkpoint, then prove the real Lucy-facing MCP sequence
+across a Lantern restart. Keep `master` untouched until every cutover gate is
+green.
