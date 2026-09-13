@@ -134,11 +134,15 @@ pub struct ContextCompileRequest {
     #[serde(default)]
     pub actor: Option<String>,
     #[serde(default)]
+    pub project_hints: Vec<String>,
+    #[serde(default)]
     pub scope: BTreeMap<String, String>,
     #[serde(default)]
     pub intent: Option<String>,
     #[serde(default = "default_context_item_budget")]
     pub item_budget: usize,
+    #[serde(default = "default_context_token_budget")]
+    pub token_budget: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -258,6 +262,9 @@ fn default_limit() -> usize {
 }
 fn default_context_item_budget() -> usize {
     10
+}
+fn default_context_token_budget() -> usize {
+    2048
 }
 fn default_extractor() -> String {
     "manual".to_owned()

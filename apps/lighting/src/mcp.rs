@@ -101,15 +101,31 @@ fn call_tool(
         "lantern_context" => {
             reject_unknown(
                 arguments,
-                &["query", "actor", "scope", "intent", "item_budget"],
+                &[
+                    "query",
+                    "actor",
+                    "project_hints",
+                    "scope",
+                    "intent",
+                    "item_budget",
+                    "token_budget",
+                ],
             )?;
             let query = required_string(arguments, "query")?;
             let body = json!({
                 "query": query,
                 "actor": arguments.get("actor"),
+                "project_hints": arguments
+                    .get("project_hints")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
                 "scope": arguments.get("scope").cloned().unwrap_or_else(|| json!({})),
                 "intent": arguments.get("intent"),
                 "item_budget": arguments.get("item_budget").cloned().unwrap_or_else(|| json!(10)),
+                "token_budget": arguments
+                    .get("token_budget")
+                    .cloned()
+                    .unwrap_or_else(|| json!(2048)),
             });
             post_json(client, service_url, "/api/v1/epistemic/context", body)
         }
@@ -443,10 +459,12 @@ fn tool_definitions() -> Vec<Value> {
             "lantern_context",
             "Compile bounded current and historical context",
             json!({
-                "type": "object", "properties": {
+                    "type": "object", "properties": {
                     "query": {"type": "string"}, "actor": {"type": "string"},
+                    "project_hints": {"type": "array", "items": {"type": "string"}},
                     "scope": {"type": "object", "additionalProperties": {"type": "string"}},
-                    "intent": {"type": "string"}, "item_budget": {"type": "integer", "minimum": 1, "maximum": 100}
+                    "intent": {"type": "string"}, "item_budget": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "token_budget": {"type": "integer", "minimum": 128, "maximum": 16000}
                 }, "required": ["query"], "additionalProperties": false
             }),
         ),

@@ -534,7 +534,14 @@ pub struct ContextTrace {
     pub lanes: Vec<String>,
     #[serde(default)]
     pub candidate_scores: BTreeMap<String, i32>,
+    #[serde(default)]
+    pub candidate_reasons: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
     pub item_budget: usize,
+    #[serde(default)]
+    pub token_budget: usize,
+    #[serde(default)]
+    pub estimated_token_usage: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

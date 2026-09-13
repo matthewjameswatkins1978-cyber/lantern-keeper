@@ -155,9 +155,11 @@ async fn claim_reconciliation_persists_history_and_lineage()
         .compile_context(ContextCompileRequest {
             query: "Zed editor".to_owned(),
             actor: Some("lucy".to_owned()),
+            project_hints: Vec::new(),
             scope: BTreeMap::from([(String::from("os"), String::from("macos"))]),
             intent: None,
             item_budget: 10,
+            token_budget: 2048,
         })
         .await?;
     assert_eq!(
@@ -180,6 +182,34 @@ async fn claim_reconciliation_persists_history_and_lineage()
         historical_pack
             .episode_refs
             .contains(&"episode:editor-preference".to_owned())
+    );
+
+    let current_pack = service
+        .compile_context(ContextCompileRequest {
+            query: "What editor does Matthew use on Mac?".to_owned(),
+            actor: Some("lucy".to_owned()),
+            project_hints: Vec::new(),
+            scope: BTreeMap::from([(String::from("os"), String::from("macos"))]),
+            intent: None,
+            item_budget: 10,
+            token_budget: 2048,
+        })
+        .await?;
+    assert_eq!(current_pack.current_beliefs, vec![current]);
+    assert!(
+        current_pack.historical_beliefs.is_empty(),
+        "ordinary current queries must not inject superseded beliefs"
+    );
+    assert!(
+        current_pack
+            .retrieval_trace
+            .candidate_reasons
+            .values()
+            .any(|reasons| {
+                reasons
+                    .iter()
+                    .any(|reason| reason.starts_with("lexical-match:"))
+            })
     );
 
     let _ = std::fs::remove_dir_all(path);
@@ -368,13 +398,17 @@ async fn context_compiler_returns_bounded_typed_pack_and_persists_it()
         .compile_context(ContextCompileRequest {
             query: "preferred editor ants games".to_owned(),
             actor: Some("lucy".to_owned()),
+            project_hints: Vec::new(),
             scope: BTreeMap::from([(String::from("os"), String::from("Mac"))]),
             intent: Some("retrieve useful context".to_owned()),
             item_budget: 2,
+            token_budget: 2048,
         })
         .await?;
 
     assert_eq!(pack.retrieval_trace.item_budget, 2);
+    assert_eq!(pack.retrieval_trace.token_budget, 2048);
+    assert!(pack.retrieval_trace.estimated_token_usage <= 2048);
     assert!(pack.selected_ids.len() <= 2);
     assert_eq!(pack.current_beliefs, vec![belief]);
     assert_eq!(pack.soft_memories, vec![memory.clone()]);
@@ -394,6 +428,26 @@ async fn context_compiler_returns_bounded_typed_pack_and_persists_it()
     assert!(
         pack.generated_context
             .contains("ants playing strategy games")
+    );
+
+    let tight_pack = service
+        .compile_context(ContextCompileRequest {
+            query: "preferred editor ants games".to_owned(),
+            actor: Some("lucy".to_owned()),
+            project_hints: vec!["lantern".to_owned()],
+            scope: BTreeMap::from([(String::from("os"), String::from("Mac"))]),
+            intent: None,
+            item_budget: 10,
+            token_budget: 128,
+        })
+        .await?;
+    assert!(tight_pack.selected_ids.len() <= 10);
+    assert!(tight_pack.retrieval_trace.estimated_token_usage <= 128);
+    assert!(
+        tight_pack
+            .retrieval_trace
+            .lanes
+            .contains(&"project-hint".to_owned())
     );
     assert_eq!(
         repository

@@ -93,9 +93,19 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
         CliCommand::ContextPack {
             query,
             actor,
+            project_hints,
             item_budget,
+            token_budget,
             json,
-        } => cmd_context_pack(&client, &query, actor.as_deref(), item_budget, json),
+        } => cmd_context_pack(
+            &client,
+            &query,
+            actor.as_deref(),
+            &project_hints,
+            item_budget,
+            token_budget,
+            json,
+        ),
         CliCommand::MemorySupersede { memory_id, json } => {
             cmd_memory_supersede(&client, &memory_id, json)
         }
@@ -282,8 +292,12 @@ pub enum CliCommand {
         query: String,
         #[arg(long)]
         actor: Option<String>,
+        #[arg(long, value_delimiter = ',')]
+        project_hints: Vec<String>,
         #[arg(long, default_value_t = 10)]
         item_budget: usize,
+        #[arg(long, default_value_t = 2048)]
+        token_budget: usize,
         #[arg(long)]
         json: bool,
     },
@@ -2258,7 +2272,9 @@ fn cmd_context_pack(
     client: &HttpClient,
     query: &str,
     actor: Option<&str>,
+    project_hints: &[String],
     item_budget: usize,
+    token_budget: usize,
     json: bool,
 ) -> anyhow::Result<()> {
     if query.trim().is_empty() {
@@ -2270,7 +2286,9 @@ fn cmd_context_pack(
             &serde_json::json!({
                 "query": query,
                 "actor": actor,
+                "project_hints": project_hints,
                 "item_budget": item_budget,
+                "token_budget": token_budget,
             }),
         )
         .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;

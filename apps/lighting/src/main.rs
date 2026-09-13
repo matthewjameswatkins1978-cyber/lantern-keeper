@@ -159,7 +159,9 @@ fn main() -> anyhow::Result<()> {
         Command::ContextPack {
             query,
             actor,
+            project_hints,
             item_budget,
+            token_budget,
             json,
         } => {
             let url = cli.service_url.unwrap_or_else(default_service_url);
@@ -168,7 +170,9 @@ fn main() -> anyhow::Result<()> {
                 CliCommand::ContextPack {
                     query,
                     actor,
+                    project_hints,
                     item_budget,
+                    token_budget,
                     json,
                 },
             )
@@ -400,8 +404,12 @@ enum Command {
         query: String,
         #[arg(long)]
         actor: Option<String>,
+        #[arg(long, value_delimiter = ',')]
+        project_hints: Vec<String>,
         #[arg(long, default_value_t = 10)]
         item_budget: usize,
+        #[arg(long, default_value_t = 2048)]
+        token_budget: usize,
         #[arg(long)]
         json: bool,
     },

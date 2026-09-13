@@ -3,7 +3,7 @@
 ## Repository
 
 - Active line: `feature/lantern-full-move`
-- Current feature checkpoint: `199f4db`
+- Current feature checkpoint: Context Compiler budget checkpoint (working tree)
 - Canonical `master`: `a44554b7050e9b3dd2178eede99b67184d89d12c`
 - Feature checkout is clean at the pushed correction-search checkpoint.
 - `master` remains unchanged by the feature work.
@@ -13,7 +13,8 @@
 Foundation modernisation and Basic Memory import accounting are complete.
 Spring cleaning is complete. Durable Claim-to-Belief reconciliation,
 correction, stale invalidation, deterministic Context Packs, and bounded
-Foreman review are now implemented on the feature line.
+Foreman review are now implemented on the feature line. The next checkpoint
+adds explicit Context Compiler token/item budgets and current/history filtering.
 
 ## Works today
 
@@ -29,8 +30,10 @@ Foreman review are now implemented on the feature line.
   be linked to the exact Context Pack that influenced the correction.
 - Deterministic Context Packs have stable IDs, typed Matthew/Lucy/shared/legacy
   sections, separate historical beliefs, bounded selection, stale exclusions,
-  source/episode provenance, candidate scores, retrieval lanes, persistence,
-  and compiler traces.
+  source/episode provenance, candidate scores and reasons, retrieval lanes,
+  item/token budget enforcement, persistence, and compiler traces. Ordinary
+  current queries do not inject superseded beliefs; history wording or a named
+  historical value can request the historical projection.
 - Belief inspection supports get, lexical search, immutable history,
   provenance explanation, and stale listing. Foreman supports a bounded queue
   and traced accept/reject/modify/defer decisions without direct belief
@@ -51,8 +54,9 @@ Foreman review are now implemented on the feature line.
 - Natural-language correction targeting is now ambiguity-safe but requires one
   uniquely matching active belief; full response-context bridge linkage remains
   partial.
-- Exact typed/fused retrieval, bounded graph projection, expanded LanternBench, Dreamer
-  operations, restore proof, and a real Lucy-native MCP path remain.
+- Exact typed/fused retrieval, graph-backed project associations, bounded graph
+  projection, expanded LanternBench, Dreamer operations, restore proof, and a
+  real Lucy-native MCP path remain.
 - Full MCP contract coverage, real Lucy-native proof, Basic Memory shadow
   comparison, final delta, and cutover.
 

@@ -837,6 +837,7 @@ impl EpistemicService {
     ) -> Result<ContextPack, EpistemicOperationError> {
         let query = required_text(request.query, "context query")?;
         let item_budget = request.item_budget.clamp(1, 100);
+        let token_budget = request.token_budget.clamp(128, 16_000);
         let scope = lighting_core::normalize_scope(&request.scope).map_err(map_domain_error)?;
         let all_beliefs = self
             .repo
@@ -852,8 +853,13 @@ impl EpistemicService {
             })
             .await
             .map_err(map_repository_error)?;
-        let query_tokens = context_tokens(&query);
-        let mut belief_candidates: Vec<(i32, Belief)> = all_beliefs
+        let mut searchable_query = query.clone();
+        for hint in &request.project_hints {
+            searchable_query.push(' ');
+            searchable_query.push_str(hint);
+        }
+        let query_tokens = context_tokens(&searchable_query);
+        let mut belief_candidates: Vec<(i32, Vec<String>, Belief)> = all_beliefs
             .into_iter()
             .map(|belief| {
                 let state_bonus = if belief.state == BeliefState::Active {
@@ -861,25 +867,36 @@ impl EpistemicService {
                 } else {
                     0
                 };
-                (
-                    belief_relevance(&belief, &query_tokens, &scope) + state_bonus,
-                    belief,
-                )
+                let (relevance, mut reasons) =
+                    belief_relevance_details(&belief, &query_tokens, &scope);
+                if state_bonus > 0 {
+                    reasons.push("active-current-projection".to_owned());
+                } else {
+                    reasons.push("historical-or-inactive-projection".to_owned());
+                }
+                (relevance + state_bonus, reasons, belief)
             })
-            .filter(|(score, belief)| *score > 0 || belief.stale)
+            .filter(|(score, _, belief)| {
+                belief.stale
+                    || (belief.state == BeliefState::Active && *score > 2)
+                    || (belief.state != BeliefState::Active && *score > 0)
+            })
             .collect();
-        belief_candidates.sort_by(|(left_score, left), (right_score, right)| {
+        belief_candidates.sort_by(|(left_score, _, left), (right_score, _, right)| {
             right_score
                 .cmp(left_score)
                 .then_with(|| right.updated_at.cmp(&left.updated_at))
                 .then_with(|| left.id.to_string().cmp(&right.id.to_string()))
         });
-        let mut memory_candidates: Vec<(i32, MemoryItem)> = all_memories
+        let mut memory_candidates: Vec<(i32, Vec<String>, MemoryItem)> = all_memories
             .into_iter()
-            .map(|memory| (memory_relevance(&memory, &query_tokens), memory))
-            .filter(|(score, _)| *score > 0)
+            .map(|memory| {
+                let (score, reasons) = memory_relevance_details(&memory, &query_tokens);
+                (score, reasons, memory)
+            })
+            .filter(|(score, _, _)| *score > 0)
             .collect();
-        memory_candidates.sort_by(|(left_score, left), (right_score, right)| {
+        memory_candidates.sort_by(|(left_score, _, left), (right_score, _, right)| {
             right_score
                 .cmp(left_score)
                 .then_with(|| right.created_at.cmp(&left.created_at))
@@ -888,40 +905,71 @@ impl EpistemicService {
 
         let candidate_belief_ids = belief_candidates
             .iter()
-            .map(|(_, belief)| belief.id.to_string())
+            .map(|(_, _, belief)| belief.id.to_string())
             .collect::<Vec<_>>();
         let candidate_memory_ids = memory_candidates
             .iter()
-            .map(|(_, memory)| memory.id.to_string())
+            .map(|(_, _, memory)| memory.id.to_string())
             .collect::<Vec<_>>();
         let mut candidate_scores = std::collections::BTreeMap::new();
-        for (score, belief) in &belief_candidates {
+        let mut candidate_reasons = std::collections::BTreeMap::new();
+        for (score, reasons, belief) in &belief_candidates {
             candidate_scores.insert(belief.id.to_string(), *score);
+            candidate_reasons.insert(belief.id.to_string(), reasons.clone());
         }
-        for (score, memory) in &memory_candidates {
+        for (score, reasons, memory) in &memory_candidates {
             candidate_scores.insert(memory.id.to_string(), *score);
+            candidate_reasons.insert(memory.id.to_string(), reasons.clone());
         }
         let omitted_stale_ids = belief_candidates
             .iter()
-            .filter(|(_, belief)| belief.stale)
-            .map(|(_, belief)| belief.id.to_string())
+            .filter(|(_, _, belief)| belief.stale)
+            .map(|(_, _, belief)| belief.id.to_string())
             .collect::<Vec<_>>();
 
         let mut selected_beliefs = Vec::new();
         let mut selected_memories = Vec::new();
-        for (_, belief) in belief_candidates {
+        let mut estimated_token_usage =
+            estimate_tokens(&format!("# Lantern Context\n\nQuery: {query}\n"));
+        let history_requested = history_requested(&query_tokens);
+        let active_value_tokens = belief_candidates
+            .iter()
+            .filter(|(_, _, belief)| belief.state == BeliefState::Active)
+            .flat_map(|(_, _, belief)| context_tokens(&belief.current_value))
+            .collect::<Vec<_>>();
+        for (_, _, belief) in belief_candidates {
             if selected_beliefs.len() + selected_memories.len() >= item_budget {
                 break;
             }
-            if !belief.stale {
+            let item_tokens = estimate_belief_tokens(&belief);
+            let historical_value_requested = belief.state != BeliefState::Active
+                && query_tokens.iter().any(|token| {
+                    belief
+                        .current_value
+                        .to_ascii_lowercase()
+                        .contains(token.as_str())
+                        && !active_value_tokens.contains(token)
+                });
+            let eligible = belief.state == BeliefState::Active
+                || history_requested
+                || historical_value_requested;
+            if eligible
+                && !belief.stale
+                && estimated_token_usage.saturating_add(item_tokens) <= token_budget
+            {
                 selected_beliefs.push(belief);
+                estimated_token_usage = estimated_token_usage.saturating_add(item_tokens);
             }
         }
-        for (_, memory) in memory_candidates {
+        for (_, _, memory) in memory_candidates {
             if selected_beliefs.len() + selected_memories.len() >= item_budget {
                 break;
             }
-            selected_memories.push(memory);
+            let item_tokens = estimate_memory_tokens(&memory);
+            if estimated_token_usage.saturating_add(item_tokens) <= token_budget {
+                selected_memories.push(memory);
+                estimated_token_usage = estimated_token_usage.saturating_add(item_tokens);
+            }
         }
 
         let pack_id = ContextPackId::new(uuid::Uuid::new_v4().to_string()).map_err(|_| {
@@ -938,9 +986,21 @@ impl EpistemicService {
             candidate_memory_ids,
             selected_ids: selected_ids.clone(),
             excluded_stale_ids: omitted_stale_ids.clone(),
-            lanes: vec!["typed-belief".to_owned(), "lexical-soft-memory".to_owned()],
+            lanes: {
+                let mut lanes = vec!["typed-belief".to_owned(), "lexical-soft-memory".to_owned()];
+                if !request.project_hints.is_empty() {
+                    lanes.push("project-hint".to_owned());
+                }
+                if history_requested {
+                    lanes.push("temporal-history".to_owned());
+                }
+                lanes
+            },
             candidate_scores,
+            candidate_reasons,
             item_budget,
+            token_budget,
+            estimated_token_usage,
         };
         let current_beliefs = selected_beliefs
             .iter()
@@ -1056,6 +1116,11 @@ impl EpistemicService {
             details: BTreeMap::from([
                 ("compiler_version".to_owned(), "deterministic-v1".to_owned()),
                 ("item_budget".to_owned(), item_budget.to_string()),
+                ("token_budget".to_owned(), token_budget.to_string()),
+                (
+                    "estimated_token_usage".to_owned(),
+                    estimated_token_usage.to_string(),
+                ),
                 ("query".to_owned(), query),
             ]),
             created_at,
@@ -1378,11 +1443,39 @@ fn context_tokens(query: &str) -> Vec<String> {
         .collect()
 }
 
+fn history_requested(query_tokens: &[String]) -> bool {
+    query_tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "history"
+                | "historical"
+                | "used"
+                | "formerly"
+                | "previous"
+                | "previously"
+                | "old"
+                | "before"
+                | "changed"
+                | "change"
+                | "replaced"
+                | "replacement"
+        )
+    })
+}
+
 fn belief_relevance(
     belief: &Belief,
     query_tokens: &[String],
     requested_scope: &lighting_core::Scope,
 ) -> i32 {
+    belief_relevance_details(belief, query_tokens, requested_scope).0
+}
+
+fn belief_relevance_details(
+    belief: &Belief,
+    query_tokens: &[String],
+    requested_scope: &lighting_core::Scope,
+) -> (i32, Vec<String>) {
     let searchable = format!(
         "{} {} {} {}",
         belief.holder_key, belief.subject_key, belief.predicate_key, belief.current_value
@@ -1392,7 +1485,7 @@ fn belief_relevance(
         .iter()
         .filter(|token| searchable.contains(token.as_str()))
         .count() as i32;
-    let scope_score = requested_scope
+    let scope_matches = requested_scope
         .iter()
         .filter(|(key, value)| {
             belief
@@ -1400,17 +1493,57 @@ fn belief_relevance(
                 .get((*key).as_str())
                 .is_some_and(|candidate| candidate == (*value).as_str())
         })
-        .count() as i32
-        * 3;
-    token_hits + scope_score
+        .count() as i32;
+    let mut reasons = Vec::new();
+    if token_hits > 0 {
+        reasons.push(format!("lexical-match:{token_hits}"));
+    }
+    if scope_matches > 0 {
+        reasons.push(format!("scope-match:{scope_matches}"));
+    }
+    (token_hits + scope_matches * 3, reasons)
 }
 
-fn memory_relevance(memory: &MemoryItem, query_tokens: &[String]) -> i32 {
+fn memory_relevance_details(memory: &MemoryItem, query_tokens: &[String]) -> (i32, Vec<String>) {
     let searchable = memory.content.to_ascii_lowercase();
-    query_tokens
+    let token_hits = query_tokens
         .iter()
         .filter(|token| searchable.contains(token.as_str()))
-        .count() as i32
+        .count() as i32;
+    let mut reasons = Vec::new();
+    if token_hits > 0 {
+        reasons.push(format!("lexical-match:{token_hits}"));
+    }
+    if memory.pinned {
+        reasons.push("explicitly-pinned".to_owned());
+    }
+    if memory.salience >= 0.75 {
+        reasons.push("high-salience".to_owned());
+    }
+    (token_hits, reasons)
+}
+
+fn estimate_tokens(value: &str) -> usize {
+    value.chars().count().div_ceil(4).max(1)
+}
+
+fn estimate_belief_tokens(belief: &Belief) -> usize {
+    estimate_tokens(&format!(
+        "- [belief {}] {}.{} = {} (confidence {:.2}, scope {:?})\n",
+        belief.id,
+        belief.subject_key,
+        belief.predicate_key,
+        belief.current_value,
+        belief.confidence,
+        belief.scope
+    ))
+}
+
+fn estimate_memory_tokens(memory: &MemoryItem) -> usize {
+    estimate_tokens(&format!(
+        "- [memory {}] {:?}: {}\n",
+        memory.id, memory.kind, memory.content
+    ))
 }
 
 fn render_context(
