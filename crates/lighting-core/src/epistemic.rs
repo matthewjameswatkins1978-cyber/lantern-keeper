@@ -660,6 +660,16 @@ pub trait EpistemicRepository: Send + Sync {
         &self,
         proposal: Proposal,
     ) -> Result<Proposal, EpistemicRepositoryError>;
+    async fn list_proposals(&self, limit: usize)
+    -> Result<Vec<Proposal>, EpistemicRepositoryError>;
+    async fn get_proposal(
+        &self,
+        id: &ProposalId,
+    ) -> Result<Option<Proposal>, EpistemicRepositoryError>;
+    async fn update_proposal(
+        &self,
+        proposal: Proposal,
+    ) -> Result<Proposal, EpistemicRepositoryError>;
     async fn store_relation(
         &self,
         relation: GraphRelation,

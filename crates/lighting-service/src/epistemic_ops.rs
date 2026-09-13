@@ -6,14 +6,15 @@ use lighting_core::{
     ContextPack, ContextPackId, ContextTrace, DimensionDefinition, Episode, EpisodeTitle,
     EpistemicError, EpistemicRepository, EpistemicRepositoryError, MemoryItem, MemoryItemSearch,
     MemoryPathRepository, NewBelief, NewClaim, NewGraphRelation, NewMemoryItem, NewSource,
-    PredicateDefinition, PredicateStatus, ReconciliationAction, ReconciliationDecision,
-    SourceContent, SourceKind, SourceRepository, SourceTitle, Stance, StoreSourceResult, Trace,
-    TraceId, TrustClass, normalize_registry_key, propagate_stale_beliefs, reconcile_claim,
+    PredicateDefinition, PredicateStatus, Proposal, ProposalId, ReconciliationAction,
+    ReconciliationDecision, SourceContent, SourceKind, SourceRepository, SourceTitle, Stance,
+    StoreSourceResult, Trace, TraceId, TrustClass, normalize_registry_key, propagate_stale_beliefs,
+    reconcile_claim,
 };
 
 use crate::epistemic_dto::{
     BeliefRequest, ClaimRequest, ContextCompileRequest, CorrectionRequest,
-    DimensionDefinitionRequest, MemoryItemRequest, MemoryItemSearchRequest,
+    DimensionDefinitionRequest, ForemanReviewRequest, MemoryItemRequest, MemoryItemSearchRequest,
     PredicateDefinitionRequest, ReconcileClaimRequest, RelationRequest,
 };
 use crate::source_dto::ApiError;
@@ -607,6 +608,86 @@ impl EpistemicService {
             .into_iter()
             .filter(|belief| belief.stale)
             .collect())
+    }
+
+    pub async fn foreman_queue(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<Proposal>, EpistemicOperationError> {
+        self.repo
+            .list_proposals(limit.clamp(1, 50))
+            .await
+            .map_err(map_repository_error)
+    }
+
+    pub async fn foreman_review(
+        &self,
+        id: &str,
+        request: ForemanReviewRequest,
+    ) -> Result<Proposal, EpistemicOperationError> {
+        let id = ProposalId::new(id.trim().to_owned()).map_err(|_| {
+            EpistemicOperationError::Invalid("proposal ID cannot be blank".to_owned())
+        })?;
+        let mut proposal = self
+            .repo
+            .get_proposal(&id)
+            .await
+            .map_err(map_repository_error)?
+            .ok_or(EpistemicOperationError::NotFound)?;
+        let decision = request.decision.trim().to_ascii_lowercase();
+        if !matches!(decision.as_str(), "accept" | "reject" | "modify" | "defer") {
+            return Err(EpistemicOperationError::Invalid(
+                "Foreman decision must be accept, reject, modify, or defer".to_owned(),
+            ));
+        }
+        if proposal.status != "pending" {
+            return Err(EpistemicOperationError::Invalid(
+                "only pending proposals can be reviewed".to_owned(),
+            ));
+        }
+        if decision == "modify" {
+            proposal.payload = request
+                .payload
+                .filter(|payload| !payload.trim().is_empty())
+                .ok_or_else(|| {
+                    EpistemicOperationError::Invalid(
+                        "modify requires a non-blank replacement payload".to_owned(),
+                    )
+                })?;
+            proposal.decided_at = None;
+        } else {
+            proposal.status = match decision.as_str() {
+                "accept" => "accepted",
+                "reject" => "rejected",
+                "defer" => "deferred",
+                _ => unreachable!(),
+            }
+            .to_owned();
+            proposal.decided_at = Some(Utc::now());
+        }
+        let proposal = self
+            .repo
+            .update_proposal(proposal)
+            .await
+            .map_err(map_repository_error)?;
+        let trace = Trace {
+            id: new_trace_id()?,
+            event_type: "foreman_proposal_reviewed".to_owned(),
+            actor_id: "lucy".to_owned(),
+            subject_id: Some(proposal.id.to_string()),
+            input_ids: vec![proposal.id.to_string()],
+            output_ids: vec![proposal.id.to_string()],
+            details: BTreeMap::from([
+                ("decision".to_owned(), decision),
+                ("status".to_owned(), proposal.status.clone()),
+            ]),
+            created_at: Utc::now(),
+        };
+        self.repo
+            .append_trace(trace)
+            .await
+            .map_err(map_repository_error)?;
+        Ok(proposal)
     }
 
     pub async fn mark_belief_stale(

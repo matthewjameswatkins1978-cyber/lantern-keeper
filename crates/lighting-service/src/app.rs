@@ -115,6 +115,14 @@ pub fn build_router(state: AppState) -> Router {
                     axum::routing::post(epistemic_routes::compile_context),
                 )
                 .route(
+                    "/api/v1/foreman/queue",
+                    axum::routing::get(epistemic_routes::foreman_queue),
+                )
+                .route(
+                    "/api/v1/foreman/{proposal_id}/review",
+                    axum::routing::post(epistemic_routes::foreman_review),
+                )
+                .route(
                     "/api/v1/claims/{claim_id}/reconcile",
                     axum::routing::post(epistemic_routes::reconcile_claim),
                 )

@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use lighting_core::{
     Belief, BeliefId, BeliefRevision, Claim, ClaimId, ContextPack, ContextPackId,
     DimensionDefinition, EpistemicRepository, EpistemicRepositoryError, GraphRelation, MemoryItem,
-    MemoryItemSearch, PredicateDefinition, Proposal, Trace,
+    MemoryItemSearch, PredicateDefinition, Proposal, ProposalId, Trace,
 };
 use surrealdb::types::Object;
 use thiserror::Error;
@@ -419,6 +419,59 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             proposal.created_at,
         )
         .await
+    }
+
+    async fn list_proposals(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<Proposal>, EpistemicRepositoryError> {
+        let query = if limit > 0 {
+            "SELECT * FROM proposal WHERE payload CONTAINS '\"status\":\"pending\"' ORDER BY created_at ASC, id ASC LIMIT $limit"
+        } else {
+            "SELECT * FROM proposal WHERE payload CONTAINS '\"status\":\"pending\"' ORDER BY created_at ASC, id ASC"
+        };
+        let mut request = self.store.query(query);
+        if limit > 0 {
+            request = request.bind(("limit", limit));
+        }
+        let records: Vec<Object> = request
+            .await
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?
+            .take(0)
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        records
+            .into_iter()
+            .map(decode)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(operation)
+    }
+
+    async fn get_proposal(
+        &self,
+        id: &ProposalId,
+    ) -> Result<Option<Proposal>, EpistemicRepositoryError> {
+        self.get_by_id("proposal", id.as_str())
+            .await
+            .map(|record| record.map(decode).transpose())
+            .map_err(operation)?
+            .map_err(operation)
+    }
+
+    async fn update_proposal(
+        &self,
+        proposal: Proposal,
+    ) -> Result<Proposal, EpistemicRepositoryError> {
+        let payload = serde_json::to_string(&proposal)
+            .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
+        self.store
+            .query(
+                "UPDATE proposal SET payload = $payload WHERE id = type::record('proposal', $id)",
+            )
+            .bind(("id", proposal.id.as_str()))
+            .bind(("payload", payload))
+            .await
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        Ok(proposal)
     }
 
     async fn store_relation(

@@ -139,6 +139,13 @@ pub struct ContextCompileRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ForemanReviewRequest {
+    pub decision: String,
+    #[serde(default)]
+    pub payload: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RelationRequest {
     pub in_id: String,
     pub out_id: String,

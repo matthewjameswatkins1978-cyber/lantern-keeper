@@ -1,12 +1,15 @@
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use chrono::{Duration, Utc};
-use lighting_core::{EpistemicRepository, MemoryItemKind, ReconciliationAction, Stance};
+use lighting_core::{
+    EpistemicRepository, MemoryItemKind, Proposal, ProposalId, ReconciliationAction, Stance,
+};
 use lighting_service::{
     EpistemicService,
     epistemic_dto::{
-        BeliefRequest, ClaimRequest, ContextCompileRequest, CorrectionRequest, MemoryItemRequest,
-        PredicateDefinitionRequest, ReconcileClaimRequest, RelationRequest,
+        BeliefRequest, ClaimRequest, ContextCompileRequest, CorrectionRequest,
+        ForemanReviewRequest, MemoryItemRequest, PredicateDefinitionRequest, ReconcileClaimRequest,
+        RelationRequest,
     },
 };
 use lighting_store_surreal::{StoreConfig, SurrealEpistemicRepository, SurrealStore};
@@ -333,6 +336,61 @@ async fn context_compiler_returns_bounded_typed_pack_and_persists_it()
             .expect("compiled context pack must be durable"),
         pack
     );
+
+    let _ = std::fs::remove_dir_all(path);
+    Ok(())
+}
+
+#[tokio::test]
+async fn foreman_reviews_bounded_proposals_and_records_the_decision()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = test_path();
+    let store = SurrealStore::connect(&embedded_config(path.clone())).await?;
+    store.initialise_schema().await?;
+    let repository = SurrealEpistemicRepository::new(store);
+    repository.migrate().await?;
+    let service = EpistemicService::new(Arc::new(repository.clone()));
+    let proposal = repository
+        .enqueue_proposal(Proposal {
+            id: ProposalId::new(Uuid::new_v4().to_string())?,
+            proposal_type: "candidate_pattern".to_owned(),
+            proposed_by: "dreamer".to_owned(),
+            target_ids: vec!["memory-1".to_owned()],
+            payload: "old".to_owned(),
+            status: "pending".to_owned(),
+            created_at: Utc::now(),
+            decided_at: None,
+        })
+        .await?;
+
+    let queue = service.foreman_queue(10).await?;
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].id, proposal.id);
+    let reviewed = service
+        .foreman_review(
+            proposal.id.as_str(),
+            ForemanReviewRequest {
+                decision: "modify".to_owned(),
+                payload: Some("updated".to_owned()),
+            },
+        )
+        .await?;
+    assert_eq!(reviewed.status, "pending");
+    assert_eq!(reviewed.payload, "updated");
+    assert_eq!(service.foreman_queue(10).await?.len(), 1);
+
+    let accepted = service
+        .foreman_review(
+            proposal.id.as_str(),
+            ForemanReviewRequest {
+                decision: "accept".to_owned(),
+                payload: None,
+            },
+        )
+        .await?;
+    assert_eq!(accepted.status, "accepted");
+    assert!(accepted.decided_at.is_some());
+    assert!(service.foreman_queue(10).await?.is_empty());
 
     let _ = std::fs::remove_dir_all(path);
     Ok(())

@@ -220,6 +220,49 @@ pub async fn list_stale_beliefs(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ForemanQueueQuery {
+    #[serde(default = "default_foreman_limit")]
+    pub limit: usize,
+}
+
+fn default_foreman_limit() -> usize {
+    10
+}
+
+pub async fn foreman_queue(
+    State(state): State<AppState>,
+    Query(query): Query<ForemanQueueQuery>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.foreman_queue(query.limit).await {
+        Ok(proposals) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"proposals": proposals})),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn foreman_review(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::epistemic_dto::ForemanReviewRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.foreman_review(&id, request).await {
+        Ok(proposal) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"proposal": proposal})),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
 pub async fn mark_belief_stale(
     Path(id): Path<String>,
     State(state): State<AppState>,
