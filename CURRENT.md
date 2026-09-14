@@ -2,89 +2,48 @@
 
 ## Repository
 
-- Active line: `feature/lantern-full-move`
-- Current feature checkpoint: provenance-complete live factual capture (working tree)
-- Canonical `master`: `a44554b7050e9b3dd2178eede99b67184d89d12c`
-- Feature checkout is clean at the pushed provenance-complete capture checkpoint.
-- `master` remains unchanged by the feature work.
+- Canonical branch: `master`
+- Canonical engineering merge: `4e40e48f4b336cebce216338c9a4bdbc02e26ba6`
+- `feature/lantern-full-move` has been merged into `master` through PR #3.
+- The merge reconciled the later master documentation checkpoint without force-pushing either line.
+- This is an engineering checkpoint, not the final Basic Memory cutover or a public release.
 
 ## Phase
 
-Foundation modernisation and Basic Memory import accounting are complete.
-Spring cleaning is complete. Durable Claim-to-Belief reconciliation,
-correction, stale invalidation, deterministic Context Packs, bounded Foreman
-review, logical export/restore, and the current LanternBench behavioural suite
-are now implemented on the feature line.
+The epistemic memory foundation is now canonical on `master`. Foundation modernisation, spring cleaning, Basic Memory import accounting, durable Claim-to-Belief reconciliation, correction, stale invalidation, deterministic Context Packs, bounded Foreman review, logical export/restore foundations, LanternBench, and the bounded MCP bridge are merged.
 
 ## Works today
 
 - Rust 1.98.1 / Edition 2024 and SurrealDB 3.3.0-beta.4 are pinned.
 - Embedded, versioned SurrealKV is the normal local store.
-- Sources, Episodes, Projects, Claims, Beliefs, soft Memory Items, relations,
-  registries, traces, proposals, export, import accounting, lexical recall,
-  context, and the optional Tethers preview are present in the tree.
-- Direct Claims can be durably reconciled into current Beliefs. Supersession
-  preserves the old projection, records immutable revisions, and retains
-  Claim-to-Belief lineage in one transactional store operation.
-- Direct Matthew corrections are preserved as Source/Episode evidence and can
-  be linked to the exact Context Pack that influenced the correction.
-- Deterministic Context Packs have stable IDs, typed Matthew/Lucy/shared/legacy
-  sections, separate historical beliefs, bounded selection, stale exclusions,
-  source/episode provenance, candidate scores and reasons, retrieval lanes,
-  item/token budget enforcement, persistence, and compiler traces. Ordinary
-  current queries do not inject superseded beliefs; history wording or a named
-  historical value can request the historical projection.
-- Belief inspection supports get, lexical search, immutable history,
-  provenance explanation, and stale listing. Foreman supports a bounded queue
-  and traced accept/reject/modify/defer decisions without direct belief
-  promotion.
-- A local stdio MCP bridge now exposes bounded context, remember, search,
-  provenance, correction, status, and Lucy-owned Foreman tools over the
-  existing HTTP service. Soft memories remain the default. Factual
-  `kind: "claim"` capture requires exact `evidence_text`; Lantern creates or
-  reuses the Source and whole-text Episode, links their UTF-8 byte span, and
-  reconciles the normalized `content` value in one response. `lantern_why`
-  supports belief IDs, memory IDs, and ambiguity-safe natural queries.
-- Codex Desktop MCP is connected with all 8 tools. The connected lifecycle,
-  initial factual provenance, correction provenance, and restart persistence
-  are proven by the local MCP proof suite.
-- Predicate and dimension normalization, explicit unmapped Claims, pure
-  reconciliation decisions, echo suppression, direct-holder gates, and
-  transitive stale propagation are implemented.
-- The repaired Basic Memory snapshot accounts for 61 notes, 496 observations,
-  and 275 relations with zero unexplained items.
+- Sources, Episodes, Projects, Claims, Beliefs, soft Memory Items, relations, registries, traces, proposals, export, import accounting, recall, context, and the optional Tethers preview are present.
+- Direct Claims can be durably reconciled into current Beliefs. Supersession preserves the old projection, records immutable revisions, and retains Claim-to-Belief lineage.
+- Direct Matthew corrections are preserved as Source/Episode evidence and can be linked to the Context Pack that influenced the correction.
+- Deterministic Context Packs provide typed Matthew/Lucy/shared/legacy sections, current/historical separation, bounded selection, stale exclusions, provenance, candidate reasons, budgets, persistence, and compiler traces.
+- The stdio MCP bridge exposes exactly eight bounded tools: context, remember, search, why, correct, status, Foreman queue, and Foreman review.
+- Factual `kind: "claim"` capture requires exact `evidence_text`; Lantern creates or reuses the Source and whole-text Episode, links the UTF-8 byte span, and reconciles the normalized value.
+- Codex Desktop is connected with all eight tools. Remember/search/context/why/correct, current/history separation, initial provenance, correction provenance, and restart persistence are proven.
+- Context matching has been hardened against holder-only and lexical false positives.
+- Predicate/dimension normalization, explicit unmapped Claims, echo suppression, direct-holder gates, and transitive stale propagation are implemented.
+- The repaired Basic Memory snapshot accounts for 61 notes, 496 observations, and 275 relations with zero unexplained items.
+- A real 1,479-record logical export/restore parity drill has passed.
 
 ## Still missing or partial
 
-- Natural-language correction targeting is now ambiguity-safe but requires one
-  uniquely matching active belief; full response-context bridge linkage remains
-  partial.
-- Exact typed/fused retrieval, graph-backed project associations, bounded graph
-  projection, Dreamer operations, and the separate ChatGPT/Lucy-native product
-  path remain.
-- Restore has passed a real 1,479-record export/restore parity drill, but a
-  service-level retrieval-after-restore and real Lucy restart proof remain.
-- Full MCP contract coverage, Basic Memory shadow comparison, final delta, and
-  cutover.
+- Basic Memory shadow comparison against representative real memories.
+- Final Basic Memory delta, idempotency/accounting check, private export, and cutover decision.
+- Service-level representative retrieval after a fresh restore remains to be accepted.
+- Exact typed/fused retrieval, richer graph-backed project associations, bounded graph expansion, and Dreamer operations remain later work.
+- Normal ChatGPT/Lucy full read/write custom MCP access is a separate OpenAI product-access limitation. Codex Desktop integration is already proven and must not be confused with that product gate.
 
 ## Environment
 
-The Rust MSVC target needs the installed Microsoft C++ Build Tools and Windows
-SDK libraries. The user-level `LIB` and `LIBPATH` values now point to the
-validated VC and Windows SDK x64 libraries, excluding the unusable ATL/MFC
-entry. Lantern does not require the Visual Studio IDE or a particular editor;
-plain `pwsh -NoProfile` validation passes after opening a new shell so it
-inherits the updated user environment.
+The Rust MSVC target uses the installed Microsoft C++ Build Tools and Windows SDK libraries. The validated user-level library paths exclude the unusable ATL/MFC-only entry. Lantern does not require the Visual Studio IDE or a particular editor.
 
 ## Recovery and private state
 
-The original unfinished reconciliation draft remains preserved in the stash named
-`preserve unfinished reconciliation draft before spring clean 2026-09-13` and
-at `recovery/pre-spring-clean-c2cdfd9`. Private migration material remains in
-`.private-migration/` and must not be committed or deleted.
+Private migration material remains in `.private-migration/` and must not be committed or deleted. Recovery/archive refs remain available for historical safety. Basic Memory remains the migration source and rollback/history archive until cutover is accepted.
 
 ## Next verified step
 
-Complete the MCP contract/connected Lucy proof, then run Basic Memory shadow
-comparison and final-delta accounting. Keep `master` untouched until every
-cutover gate is green.
+Run the Basic Memory shadow comparison, fix mechanism-level discrepancies only, then perform the final Basic Memory delta and export/restore acceptance. If those gates are green, record the cutover decision. Do not tag or publish a release merely because the engineering foundation is now on `master`.
