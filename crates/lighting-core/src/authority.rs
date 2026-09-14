@@ -205,46 +205,64 @@ impl AuthorityLedger {
                 reason: DenyReason::NoMatchingGrant,
             };
         }
-        let Some(grant) = candidates
+        let scoped = candidates
             .iter()
-            .find(|grant| grant.scope == check.request.scope)
             .copied()
-        else {
+            .filter(|grant| grant.scope == check.request.scope)
+            .collect::<Vec<_>>();
+        if scoped.is_empty() {
             return AuthorityDecision::Deny {
                 reason: DenyReason::ScopeMismatch,
             };
-        };
-
-        if grant
-            .expires_at
-            .is_some_and(|expires_at| expires_at <= check.at)
-        {
-            return AuthorityDecision::Deny {
-                reason: DenyReason::ExpiredGrant,
-            };
         }
-        if self
-            .revocations
+        let constrained = scoped
             .iter()
-            .any(|revocation| revocation.grant_id == grant.id && revocation.revoked_at <= check.at)
-        {
-            return AuthorityDecision::Deny {
-                reason: DenyReason::RevokedGrant,
-            };
-        }
-        if grant.issued_at > check.at {
-            return AuthorityDecision::Deny {
-                reason: DenyReason::NoMatchingGrant,
-            };
-        }
-        if grant.constraints != check.request.constraints {
+            .copied()
+            .filter(|grant| grant.constraints == check.request.constraints)
+            .collect::<Vec<_>>();
+        if constrained.is_empty() {
             return AuthorityDecision::Deny {
                 reason: DenyReason::ConstraintMismatch,
             };
         }
-        AuthorityDecision::Allow {
-            grant_id: grant.id.clone(),
-            expires_at: grant.expires_at,
+        let issued = constrained
+            .iter()
+            .copied()
+            .filter(|grant| grant.issued_at <= check.at)
+            .collect::<Vec<_>>();
+        if issued.is_empty() {
+            return AuthorityDecision::Deny {
+                reason: DenyReason::NoMatchingGrant,
+            };
+        }
+
+        for grant in &issued {
+            let revoked = self.revocations.iter().any(|revocation| {
+                revocation.grant_id == grant.id && revocation.revoked_at <= check.at
+            });
+            let expired = grant
+                .expires_at
+                .is_some_and(|expires_at| expires_at <= check.at);
+            if !revoked && !expired {
+                return AuthorityDecision::Allow {
+                    grant_id: grant.id.clone(),
+                    expires_at: grant.expires_at,
+                };
+            }
+        }
+
+        if issued.iter().all(|grant| {
+            self.revocations.iter().any(|revocation| {
+                revocation.grant_id == grant.id && revocation.revoked_at <= check.at
+            })
+        }) {
+            AuthorityDecision::Deny {
+                reason: DenyReason::RevokedGrant,
+            }
+        } else {
+            AuthorityDecision::Deny {
+                reason: DenyReason::ExpiredGrant,
+            }
         }
     }
 
@@ -381,6 +399,37 @@ mod tests {
                 reason: DenyReason::RevokedGrant
             }
         ));
+    }
+
+    #[test]
+    fn an_active_duplicate_scope_survives_a_revoked_grant() {
+        let mut ledger = AuthorityLedger::default();
+        let mut revoked = grant();
+        revoked.id = crate::AuthorityGrantId::new("grant-revoked").unwrap();
+        ledger.issue_grant(revoked.clone()).unwrap();
+        ledger
+            .revoke_grant(AuthorityRevocation {
+                id: crate::AuthorityRevocationId::new("revoke-1").unwrap(),
+                grant_id: revoked.id,
+                issuer_principal_id: revoked.issuer_principal_id,
+                source_episode_id: EpisodeId::new("episode-revoke").unwrap(),
+                authenticated_session_id: "session-opaque".to_owned(),
+                revoked_at: DateTime::parse_from_rfc3339("2026-09-14T11:00:00Z")
+                    .unwrap()
+                    .with_timezone(&Utc),
+            })
+            .unwrap();
+        let mut active = grant();
+        active.id = crate::AuthorityGrantId::new("grant-active").unwrap();
+        ledger.issue_grant(active.clone()).unwrap();
+
+        assert_eq!(
+            ledger.check(&check(active.scope.clone(), "2026-09-14T12:00:00Z")),
+            AuthorityDecision::Allow {
+                grant_id: active.id,
+                expires_at: active.expires_at,
+            }
+        );
     }
 
     #[test]
