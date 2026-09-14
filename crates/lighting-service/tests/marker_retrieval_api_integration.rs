@@ -56,6 +56,7 @@ async fn full_app() -> Router {
         memory_service: None,
         ledger_service: None,
         epistemic_service: None,
+        authority_service: None,
     })
 }
 async fn body_json(body: Body) -> Value {

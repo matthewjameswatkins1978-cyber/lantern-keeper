@@ -10,6 +10,7 @@ use std::{fmt, str::FromStr};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod authority;
 pub mod epistemic;
 pub mod ledger;
 pub mod memory;
@@ -17,6 +18,11 @@ pub mod memory_path;
 pub mod source;
 pub mod source_outline;
 
+pub use authority::{
+    AuthenticationClass, AuthorityCheck, AuthorityDecision, AuthorityError, AuthorityGrant,
+    AuthorityLedger, AuthorityRequest, AuthorityRevocation, AuthorityScope, DenyReason, Principal,
+    PrincipalKind,
+};
 pub use epistemic::{
     Actor, Belief, BeliefLineage, BeliefRevision, BeliefState, Claim, ContextPack, ContextTrace,
     DimensionDefinition, EpistemicError, EpistemicRepository, EpistemicRepositoryError, Frame,
@@ -109,6 +115,10 @@ identifier_type!(TraceId);
 identifier_type!(ProposalId);
 identifier_type!(ContextPackId);
 identifier_type!(RelationId);
+identifier_type!(ActorId);
+identifier_type!(PrincipalId);
+identifier_type!(AuthorityGrantId);
+identifier_type!(AuthorityRevocationId);
 
 #[cfg(test)]
 mod tests {

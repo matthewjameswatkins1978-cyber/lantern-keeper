@@ -616,6 +616,7 @@ async fn serve() -> anyhow::Result<()> {
         memory_service: Some(memory_service),
         ledger_service: Some(ledger_service),
         epistemic_service: Some(epistemic_service),
+        authority_service: Some(lighting_service::AuthorityService::new()),
     };
     app_state.mark_ready();
 

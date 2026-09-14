@@ -1,4 +1,7 @@
 pub mod app;
+pub mod authority_dto;
+pub mod authority_ops;
+pub mod authority_routes;
 pub mod episode_association_dto;
 pub mod episode_association_ops;
 pub mod episode_association_routes;
@@ -40,6 +43,7 @@ pub mod tethers_routes;
 mod tests;
 
 pub use app::build_router;
+pub use authority_ops::AuthorityService;
 pub use episode_association_ops::EpisodeAssociationService;
 pub use episode_ops::EpisodeService;
 pub use epistemic_ops::EpistemicService;

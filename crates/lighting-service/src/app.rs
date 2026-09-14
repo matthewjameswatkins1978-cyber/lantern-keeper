@@ -2,7 +2,7 @@ use axum::Router;
 use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::{
-    episode_association_routes, episode_routes, epistemic_routes, ledger_routes,
+    authority_routes, episode_association_routes, episode_routes, epistemic_routes, ledger_routes,
     marker_retrieval_routes, marker_routes, memory_routes, project_retrieval_routes,
     project_routes, routes, source_routes, state::AppState, tethers_routes,
 };
@@ -75,6 +75,23 @@ pub fn build_router(state: AppState) -> Router {
         "/api/v1/ledger/events",
         axum::routing::post(ledger_routes::ingest),
     );
+    let authority_routes = Router::new()
+        .route(
+            "/api/v1/authority/grants",
+            axum::routing::get(authority_routes::list_grants).post(authority_routes::grant),
+        )
+        .route(
+            "/api/v1/authority/revocations",
+            axum::routing::get(authority_routes::list_revocations).post(authority_routes::revoke),
+        )
+        .route(
+            "/api/v1/authority/check",
+            axum::routing::post(authority_routes::check),
+        )
+        .route(
+            "/api/v1/authority/explain/{grant_id}",
+            axum::routing::get(authority_routes::explain),
+        );
 
     let marker_routes = Router::new()
         .route(
@@ -99,6 +116,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(marker_routes)
         .merge(memory_routes)
         .merge(ledger_routes)
+        .merge(authority_routes)
         .merge(
             Router::new()
                 .route(
