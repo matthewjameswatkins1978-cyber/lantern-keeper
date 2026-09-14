@@ -60,6 +60,7 @@ async fn app(d: &str) -> Router {
         ledger_service: None,
         epistemic_service: None,
         authority_service: None,
+        dreamer_service: None,
     })
 }
 async fn app_default() -> Router {

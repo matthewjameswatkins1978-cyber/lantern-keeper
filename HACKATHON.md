@@ -24,3 +24,6 @@ This section will be updated only as each item is implemented and verified:
 
 Unverified sponsor calls, hosted deployments, and public submission state will
 remain explicitly marked until real evidence exists.
+
+The current Nebius adapter and its live-proof boundary are described in
+[`docs/hackathon/NEBIUS_INTEGRATION.md`](docs/hackathon/NEBIUS_INTEGRATION.md).

@@ -29,3 +29,6 @@ Live Nebius, Tavily, OpenShell, hosted-demo, and Devpost claims remain
 unverified until their real commands or browser flows produce inspectable
 evidence. Offline fixtures may prove failure behaviour and architecture but
 must not be described as live provider proof.
+
+Phase D has a candidate-only Nebius adapter with strict local response
+validation. Live Token Factory credentials/model availability remain unverified.

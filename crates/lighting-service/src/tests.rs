@@ -122,6 +122,7 @@ mod router_tests {
             ledger_service: None,
             epistemic_service: None,
             authority_service: None,
+            dreamer_service: None,
         };
         build_router(state)
     }
@@ -552,6 +553,7 @@ mod router_tests {
             ledger_service: None,
             epistemic_service: None,
             authority_service: None,
+            dreamer_service: None,
         };
         build_router(state)
     }
@@ -806,6 +808,7 @@ mod router_tests {
             ledger_service: None,
             epistemic_service: None,
             authority_service: None,
+            dreamer_service: None,
         };
         build_router(state)
     }
@@ -1761,6 +1764,7 @@ mod project_add_file_tests {
             ledger_service: None,
             epistemic_service: None,
             authority_service: None,
+            dreamer_service: None,
         };
         build_router(state)
     }
@@ -2077,6 +2081,7 @@ mod project_add_file_tests {
             ledger_service: None,
             epistemic_service: None,
             authority_service: None,
+            dreamer_service: None,
         };
         build_router(state)
     }
@@ -2476,6 +2481,7 @@ mod project_add_file_tests {
             ledger_service: None,
             epistemic_service: None,
             authority_service: None,
+            dreamer_service: None,
         };
         let app = build_router(state);
 
@@ -2595,6 +2601,7 @@ mod project_add_file_tests {
             ledger_service: None,
             epistemic_service: None,
             authority_service: None,
+            dreamer_service: None,
         };
         let app = build_router(state);
 

@@ -1,0 +1,12 @@
+{
+  "format": "lantern-authority-benchmark-v1",
+  "description": "Deterministic authority decisions are independent of epistemic evidence.",
+  "cases": [
+    {"name": "no_matching_grant", "expected": "DENY"},
+    {"name": "exact_scope", "expected": "ALLOW"},
+    {"name": "wrong_destination", "expected": "DENY"},
+    {"name": "expired_grant", "expected": "DENY"},
+    {"name": "revoked_grant", "expected": "DENY"},
+    {"name": "wrong_capability_version", "expected": "DENY"}
+  ]
+}

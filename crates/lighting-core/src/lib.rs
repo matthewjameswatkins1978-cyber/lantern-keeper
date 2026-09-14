@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod authority;
+pub mod dreamer;
 pub mod epistemic;
 pub mod ledger;
 pub mod memory;
@@ -23,6 +24,7 @@ pub use authority::{
     AuthorityLedger, AuthorityRequest, AuthorityRevocation, AuthorityScope, DenyReason, Principal,
     PrincipalKind,
 };
+pub use dreamer::{CandidateKind, DreamerCandidate, DreamerCandidateError, EvidenceReference};
 pub use epistemic::{
     Actor, Belief, BeliefLineage, BeliefRevision, BeliefState, Claim, ContextPack, ContextTrace,
     DimensionDefinition, EpistemicError, EpistemicRepository, EpistemicRepositoryError, Frame,

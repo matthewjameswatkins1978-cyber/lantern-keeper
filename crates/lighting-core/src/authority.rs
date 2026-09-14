@@ -194,13 +194,24 @@ impl AuthorityLedger {
     }
 
     pub fn check(&self, check: &AuthorityCheck) -> AuthorityDecision {
-        let Some(grant) = self.grants.iter().find(|grant| {
+        let candidates = self.grants.iter().filter(|grant| {
             grant.delegate_principal_id == check.request.principal_id
                 && grant.capability_id == check.request.capability_id
                 && grant.capability_version == check.request.capability_version
-        }) else {
+        });
+        let candidates = candidates.collect::<Vec<_>>();
+        if candidates.is_empty() {
             return AuthorityDecision::Deny {
                 reason: DenyReason::NoMatchingGrant,
+            };
+        }
+        let Some(grant) = candidates
+            .iter()
+            .find(|grant| grant.scope == check.request.scope)
+            .copied()
+        else {
+            return AuthorityDecision::Deny {
+                reason: DenyReason::ScopeMismatch,
             };
         };
 
@@ -224,11 +235,6 @@ impl AuthorityLedger {
         if grant.issued_at > check.at {
             return AuthorityDecision::Deny {
                 reason: DenyReason::NoMatchingGrant,
-            };
-        }
-        if grant.scope != check.request.scope {
-            return AuthorityDecision::Deny {
-                reason: DenyReason::ScopeMismatch,
             };
         }
         if grant.constraints != check.request.constraints {

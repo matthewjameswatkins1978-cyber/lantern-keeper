@@ -41,6 +41,7 @@ async fn app() -> Router {
         ledger_service: None,
         epistemic_service: None,
         authority_service: None,
+        dreamer_service: None,
     };
     build_router(st)
 }

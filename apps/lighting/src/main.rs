@@ -617,6 +617,10 @@ async fn serve() -> anyhow::Result<()> {
         ledger_service: Some(ledger_service),
         epistemic_service: Some(epistemic_service),
         authority_service: Some(lighting_service::AuthorityService::new()),
+        dreamer_service: std::env::var("NEBIUS_API_KEY")
+            .ok()
+            .and_then(|_| lighting_service::NebiusDreamer::from_env().ok())
+            .map(|provider| lighting_service::DreamerService::new(std::sync::Arc::new(provider))),
     };
     app_state.mark_ready();
 
