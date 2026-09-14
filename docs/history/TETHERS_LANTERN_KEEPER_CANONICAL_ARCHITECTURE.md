@@ -1,4 +1,7 @@
-# Tethers and Lantern Keeper — Canonical Architecture
+# Tethers and Lantern Keeper — Historical Architecture
+
+> Historical document. Superseded as the active Lantern Keeper architecture;
+> retained only for design history.
 
 Status: build foundation
 Owner and final authority: Matthew

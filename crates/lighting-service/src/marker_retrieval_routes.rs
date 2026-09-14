@@ -1,8 +1,8 @@
 //! HTTP handler for marker-led retrieval.
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 
 use crate::marker_retrieval_dto::MarkerRetrievalRequest;
 use crate::source_dto::ApiError;
@@ -25,7 +25,7 @@ pub async fn retrieve_by_marker(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 

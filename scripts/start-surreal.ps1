@@ -7,6 +7,7 @@ $PidFile = Join-Path $RuntimeDir "surrealdb.json"
 $StdoutLogFile = Join-Path $RuntimeDir "surrealdb.out.log"
 $StderrLogFile = Join-Path $RuntimeDir "surrealdb.err.log"
 $Endpoint = "ws://127.0.0.1:8000"
+$ExpectedVersion = "3.3.0-beta.4"
 
 function Find-Surreal {
     $Command = Get-Command surreal -ErrorAction SilentlyContinue
@@ -50,6 +51,10 @@ if ($PortOwner) {
 }
 
 $Surreal = Find-Surreal
+$VersionOutput = (& $Surreal version 2>&1 | Out-String).Trim()
+if ($VersionOutput -notmatch [regex]::Escape($ExpectedVersion)) {
+    throw "Found SurrealDB '$VersionOutput', but Lantern's supported remote lane requires $ExpectedVersion."
+}
 $Arguments = @(
     "start",
     "--no-banner",

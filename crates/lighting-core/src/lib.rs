@@ -10,20 +10,40 @@ use std::{fmt, str::FromStr};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod epistemic;
+pub mod ledger;
+pub mod memory;
 pub mod memory_path;
 pub mod source;
 pub mod source_outline;
 
+pub use epistemic::{
+    Actor, Belief, BeliefLineage, BeliefRevision, BeliefState, Claim, ContextPack, ContextTrace,
+    DimensionDefinition, EpistemicError, EpistemicRepository, EpistemicRepositoryError, Frame,
+    FrameAction, GraphRelation, MemoryItem, MemoryItemKind, MemoryItemSearch, NewBelief, NewClaim,
+    NewGraphRelation, NewMemoryItem, PredicateDefinition, PredicateDefinitionStatus,
+    PredicateStatus, Proposal, ReconciliationAction, ReconciliationDecision, RelationKind, Scope,
+    Stance, Trace, TrustClass, normalize_registry_key, normalize_scope, propagate_stale_beliefs,
+    reconcile_claim, scope_hash, scopes_overlap,
+};
+pub use ledger::{
+    LedgerEvent, LedgerEventError, LedgerEventRepository, LedgerIngestResult,
+    LedgerRepositoryError, LedgerRole,
+};
+pub use memory::{
+    Memory, MemoryError, MemoryKind, MemoryRepository, MemoryRepositoryError, MemorySearchQuery,
+    MemoryStatus, NewMemory,
+};
 pub use memory_path::{
     Episode, EpisodeError, EpisodeMarkerLink, EpisodeProjectLink, EpisodeTitle, Marker,
     MarkerError, MemoryPathRepository, MemoryPathRepositoryError, Project, ProjectError,
     ProjectLinkKind, ProjectName, ProjectStatus, SourceRange, SourceRangeError, StoreMarkerResult,
 };
 pub use source::{
-    find_all_matches, NewSource, Source, SourceContent, SourceError, SourceFingerprint, SourceId,
-    SourceKind, SourceRepository, SourceRepositoryError, SourceTitle, StoreSourceResult,
+    NewSource, Source, SourceContent, SourceError, SourceFingerprint, SourceId, SourceKind,
+    SourceRepository, SourceRepositoryError, SourceTitle, StoreSourceResult, find_all_matches,
 };
-pub use source_outline::{parse_outline, Heading, MarkdownOutline};
+pub use source_outline::{Heading, MarkdownOutline, parse_outline};
 
 /// Lighting service version.
 pub const LIGHTING_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -80,6 +100,15 @@ identifier_type!(EpisodeId);
 identifier_type!(MarkerId);
 identifier_type!(ProjectId);
 identifier_type!(TopicId);
+identifier_type!(MemoryId);
+identifier_type!(ClaimId);
+identifier_type!(BeliefId);
+identifier_type!(BeliefRevisionId);
+identifier_type!(MemoryItemId);
+identifier_type!(TraceId);
+identifier_type!(ProposalId);
+identifier_type!(ContextPackId);
+identifier_type!(RelationId);
 
 #[cfg(test)]
 mod tests {

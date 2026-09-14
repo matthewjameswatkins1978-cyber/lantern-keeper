@@ -339,10 +339,12 @@ mod tests {
         // Tether
         assert_eq!(json["tether"]["id"], "preview-project-result");
         assert_eq!(json["tether"]["version"], "0.1");
-        assert!(json["tether"]["source"]
-            .as_str()
-            .expect("source string")
-            .contains("lantern.project_result_preview_requested"));
+        assert!(
+            json["tether"]["source"]
+                .as_str()
+                .expect("source string")
+                .contains("lantern.project_result_preview_requested")
+        );
 
         // Event
         assert_eq!(json["event"]["id"], "evt-test-001");

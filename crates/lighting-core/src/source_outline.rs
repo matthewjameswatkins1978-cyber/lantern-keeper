@@ -74,14 +74,12 @@ fn extract_headings(content: &str) -> Vec<RawHeading> {
             continue;
         }
 
-        if !in_code_block {
-            if let Some(raw) = try_parse_heading_line(line_str, line_start) {
-                headings.push(RawHeading {
-                    level: raw.level,
-                    title: raw.title,
-                    start_byte: raw.start_byte,
-                });
-            }
+        if !in_code_block && let Some(raw) = try_parse_heading_line(line_str, line_start) {
+            headings.push(RawHeading {
+                level: raw.level,
+                title: raw.title,
+                start_byte: raw.start_byte,
+            });
         }
 
         pos = if line_end < len { line_end + 1 } else { len };
@@ -197,9 +195,11 @@ mod tests {
 
     #[test]
     fn document_without_headings_returns_empty() {
-        assert!(parse_outline("Just some text\nno headings here\n")
-            .headings
-            .is_empty());
+        assert!(
+            parse_outline("Just some text\nno headings here\n")
+                .headings
+                .is_empty()
+        );
     }
 
     #[test]

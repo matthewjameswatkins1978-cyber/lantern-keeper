@@ -1,23 +1,30 @@
 use std::{env, net::SocketAddr, sync::Arc};
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
-use lighting_cli::{default_service_url, run_cli_command, validate_service_url, CliCommand};
+use lighting_cli::{
+    CliCommand, CorrectionCommand, default_service_url, run_cli_command, validate_service_url,
+};
 use lighting_service::source_ops::SourceService;
 use lighting_service::tethers_engine_client::{TethersEngineClient, TethersEngineError};
 use lighting_service::{
-    build_router, AppState, EpisodeAssociationService, EpisodeService, MarkerRetrievalService,
-    MarkerService, ProjectRetrievalService, ProjectService,
+    AppState, EpisodeAssociationService, EpisodeService, LedgerService, MarkerRetrievalService,
+    MarkerService, MemoryService, ProjectRetrievalService, ProjectService, build_router,
 };
 use lighting_store_surreal::{
-    StoreConfig, SurrealMemoryPathRepository, SurrealSourceRepository, SurrealStore,
+    ExportSummary, StoreConfig, SurrealEpistemicRepository, SurrealLedgerRepository,
+    SurrealMemoryPathRepository, SurrealMemoryRepository, SurrealSourceRepository, SurrealStore,
 };
 use tokio::net::TcpListener;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+mod mcp;
+
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 4317;
+const EXPECTED_SURREALDB_VERSION: &str = "3.3.0-beta.4";
+const EXPECTED_SCHEMA_VERSION: i64 = 9;
 
 fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -31,11 +38,27 @@ fn main() -> anyhow::Result<()> {
                 .enable_all()
                 .build()
                 .context("failed to create tokio runtime")?;
-            rt.block_on(serve())
+            rt.block_on(async {
+                tokio::spawn(serve())
+                    .await
+                    .context("Lighting service task panicked")?
+            })
         }
         Command::Version => {
             println!("Lighting {} (Lantern Keeper)", env!("CARGO_PKG_VERSION"));
             Ok(())
+        }
+        Command::Mcp => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            mcp::run(&url)
+        }
+        Command::Doctor { json } => {
+            init_tracing();
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("failed to create tokio runtime")?;
+            rt.block_on(async { doctor(json).await })
         }
         Command::Health { json } => {
             let url = cli.service_url.unwrap_or_else(default_service_url);
@@ -69,6 +92,158 @@ fn main() -> anyhow::Result<()> {
         Command::Retrieve { phrase, json } => {
             let url = cli.service_url.unwrap_or_else(default_service_url);
             run_cli_command(&url, CliCommand::Retrieve { phrase, json })
+        }
+        Command::Remember {
+            content,
+            kind,
+            project_id,
+            confidence,
+            importance,
+            derived_from,
+            supersedes,
+            contradicts,
+            supports,
+            agent,
+            json,
+        } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(
+                &url,
+                CliCommand::Remember {
+                    content,
+                    kind,
+                    project_id,
+                    confidence,
+                    importance,
+                    derived_from,
+                    supersedes,
+                    contradicts,
+                    supports,
+                    agent,
+                    json,
+                },
+            )
+        }
+        Command::Recall {
+            project_id,
+            phrase,
+            include_inactive,
+            json,
+        } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(
+                &url,
+                CliCommand::Recall {
+                    project_id,
+                    phrase,
+                    include_inactive,
+                    json,
+                },
+            )
+        }
+        Command::Context {
+            project_id,
+            query,
+            json,
+        } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(
+                &url,
+                CliCommand::Context {
+                    project_id,
+                    query,
+                    json,
+                },
+            )
+        }
+        Command::ContextPack {
+            query,
+            actor,
+            project_hints,
+            item_budget,
+            token_budget,
+            json,
+        } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(
+                &url,
+                CliCommand::ContextPack {
+                    query,
+                    actor,
+                    project_hints,
+                    item_budget,
+                    token_budget,
+                    json,
+                },
+            )
+        }
+        Command::MemorySupersede { memory_id, json } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(&url, CliCommand::MemorySupersede { memory_id, json })
+        }
+        Command::Correction { command } => match command {
+            CorrectionCommand::Record {
+                target_belief_id,
+                correction_text,
+                replacement_value,
+                json,
+            } => {
+                let url = cli.service_url.unwrap_or_else(default_service_url);
+                run_cli_command(
+                    &url,
+                    CliCommand::Correction {
+                        command: CorrectionCommand::Record {
+                            target_belief_id,
+                            correction_text,
+                            replacement_value,
+                            json,
+                        },
+                    },
+                )
+            }
+        },
+        Command::LedgerIngest { path, json } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(&url, CliCommand::LedgerIngest { path, json })
+        }
+        Command::BasicMemoryImport {
+            path,
+            dry_run,
+            json,
+        } => {
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            run_cli_command(
+                &url,
+                CliCommand::BasicMemoryImport {
+                    path,
+                    dry_run,
+                    json,
+                },
+            )
+        }
+        Command::Export { output } => {
+            init_tracing();
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("failed to create tokio runtime")?;
+            rt.block_on(async {
+                tokio::spawn(export_data(output))
+                    .await
+                    .context("Lighting export task panicked")?
+            })
+        }
+        Command::Restore { input } => {
+            init_tracing();
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("failed to create tokio runtime")?;
+            rt.block_on(async {
+                tokio::spawn(restore_data(input))
+                    .await
+                    .context("Lighting restore task panicked")?
+            })
         }
         Command::ProjectHandoff { project_id, json } => {
             let url = cli.service_url.unwrap_or_else(default_service_url);
@@ -138,6 +313,14 @@ enum Command {
     Serve,
     /// Print the Lighting version.
     Version,
+    /// Run the local stdio MCP bridge over the Lighting HTTP service.
+    Mcp,
+    /// Inspect the local Lantern and SurrealDB development baseline.
+    Doctor {
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
     /// Check Lighting service readiness.
     Health {
         #[arg(long)]
@@ -183,6 +366,103 @@ enum Command {
         /// Output JSON only.
         #[arg(long)]
         json: bool,
+    },
+    /// Record a derived, provenance-bearing Memory.
+    Remember {
+        content: String,
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        project_id: Option<String>,
+        #[arg(long, default_value_t = 0.8)]
+        confidence: f32,
+        #[arg(long, default_value_t = 0.5)]
+        importance: f32,
+        #[arg(long)]
+        derived_from: Vec<String>,
+        #[arg(long)]
+        supersedes: Vec<String>,
+        #[arg(long)]
+        contradicts: Vec<String>,
+        #[arg(long)]
+        supports: Vec<String>,
+        #[arg(long, default_value = "lucy")]
+        agent: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Recall active Memory records.
+    Recall {
+        #[arg(long)]
+        project_id: Option<String>,
+        #[arg(long)]
+        phrase: Option<String>,
+        #[arg(long)]
+        include_inactive: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Build a compact working context from active Memory records.
+    Context {
+        #[arg(long)]
+        project_id: Option<String>,
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compile a typed deterministic Context Pack.
+    ContextPack {
+        query: String,
+        #[arg(long)]
+        actor: Option<String>,
+        #[arg(long, value_delimiter = ',')]
+        project_hints: Vec<String>,
+        #[arg(long, default_value_t = 10)]
+        item_budget: usize,
+        #[arg(long, default_value_t = 2048)]
+        token_budget: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Mark a Memory as superseded while retaining its history.
+    MemorySupersede {
+        memory_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record or inspect corrections through the canonical correction surface.
+    Correction {
+        #[command(subcommand)]
+        command: CorrectionCommand,
+    },
+    /// Ingest one event or an events JSON array into the append-only ledger.
+    LedgerIngest {
+        path: std::path::PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Import a validated Basic Memory snapshot as Source evidence and ledger metadata.
+    BasicMemoryImport {
+        /// Snapshot directory or one notes-*.ndjson shard.
+        path: std::path::PathBuf,
+        /// Validate and report the snapshot without contacting Lighting.
+        #[arg(long)]
+        dry_run: bool,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export logical records to an engine-independent backup directory.
+    Export {
+        /// Destination directory for manifest.json and NDJSON files.
+        output: std::path::PathBuf,
+    },
+    /// Restore a logical export into the configured schema-initialised store.
+    /// Use an isolated LIGHTING_SURREAL_PATH for recovery drills.
+    Restore {
+        /// Source directory containing manifest.json and NDJSON files.
+        input: std::path::PathBuf,
     },
     /// Produce a Codex-ready handoff for a Project.
     ProjectHandoff {
@@ -274,8 +554,31 @@ async fn serve() -> anyhow::Result<()> {
 
     info!("Memory-path schema migrations applied successfully");
 
+    let memory_repo = SurrealMemoryRepository::new(store.clone());
+    memory_repo
+        .migrate()
+        .await
+        .context("failed to apply Living Memory schema migration")?;
+
+    info!("Living Memory schema migration applied successfully");
+
+    SurrealLedgerRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to apply source-ledger event schema migration")?;
+
+    info!("Source-ledger event schema migration applied successfully");
+
+    let epistemic_repo = SurrealEpistemicRepository::new(store.clone());
+    epistemic_repo
+        .migrate()
+        .await
+        .context("failed to apply canonical epistemic schema migration")?;
+    info!("Canonical epistemic schema migration applied successfully");
+
     let source_repo: Arc<dyn lighting_core::SourceRepository> = Arc::new(repo);
     let mp_repo: Arc<dyn lighting_core::MemoryPathRepository> = Arc::new(mp_repo);
+    let memory_repo: Arc<dyn lighting_core::MemoryRepository> = Arc::new(memory_repo);
     let source_service = SourceService::new(Arc::clone(&source_repo));
     let project_service = ProjectService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
     let marker_service = MarkerService::new(Arc::clone(&mp_repo));
@@ -285,6 +588,14 @@ async fn serve() -> anyhow::Result<()> {
         MarkerRetrievalService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
     let project_retrieval_service =
         ProjectRetrievalService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
+    let memory_service = MemoryService::new(Arc::clone(&memory_repo));
+    let ledger_repo = SurrealLedgerRepository::new(store.clone());
+    let ledger_service = LedgerService::new(Arc::new(ledger_repo));
+    let epistemic_service = lighting_service::EpistemicService::new_with_evidence(
+        Arc::new(epistemic_repo),
+        Arc::clone(&source_repo),
+        Arc::clone(&mp_repo),
+    );
     let tethers_client = match TethersEngineClient::from_env() {
         Ok(client) => Some(client),
         Err(TethersEngineError::MissingEnginePath) => None,
@@ -302,6 +613,9 @@ async fn serve() -> anyhow::Result<()> {
         retrieval_service: Some(retrieval_service),
         project_retrieval_service: Some(project_retrieval_service),
         tethers_client,
+        memory_service: Some(memory_service),
+        ledger_service: Some(ledger_service),
+        epistemic_service: Some(epistemic_service),
     };
     app_state.mark_ready();
 
@@ -314,6 +628,169 @@ async fn serve() -> anyhow::Result<()> {
         .await
         .context("Lighting server failed")?;
 
+    Ok(())
+}
+
+async fn export_data(output: std::path::PathBuf) -> anyhow::Result<()> {
+    let store_config = StoreConfig::from_env();
+    let store = SurrealStore::connect(&store_config)
+        .await
+        .context("failed to connect to the configured Lantern store")?;
+    store
+        .initialise_schema()
+        .await
+        .context("failed to initialise the base Lantern schema")?;
+    SurrealSourceRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the Source schema")?;
+    SurrealMemoryPathRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the project/memory-path schema")?;
+    SurrealMemoryRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the Living Memory schema")?;
+    SurrealLedgerRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the source-ledger event schema")?;
+    SurrealEpistemicRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the canonical epistemic schema")?;
+    let summary: ExportSummary = store
+        .export_to(&output)
+        .await
+        .context("failed to export Lantern records")?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
+}
+
+async fn restore_data(input: std::path::PathBuf) -> anyhow::Result<()> {
+    let store_config = StoreConfig::from_env();
+    let store = SurrealStore::connect(&store_config)
+        .await
+        .context("failed to connect to the configured Lantern store")?;
+    store
+        .initialise_schema()
+        .await
+        .context("failed to initialise the base Lantern schema")?;
+    SurrealSourceRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the Source schema")?;
+    SurrealMemoryPathRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the project/memory-path schema")?;
+    SurrealMemoryRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the Living Memory schema")?;
+    SurrealLedgerRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the source-ledger event schema")?;
+    SurrealEpistemicRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the canonical epistemic schema")?;
+    let summary = store
+        .restore_from(&input)
+        .await
+        .context("failed to restore Lantern records")?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
+}
+
+async fn doctor(json_output: bool) -> anyhow::Result<()> {
+    let config = StoreConfig::from_env();
+    let mut report = serde_json::json!({
+        "lantern_version": env!("CARGO_PKG_VERSION"),
+        "rust_toolchain": "1.98.1",
+        "edition": "2024",
+        "expected_surrealdb": EXPECTED_SURREALDB_VERSION,
+        "storage": config.storage,
+        "endpoint": config.endpoint,
+        "namespace": config.namespace,
+        "database": config.database,
+        "schema_version_expected": EXPECTED_SCHEMA_VERSION,
+        "database_connection": "not_checked",
+        "health": "not_checked",
+        "server_version": serde_json::Value::Null,
+        "schema_version": serde_json::Value::Null,
+        "status": "UNKNOWN"
+    });
+
+    if let Err(error) = config.validate() {
+        report["status"] = serde_json::Value::String("INVALID_CONFIGURATION".to_owned());
+        report["error"] = serde_json::Value::String(error.to_string());
+        print_doctor_report(json_output, &report)?;
+        bail!("Lighting doctor found invalid configuration: {error}");
+    }
+
+    let store = match SurrealStore::connect(&config).await {
+        Ok(store) => store,
+        Err(error) => {
+            report["status"] = serde_json::Value::String("UNAVAILABLE".to_owned());
+            report["error"] = serde_json::Value::String(error.to_string());
+            print_doctor_report(json_output, &report)?;
+            bail!("Lighting doctor could not connect to SurrealDB: {error}");
+        }
+    };
+    report["database_connection"] = serde_json::Value::String("connected".to_owned());
+
+    if let Err(error) = store.health_check().await {
+        report["status"] = serde_json::Value::String("UNHEALTHY".to_owned());
+        report["error"] = serde_json::Value::String(error.to_string());
+        print_doctor_report(json_output, &report)?;
+        bail!("Lighting doctor health check failed: {error}");
+    }
+    report["health"] = serde_json::Value::String("ok".to_owned());
+
+    let server_version = store.server_version().await?;
+    let schema_version = store.schema_version().await?;
+    report["server_version"] = server_version
+        .clone()
+        .map(serde_json::Value::String)
+        .unwrap_or(serde_json::Value::Null);
+    report["schema_version"] = schema_version
+        .map(serde_json::Value::from)
+        .unwrap_or(serde_json::Value::Null);
+    let server_matches = server_version
+        .as_deref()
+        .is_some_and(|version| version.contains(EXPECTED_SURREALDB_VERSION));
+    let schema_matches = schema_version == Some(EXPECTED_SCHEMA_VERSION);
+    report["status"] = serde_json::Value::String(
+        if server_matches && schema_matches {
+            "OK"
+        } else {
+            "WARNING"
+        }
+        .to_owned(),
+    );
+    print_doctor_report(json_output, &report)?;
+
+    if server_matches && schema_matches {
+        Ok(())
+    } else {
+        bail!("Lighting doctor found an unsupported or incomplete development baseline")
+    }
+}
+
+fn print_doctor_report(json_output: bool, report: &serde_json::Value) -> anyhow::Result<()> {
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(report)?);
+        return Ok(());
+    }
+    let object = report
+        .as_object()
+        .context("doctor report must be a JSON object")?;
+    for (key, value) in object {
+        println!("{key}: {}", value.as_str().unwrap_or(&value.to_string()));
+    }
     Ok(())
 }
 

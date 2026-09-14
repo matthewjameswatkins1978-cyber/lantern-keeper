@@ -1,43 +1,23 @@
 # Perspective and Provenance
 
-Status: **canonical current invariant**
+Status: **CANONICAL CURRENT**
 
-Lantern Keeper does not flatten every sentence into an ownerless fact. Each
-assertion may distinguish:
+Retained assertions distinguish originator, speaker, transmitter, holder,
+stance, and transformation. When dialogue contains quotation or relay, a
+`framing_path` records the meaningful nesting with actions such as speaking,
+quoting, endorsing, rejecting, and correcting.
 
-- originator — who produced the proposition;
-- speaker — who said or wrote this occurrence;
-- transmitter — who relayed it;
-- holder — whose belief or perspective is represented;
-- stance — endorsing, rejecting, questioning, or another explicit relation;
-- transformation — how quotation, relay, correction, or other framing changed
-  the route from evidence to assertion.
-
-When dialogue contains quotation or relay, `framing_path` records meaningful
-nested actions such as speaking, quoting, endorsing, rejecting, and correcting.
-
-## Evidence route
-
-Claims point to an Episode or Source span where available. Exact source text is
-preserved before interpretation. A Claim may remain unmapped when no canonical
-predicate exists; the system must not invent a predicate merely to make a
-record look complete.
-
+Claims point to an Episode or Source span where available. New factual
+conversational capture records the exact supplied evidence as a plain-text
+Source, creates or reuses a whole-text Episode, and links the Claim to that
+UTF-8 byte span before reconciliation. They are immutable evidence records and
+can remain unmapped when no canonical predicate exists. Provenance IDs are
+created by Lantern rather than by conversational clients.
 Beliefs are projections with holder, subject, predicate, scope, trust class,
-valid time, and dependency-generation fields. A migrated note whose original
-author cannot be established uses `legacy:shared` and an explicit migrated
-trust class. It is never silently attributed to Matthew.
+valid time, and dependency-generation fields. A migrated canonical note uses
+`legacy:shared` and `migrated_canonical` where original authorship cannot be
+established; it is never silently attributed to Matthew.
 
-## Anti-laundering rules
-
-- Quoting is not authorship.
-- Repetition is not adoption.
-- Silence has zero endorsement weight.
-- Assistant output cannot independently prove a proposition about Matthew.
-- A generated summary cannot become more authoritative than its sources.
-- A Context Pack can cite evidence, but it cannot become evidence by citing
-  itself.
-
-These rules protect both current beliefs and historical inspection. Provenance
-is not decorative metadata; it is the route needed to explain, correct, and
-recover a projection.
+Generated narrative views and context packs are disposable projections. They
+may cite evidence, but they never become evidence merely because they were
+generated.

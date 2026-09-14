@@ -145,13 +145,11 @@ impl ProjectService {
                     .get(&ep_source_id)
                     .await
                     .map_err(|e| ProjectOperationError::Repository(e.into()))
+                    && existing_source.kind() == kind
+                    && existing_source.title().as_str() == logical_title.as_str()
                 {
-                    if existing_source.kind() == kind
-                        && existing_source.title().as_str() == logical_title.as_str()
-                    {
-                        existing_episode = Some((ep, ep_source_id));
-                        break;
-                    }
+                    existing_episode = Some((ep, ep_source_id));
+                    break;
                 }
             }
         }

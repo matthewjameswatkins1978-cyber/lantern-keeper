@@ -1,8 +1,8 @@
 //! HTTP handlers for Episode association endpoints.
 
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::Json;
 
 use crate::episode_association_dto::{LinkMarkerRequest, LinkProjectRequest};
 use crate::source_dto::ApiError;
@@ -26,7 +26,7 @@ pub async fn link_project(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -63,7 +63,7 @@ pub async fn list_project_links(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -98,7 +98,7 @@ pub async fn link_marker(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 
@@ -132,7 +132,7 @@ pub async fn list_marker_links(
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ApiError::storage_unavailable(),
-            )
+            );
         }
     };
 

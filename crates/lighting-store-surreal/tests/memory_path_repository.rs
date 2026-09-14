@@ -21,6 +21,7 @@ fn skip_integration_tests() -> bool {
 fn test_config() -> StoreConfig {
     dotenvy::dotenv().ok();
     let mut config = StoreConfig::from_env();
+    config.storage = "remote-surreal".to_owned();
     config.namespace = "lighting_test".to_owned();
     config.database = format!("lighting_mp_test_{}", Uuid::new_v4().simple());
     config

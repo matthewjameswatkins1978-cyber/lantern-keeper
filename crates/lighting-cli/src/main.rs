@@ -4,7 +4,7 @@
 //! This binary exists so the CLI tests remain self-contained.
 
 use clap::Parser;
-use lighting_cli::{default_service_url, run_cli_command, validate_service_url, CliCommand};
+use lighting_cli::{CliCommand, default_service_url, run_cli_command, validate_service_url};
 
 #[derive(Debug, Parser)]
 #[command(name = "lighting-cli", about = "Lighting CLI (standalone)")]

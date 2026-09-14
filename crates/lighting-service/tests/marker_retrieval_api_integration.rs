@@ -1,17 +1,17 @@
 //! Live SurrealDB integration tests for marker-led retrieval.
 
+use axum::Router;
 use axum::body::Body;
 use axum::http::{self, Request, StatusCode};
-use axum::Router;
 use lighting_service::episode_ops::EpisodeService;
 use lighting_service::marker_ops::MarkerService;
 use lighting_service::marker_retrieval_ops::MarkerRetrievalService;
 use lighting_service::source_ops::SourceService;
-use lighting_service::{build_router, AppState, EpisodeAssociationService, ProjectService};
+use lighting_service::{AppState, EpisodeAssociationService, ProjectService, build_router};
 use lighting_store_surreal::{
     StoreConfig, SurrealMemoryPathRepository, SurrealSourceRepository, SurrealStore,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -30,6 +30,7 @@ async fn full_app() -> Router {
     dotenvy::dotenv().ok();
     let db = db_name();
     let mut c = StoreConfig::from_env();
+    c.storage = "remote-surreal".to_owned();
     c.namespace = "lighting_test".to_owned();
     c.database = db;
     let s = SurrealStore::connect(&c).await.expect("connect");
@@ -52,6 +53,9 @@ async fn full_app() -> Router {
         )),
         project_retrieval_service: None,
         tethers_client: None,
+        memory_service: None,
+        ledger_service: None,
+        epistemic_service: None,
     })
 }
 async fn body_json(body: Body) -> Value {
@@ -180,10 +184,12 @@ async fn full_marker_led_retrieval_path() {
     assert!(excerpts.iter().any(|x| x.contains("episode two")));
     // why_matched explanations present
     for ep in eps.iter() {
-        assert!(ep["why_matched"]
-            .as_str()
-            .unwrap()
-            .contains("human network cable"));
+        assert!(
+            ep["why_matched"]
+                .as_str()
+                .unwrap()
+                .contains("human network cable")
+        );
     }
 }
 
@@ -211,10 +217,12 @@ async fn unknown_phrase_returns_no_marker_with_warning() {
     let body = body_json(r.into_body()).await;
     assert!(body["marker"].is_null());
     assert!(body["episodes"].as_array().unwrap().is_empty());
-    assert!(body["warnings"].as_array().unwrap()[0]
-        .as_str()
-        .unwrap()
-        .contains("No exact Marker"));
+    assert!(
+        body["warnings"].as_array().unwrap()[0]
+            .as_str()
+            .unwrap()
+            .contains("No exact Marker")
+    );
 }
 
 // C. Unlinked Marker
@@ -258,8 +266,10 @@ async fn unlinked_marker_returns_marker_with_warning() {
     assert!(!body["marker"].is_null());
     assert_eq!(body["marker"]["marker_id"], marker_id);
     assert!(body["episodes"].as_array().unwrap().is_empty());
-    assert!(body["warnings"].as_array().unwrap()[0]
-        .as_str()
-        .unwrap()
-        .contains("not linked"));
+    assert!(
+        body["warnings"].as_array().unwrap()[0]
+            .as_str()
+            .unwrap()
+            .contains("not linked")
+    );
 }

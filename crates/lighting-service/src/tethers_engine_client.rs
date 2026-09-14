@@ -366,7 +366,7 @@ fn join_error_to_io(error: JoinError) -> TethersEngineError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tethers_preview::{build_preview_request, PreviewInput, TethersStatus};
+    use crate::tethers_preview::{PreviewInput, TethersStatus, build_preview_request};
     #[cfg(windows)]
     use std::fs;
     #[cfg(windows)]
@@ -523,10 +523,10 @@ mod tests {
     #[cfg(windows)]
     async fn read_pid_file(path: &PathBuf) -> u32 {
         for _ in 0..20 {
-            if let Ok(text) = fs::read_to_string(path) {
-                if let Ok(pid) = text.trim().parse::<u32>() {
-                    return pid;
-                }
+            if let Ok(text) = fs::read_to_string(path)
+                && let Ok(pid) = text.trim().parse::<u32>()
+            {
+                return pid;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
@@ -535,8 +535,9 @@ mod tests {
 
     #[cfg(windows)]
     fn process_is_running(pid: u32) -> bool {
-        let script =
-            format!("if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}");
+        let script = format!(
+            "if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}"
+        );
         StdCommand::new("powershell.exe")
             .args([
                 "-NoProfile",

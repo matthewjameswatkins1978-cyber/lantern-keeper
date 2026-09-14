@@ -2,7 +2,7 @@ use lighting_core::{
     NewSource, Source, SourceContent, SourceId, SourceKind, SourceRepository, SourceTitle,
     StoreSourceResult,
 };
-use lighting_store_surreal::{source_store::SurrealSourceRepository, StoreConfig, SurrealStore};
+use lighting_store_surreal::{StoreConfig, SurrealStore, source_store::SurrealSourceRepository};
 use uuid::Uuid;
 
 fn skip_integration_tests() -> bool {
@@ -23,6 +23,7 @@ fn markdown_source(title: &str, content: &str) -> Source {
 fn test_config() -> StoreConfig {
     dotenvy::dotenv().ok();
     let mut config = StoreConfig::from_env();
+    config.storage = "remote-surreal".to_owned();
     config.namespace = "lighting_test".to_owned();
     config.database = format!("lighting_source_test_{}", Uuid::new_v4().simple());
     config
@@ -237,6 +238,38 @@ async fn identical_recapture_returns_existing_source() {
         .expect("count should be present")
         .expect("count should be an integer");
     assert_eq!(total, 1, "only one record for this logical source");
+}
+
+#[tokio::test]
+async fn recapturing_an_older_revision_returns_the_existing_source() {
+    if skip_integration_tests() {
+        return;
+    }
+
+    let repo = connect_repository().await;
+    let first = markdown_source("Revisioned", "version one");
+    let second = markdown_source("Revisioned", "version two");
+    let older = markdown_source("Revisioned", "version one");
+
+    repo.store(first.clone())
+        .await
+        .expect("first revision should succeed");
+    repo.store(second)
+        .await
+        .expect("second revision should succeed");
+
+    let result = repo
+        .store(older)
+        .await
+        .expect("older revision recapture should be idempotent");
+    match result {
+        StoreSourceResult::Duplicate { existing_id, .. } => {
+            assert_eq!(existing_id, first.id().clone());
+        }
+        StoreSourceResult::Stored(_) => {
+            panic!("recapturing an older revision must not create a duplicate")
+        }
+    }
 }
 
 /// Changed content for the same logical source creates a new revision

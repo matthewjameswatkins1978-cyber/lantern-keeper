@@ -4,6 +4,7 @@ $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $RuntimeDir = Join-Path $ProjectRoot ".lighting-runtime"
 $PidFile = Join-Path $RuntimeDir "surrealdb.json"
 $Endpoint = "ws://127.0.0.1:8000"
+$ExpectedVersion = "3.3.0-beta.4"
 
 function Find-Surreal {
     $Command = Get-Command surreal -ErrorAction SilentlyContinue
@@ -54,6 +55,12 @@ if (-not $PortOwner -or $PortOwner.OwningProcess -ne $Record.pid) {
 $Surreal = Find-Surreal
 if (-not $Surreal) {
     Write-Host "Lighting SurrealDB PID $($Record.pid) is listening, but surreal.exe was not found for health check."
+    exit 3
+}
+
+$VersionOutput = (& $Surreal version 2>&1 | Out-String).Trim()
+if ($VersionOutput -notmatch [regex]::Escape($ExpectedVersion)) {
+    Write-Host "SurrealDB version '$VersionOutput' is unsupported; expected $ExpectedVersion."
     exit 3
 }
 

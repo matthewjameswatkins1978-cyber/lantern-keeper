@@ -1,13 +1,13 @@
+use axum::Router;
 use axum::body::Body;
 use axum::http::{self, Request, StatusCode};
-use axum::Router;
 use lighting_service::project_ops::ProjectService;
 use lighting_service::source_ops::SourceService;
-use lighting_service::{build_router, AppState};
+use lighting_service::{AppState, build_router};
 use lighting_store_surreal::{
     StoreConfig, SurrealMemoryPathRepository, SurrealSourceRepository, SurrealStore,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -24,6 +24,7 @@ fn db() -> String {
 async fn app_with_source() -> Router {
     let d = db();
     let mut c = StoreConfig::from_env();
+    c.storage = "remote-surreal".to_owned();
     c.namespace = "lighting_test".to_owned();
     c.database = d;
     let s = SurrealStore::connect(&c).await.expect("c");
@@ -44,6 +45,9 @@ async fn app_with_source() -> Router {
         retrieval_service: None,
         project_retrieval_service: None,
         tethers_client: None,
+        memory_service: None,
+        ledger_service: None,
+        epistemic_service: None,
     };
     build_router(st)
 }
@@ -51,6 +55,7 @@ async fn app_with_source() -> Router {
 async fn app() -> Router {
     let d = db();
     let mut c = StoreConfig::from_env();
+    c.storage = "remote-surreal".to_owned();
     c.namespace = "lighting_test".to_owned();
     c.database = d;
     let s = SurrealStore::connect(&c).await.expect("c");
@@ -69,6 +74,9 @@ async fn app() -> Router {
         retrieval_service: None,
         project_retrieval_service: None,
         tethers_client: None,
+        memory_service: None,
+        ledger_service: None,
+        epistemic_service: None,
     };
     build_router(st)
 }
@@ -160,6 +168,7 @@ async fn project_survives_fresh_connection() {
     dotenvy::dotenv().ok();
     let d = db();
     let mut c1 = StoreConfig::from_env();
+    c1.storage = "remote-surreal".to_owned();
     c1.namespace = "lighting_test".to_owned();
     c1.database = d.clone();
     let s1 = SurrealStore::connect(&c1).await.expect("c");
@@ -178,6 +187,9 @@ async fn project_survives_fresh_connection() {
         retrieval_service: None,
         project_retrieval_service: None,
         tethers_client: None,
+        memory_service: None,
+        ledger_service: None,
+        epistemic_service: None,
     });
     let pr = a1
         .oneshot(
@@ -196,6 +208,7 @@ async fn project_survives_fresh_connection() {
         .unwrap()
         .to_owned();
     let mut c2 = StoreConfig::from_env();
+    c2.storage = "remote-surreal".to_owned();
     c2.namespace = "lighting_test".to_owned();
     c2.database = d;
     let s2 = SurrealStore::connect(&c2).await.expect("c");
@@ -214,6 +227,9 @@ async fn project_survives_fresh_connection() {
         retrieval_service: None,
         project_retrieval_service: None,
         tethers_client: None,
+        memory_service: None,
+        ledger_service: None,
+        epistemic_service: None,
     });
     let gr = a2
         .oneshot(
@@ -595,10 +611,12 @@ async fn show_unknown_project_returns_404_with_documented_contract() {
     assert_eq!(gr.status(), StatusCode::NOT_FOUND);
     let gb = bv(gr.into_body()).await;
     assert_eq!(gb["code"], "project_not_found");
-    assert!(gb["message"]
-        .as_str()
-        .unwrap()
-        .contains("No Project exists"));
+    assert!(
+        gb["message"]
+            .as_str()
+            .unwrap()
+            .contains("No Project exists")
+    );
 }
 
 #[tokio::test]

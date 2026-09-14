@@ -77,6 +77,20 @@ impl SurrealSourceRepository {
 #[async_trait]
 impl SourceRepository for SurrealSourceRepository {
     async fn store(&self, source: Source) -> Result<StoreSourceResult, SourceRepositoryError> {
+        // Fingerprints are global across revisions. Check them first so that
+        // recapturing an older revision does not try to insert it again after
+        // a newer revision has become the latest same-title source.
+        if let Some(existing_id) = self
+            .find_by_fingerprint(source.fingerprint().as_str())
+            .await
+            .map_err(|e| SourceRepositoryError::Operation(Box::new(e)))?
+        {
+            return Ok(StoreSourceResult::Duplicate {
+                existing_id,
+                attempted: source,
+            });
+        }
+
         // 1. Look for an existing source with the same kind + title (same logical source).
         let existing = self
             .find_by_kind_and_title(source.kind(), source.title().as_str())

@@ -4,13 +4,15 @@
 //! so that the unified `lighting` binary can use them directly.  The standalone
 //! `lighting-cli` binary still works via a thin `main.rs` shim.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
+use chrono::Utc;
 use clap::Subcommand;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// The Lighting service port the CLI connects to by default.
 ///
@@ -43,6 +45,126 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             cmd_source_history(&client, &path, kind, json)
         }
         CliCommand::Retrieve { phrase, json } => cmd_retrieve(&client, &phrase, json),
+        CliCommand::Remember {
+            content,
+            kind,
+            project_id,
+            confidence,
+            importance,
+            derived_from,
+            supersedes,
+            contradicts,
+            supports,
+            agent,
+            json,
+        } => cmd_remember(
+            &client,
+            RememberInput {
+                content: &content,
+                kind: &kind,
+                project_id: project_id.as_deref(),
+                confidence,
+                importance,
+                derived_from,
+                supersedes,
+                contradicts,
+                supports,
+                agent: &agent,
+                json,
+            },
+        ),
+        CliCommand::Recall {
+            project_id,
+            phrase,
+            include_inactive,
+            json,
+        } => cmd_recall(
+            &client,
+            project_id.as_deref(),
+            phrase.as_deref(),
+            include_inactive,
+            json,
+        ),
+        CliCommand::Context {
+            project_id,
+            query,
+            json,
+        } => cmd_context(&client, project_id.as_deref(), query.as_deref(), json),
+        CliCommand::ContextPack {
+            query,
+            actor,
+            project_hints,
+            item_budget,
+            token_budget,
+            json,
+        } => cmd_context_pack(
+            &client,
+            &query,
+            actor.as_deref(),
+            &project_hints,
+            item_budget,
+            token_budget,
+            json,
+        ),
+        CliCommand::MemorySupersede { memory_id, json } => {
+            cmd_memory_supersede(&client, &memory_id, json)
+        }
+        CliCommand::LedgerIngest { path, json } => cmd_ledger_ingest(&client, &path, json),
+        CliCommand::BasicMemoryImport {
+            path,
+            dry_run,
+            json,
+        } => cmd_basic_memory_import(&client, &path, dry_run, json),
+        CliCommand::BasicMemoryAccounting { path, output, json } => {
+            cmd_basic_memory_accounting(&path, &output, json)
+        }
+        CliCommand::Predicate { command } => match command {
+            PredicateCommand::List { json } => cmd_predicate_list(&client, json),
+            PredicateCommand::Get { key, json } => cmd_predicate_get(&client, &key, json),
+            PredicateCommand::Aliases { key, json } => cmd_predicate_aliases(&client, &key, json),
+            PredicateCommand::Unmapped { json } => cmd_predicate_unmapped(&client, json),
+        },
+        CliCommand::Belief { command } => match command {
+            BeliefCommand::Get { belief_id, json } => cmd_belief_get(&client, &belief_id, json),
+            BeliefCommand::Search {
+                query,
+                include_stale,
+                json,
+            } => cmd_belief_search(&client, &query, include_stale, json),
+            BeliefCommand::History { belief_id, json } => {
+                cmd_belief_history(&client, &belief_id, json)
+            }
+            BeliefCommand::Explain { belief_id, json } => {
+                cmd_belief_explain(&client, &belief_id, json)
+            }
+            BeliefCommand::Stale { json } => cmd_belief_stale(&client, json),
+        },
+        CliCommand::CorrectionRecord {
+            target_belief_id,
+            correction_text,
+            replacement_value,
+            json,
+        } => cmd_correction_record(
+            &client,
+            &target_belief_id,
+            &correction_text,
+            &replacement_value,
+            json,
+        ),
+        CliCommand::Correction { command } => match command {
+            CorrectionCommand::Record {
+                target_belief_id,
+                correction_text,
+                replacement_value,
+                json,
+            } => cmd_correction_record(
+                &client,
+                &target_belief_id,
+                &correction_text,
+                &replacement_value,
+                json,
+            ),
+        },
         CliCommand::ProjectHandoff { project_id, json } => {
             cmd_project_handoff(&client, &project_id, json)
         }
@@ -119,6 +241,123 @@ pub enum CliCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Record a derived, provenance-bearing Memory.
+    Remember {
+        /// Memory content supplied by the agent.
+        content: String,
+        /// One of fact, decision, preference, instruction, lesson, gotcha, open_loop, workflow, summary, entity.
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        project_id: Option<String>,
+        #[arg(long, default_value_t = 0.8)]
+        confidence: f32,
+        #[arg(long, default_value_t = 0.5)]
+        importance: f32,
+        #[arg(long)]
+        derived_from: Vec<String>,
+        #[arg(long)]
+        supersedes: Vec<String>,
+        #[arg(long)]
+        contradicts: Vec<String>,
+        #[arg(long)]
+        supports: Vec<String>,
+        #[arg(long, default_value = "lucy")]
+        agent: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Recall active Memory records using lexical/project filters.
+    Recall {
+        #[arg(long)]
+        project_id: Option<String>,
+        #[arg(long)]
+        phrase: Option<String>,
+        #[arg(long)]
+        include_inactive: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Build a compact working context from active Memory records.
+    Context {
+        #[arg(long)]
+        project_id: Option<String>,
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compile a typed deterministic Context Pack from epistemic memory.
+    ContextPack {
+        query: String,
+        #[arg(long)]
+        actor: Option<String>,
+        #[arg(long, value_delimiter = ',')]
+        project_hints: Vec<String>,
+        #[arg(long, default_value_t = 10)]
+        item_budget: usize,
+        #[arg(long, default_value_t = 2048)]
+        token_budget: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Mark a Memory as superseded while retaining its history.
+    MemorySupersede {
+        memory_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Ingest one event or an {"events": [...]} / [...] JSON export into the source ledger.
+    LedgerIngest {
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Import a validated Basic Memory snapshot as Source evidence and ledger metadata.
+    BasicMemoryImport {
+        /// Snapshot directory or one notes-*.ndjson shard.
+        path: PathBuf,
+        /// Validate and report the snapshot without contacting Lighting.
+        #[arg(long)]
+        dry_run: bool,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Produce deterministic accounting for every observation and relation in a Basic Memory snapshot.
+    BasicMemoryAccounting {
+        /// Validated snapshot directory.
+        path: PathBuf,
+        /// JSON report destination.
+        #[arg(long)]
+        output: PathBuf,
+        /// Also print the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect the canonical predicate registry and unmapped claim queue.
+    Predicate {
+        #[command(subcommand)]
+        command: PredicateCommand,
+    },
+    /// Inspect reconciled Belief projections and their evidence.
+    Belief {
+        #[command(subcommand)]
+        command: BeliefCommand,
+    },
+    /// Record a direct Matthew correction against one active Belief.
+    CorrectionRecord {
+        target_belief_id: String,
+        correction_text: String,
+        replacement_value: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record or inspect corrections through the canonical correction surface.
+    Correction {
+        #[command(subcommand)]
+        command: CorrectionCommand,
+    },
     /// Produce a Codex-ready handoff for a Project.
     ProjectHandoff {
         /// Project ID (UUID).
@@ -180,6 +419,79 @@ pub enum CliCommand {
     },
 }
 
+#[derive(Debug, Subcommand, Clone)]
+pub enum CorrectionCommand {
+    /// Record a direct Matthew correction against one active Belief.
+    Record {
+        target_belief_id: String,
+        correction_text: String,
+        replacement_value: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum PredicateCommand {
+    /// List registered predicates.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one registered predicate by canonical key or alias.
+    Get {
+        key: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show aliases for one registered predicate.
+    Aliases {
+        key: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List claims that have no resolved canonical predicate.
+    Unmapped {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum BeliefCommand {
+    /// Get one belief projection.
+    Get {
+        belief_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Search belief projections by deterministic lexical matching.
+    Search {
+        query: String,
+        #[arg(long)]
+        include_stale: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show immutable revisions for one belief.
+    History {
+        belief_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Explain one belief from stored revisions and Claims.
+    Explain {
+        belief_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List stale belief projections.
+    Stale {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 // ---------------------------------------------------------------------------
 // HTTP client
 // ---------------------------------------------------------------------------
@@ -204,6 +516,22 @@ impl HttpClient {
         let url = format!("{}{path}", self.base_url);
         self.client
             .get(&url)
+            .send()
+            .map_err(|e| CliError::Connection {
+                url: url.clone(),
+                source: e,
+            })
+    }
+
+    fn get_query(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<reqwest::blocking::Response, CliError> {
+        let url = format!("{}{path}", self.base_url);
+        self.client
+            .get(&url)
+            .query(query)
             .send()
             .map_err(|e| CliError::Connection {
                 url: url.clone(),
@@ -464,6 +792,96 @@ struct ProjectShowResponse {
 // ---------------------------------------------------------------------------
 // Command implementations
 // ---------------------------------------------------------------------------
+
+fn cmd_predicate_list(client: &HttpClient, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get("/api/v1/predicates")
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else if let Some(predicates) = body["predicates"].as_array() {
+        if predicates.is_empty() {
+            println!("(no registered predicates)");
+        } else {
+            for predicate in predicates {
+                println!(
+                    "{} [{}]",
+                    predicate["key"].as_str().unwrap_or("<invalid>"),
+                    predicate["status"].as_str().unwrap_or("unknown")
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cmd_predicate_get(client: &HttpClient, key: &str, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get(&format!("/api/v1/predicates/{}", urlencoding::encode(key)))
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else {
+        let predicate = &body["predicate"];
+        println!(
+            "Key         : {}",
+            predicate["key"].as_str().unwrap_or("<invalid>")
+        );
+        println!(
+            "Status      : {}",
+            predicate["status"].as_str().unwrap_or("unknown")
+        );
+        println!(
+            "Value type  : {}",
+            predicate["value_type"].as_str().unwrap_or("unknown")
+        );
+        println!("Aliases     : {}", predicate["aliases"]);
+        println!(
+            "Description : {}",
+            predicate["description"].as_str().unwrap_or("")
+        );
+    }
+    Ok(())
+}
+
+fn cmd_predicate_aliases(client: &HttpClient, key: &str, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get(&format!("/api/v1/predicates/{}", urlencoding::encode(key)))
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    let aliases = body["predicate"]["aliases"].clone();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({"aliases": aliases}))?
+        );
+    } else {
+        println!("{}", aliases);
+    }
+    Ok(())
+}
+
+fn cmd_predicate_unmapped(client: &HttpClient, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get("/api/v1/claims?unmapped=true")
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else if let Some(claims) = body["claims"].as_array() {
+        println!("Unmapped claims: {}", claims.len());
+        for claim in claims {
+            println!(
+                "- {}: {}",
+                claim["predicate_candidate"].as_str().unwrap_or("<none>"),
+                claim["value"].as_str().unwrap_or("<invalid>")
+            );
+        }
+    }
+    Ok(())
+}
 
 fn cmd_health(client: &HttpClient, json: bool) -> anyhow::Result<()> {
     let response = client
@@ -789,6 +1207,1233 @@ fn cmd_retrieve(client: &HttpClient, phrase: &str, json: bool) -> anyhow::Result
         }
     }
 
+    Ok(())
+}
+
+struct RememberInput<'a> {
+    content: &'a str,
+    kind: &'a str,
+    project_id: Option<&'a str>,
+    confidence: f32,
+    importance: f32,
+    derived_from: Vec<String>,
+    supersedes: Vec<String>,
+    contradicts: Vec<String>,
+    supports: Vec<String>,
+    agent: &'a str,
+    json: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct BasicMemorySnapshotRecord {
+    source_project: Option<String>,
+    source_project_id: Option<String>,
+    source_path: String,
+    title: Option<String>,
+    permalink: Option<String>,
+    external_id: Option<String>,
+    entity_id: Option<i64>,
+    note_type: Option<String>,
+    content_type: Option<String>,
+    updated_at: Option<String>,
+    raw_markdown: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BasicMemoryImportSummary {
+    source_records: usize,
+    sources_stored: usize,
+    sources_duplicate: usize,
+    episodes_submitted: usize,
+    claim_candidates_submitted: usize,
+    memory_items_submitted: usize,
+    relations_submitted: usize,
+    ledger_events_stored: usize,
+    ledger_events_duplicate: usize,
+    observation_events_stored: usize,
+    observation_events_duplicate: usize,
+    relation_events_stored: usize,
+    relation_events_duplicate: usize,
+}
+
+const BASIC_MEMORY_ACCOUNTING_VERSION: &str = "basic-memory-accounting-v1";
+
+#[derive(Debug, Deserialize)]
+struct BasicMemorySnapshotManifest {
+    captured_at: Option<String>,
+    note_count: Option<usize>,
+    observation_count: Option<usize>,
+    relation_count: Option<usize>,
+    export_sha256: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct BasicMemoryAccountingItem {
+    source_id: String,
+    source_path: String,
+    line_number: usize,
+    item_type: String,
+    raw_value: String,
+    outcome: String,
+    reason: String,
+    importer_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct BasicMemoryAccountingReport {
+    schema: &'static str,
+    importer_version: &'static str,
+    snapshot_captured_at: Option<String>,
+    snapshot_export_sha256: Option<String>,
+    source_records: usize,
+    expected_observations: Option<usize>,
+    accounted_observations: usize,
+    expected_relations: Option<usize>,
+    accounted_relations: usize,
+    unexplained_observations: usize,
+    unexplained_relations: usize,
+    observation_outcomes: BTreeMap<String, usize>,
+    relation_outcomes: BTreeMap<String, usize>,
+    items: Vec<BasicMemoryAccountingItem>,
+}
+
+fn load_basic_memory_snapshot(path: &Path) -> anyhow::Result<Vec<BasicMemorySnapshotRecord>> {
+    let files = if path.is_file() {
+        vec![path.to_path_buf()]
+    } else if path.is_dir() {
+        let manifest_path = path.join("manifest.json");
+        let manifest_text = fs::read_to_string(&manifest_path).with_context(|| {
+            format!(
+                "failed to read snapshot manifest {}",
+                manifest_path.display()
+            )
+        })?;
+        let manifest: serde_json::Value =
+            serde_json::from_str(&manifest_text).with_context(|| {
+                format!(
+                    "snapshot manifest is not valid JSON: {}",
+                    manifest_path.display()
+                )
+            })?;
+        let expected_count = manifest
+            .get("note_count")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| anyhow::anyhow!("snapshot manifest has no numeric note_count"))?;
+        let mut files: Vec<PathBuf> = fs::read_dir(path)
+            .with_context(|| format!("failed to list snapshot directory {}", path.display()))?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<_, _>>()
+            .with_context(|| format!("failed to inspect snapshot directory {}", path.display()))?;
+        files.retain(|candidate| {
+            candidate
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("notes-") && name.ends_with(".ndjson"))
+        });
+        files.sort();
+        if files.is_empty() {
+            bail!("snapshot directory contains no notes-*.ndjson shards");
+        }
+        let records = read_basic_memory_shards(&files)?;
+        if records.len() as u64 != expected_count {
+            bail!(
+                "snapshot manifest expects {expected_count} notes but shards contain {}",
+                records.len()
+            );
+        }
+        return Ok(records);
+    } else {
+        bail!("snapshot path does not exist: {}", path.display());
+    };
+
+    read_basic_memory_shards(&files)
+}
+
+fn read_basic_memory_shards(files: &[PathBuf]) -> anyhow::Result<Vec<BasicMemorySnapshotRecord>> {
+    let mut records = Vec::new();
+    let mut paths = std::collections::BTreeSet::new();
+    for file in files {
+        let text = fs::read_to_string(file)
+            .with_context(|| format!("failed to read snapshot shard {}", file.display()))?;
+        for (line_number, line) in text.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let record: BasicMemorySnapshotRecord =
+                serde_json::from_str(line).with_context(|| {
+                    format!(
+                        "snapshot shard {} line {} is not a valid Basic Memory record",
+                        file.display(),
+                        line_number + 1
+                    )
+                })?;
+            if record.source_path.trim().is_empty() {
+                bail!(
+                    "snapshot record in {} has a blank source_path",
+                    file.display()
+                );
+            }
+            if record.raw_markdown.is_empty() {
+                bail!(
+                    "snapshot record {} has an empty raw_markdown body",
+                    record.source_path
+                );
+            }
+            if !paths.insert(record.source_path.clone()) {
+                bail!(
+                    "snapshot contains duplicate source_path {}",
+                    record.source_path
+                );
+            }
+            records.push(record);
+        }
+    }
+    records.sort_by(|left, right| left.source_path.cmp(&right.source_path));
+    Ok(records)
+}
+
+fn load_basic_memory_snapshot_manifest(path: &Path) -> anyhow::Result<BasicMemorySnapshotManifest> {
+    if !path.is_dir() {
+        bail!(
+            "accounting requires a snapshot directory: {}",
+            path.display()
+        );
+    }
+    let manifest_path = path.join("manifest.json");
+    let manifest_text = fs::read_to_string(&manifest_path).with_context(|| {
+        format!(
+            "failed to read snapshot manifest {}",
+            manifest_path.display()
+        )
+    })?;
+    serde_json::from_str(&manifest_text).with_context(|| {
+        format!(
+            "snapshot manifest is not valid JSON: {}",
+            manifest_path.display()
+        )
+    })
+}
+
+fn basic_memory_body_lines(markdown: &str) -> impl Iterator<Item = (usize, &str)> {
+    let mut in_frontmatter = false;
+    let mut frontmatter_seen = false;
+    markdown.lines().enumerate().filter(move |(_, line)| {
+        if line.trim() == "---" {
+            if !frontmatter_seen {
+                frontmatter_seen = true;
+                in_frontmatter = true;
+            } else {
+                in_frontmatter = false;
+            }
+            return false;
+        }
+        frontmatter_seen && !in_frontmatter
+    })
+}
+
+fn basic_memory_source_id(record: &BasicMemorySnapshotRecord) -> String {
+    record
+        .external_id
+        .clone()
+        .unwrap_or_else(|| format!("basic-memory:source:{}", record.source_path))
+}
+
+fn classify_accounted_observation(category: &str) -> (&'static str, String) {
+    let category = category.trim().to_ascii_lowercase();
+    if is_truth_bearing_basic_memory_category(&category) {
+        return (
+            "claim",
+            "truth-bearing category retained as a Claim candidate; predicate resolution remains separate".to_owned(),
+        );
+    }
+    if category == "history" || category == "historical" {
+        return (
+            "historical_memory",
+            "historical category retained as dated source-backed memory".to_owned(),
+        );
+    }
+    if matches!(
+        category.as_str(),
+        "anecdote"
+            | "concept"
+            | "creative_seed"
+            | "humour"
+            | "idea"
+            | "impression"
+            | "insight"
+            | "lesson"
+            | "memory"
+            | "negative_constraint"
+            | "open_loop"
+            | "pattern"
+            | "pattern_candidate"
+            | "principle"
+            | "quote"
+            | "reference"
+            | "rejected_path"
+            | "strength_observation"
+            | "tension"
+    ) {
+        return (
+            "soft_memory",
+            "recognized soft-memory category retained without promoting it to canonical truth"
+                .to_owned(),
+        );
+    }
+    (
+        "source_only_intentional",
+        format!(
+            "category `{category}` has no dedicated canonical import mapping; exact text remains in the Source and ledger"
+        ),
+    )
+}
+
+fn first_basic_memory_target(line: &str) -> Option<(String, bool)> {
+    let start = line.find("[[")?;
+    let rest = &line[start + 2..];
+    let end = rest.find("]]")?;
+    let target = rest[..end].trim();
+    if target.is_empty() {
+        return None;
+    }
+    let multiple = rest[end + 2..].contains("[[");
+    Some((target.to_owned(), multiple))
+}
+
+fn basic_memory_target_key(target: &str) -> String {
+    target
+        .split_once('|')
+        .map(|(path, _)| path)
+        .unwrap_or(target)
+        .trim()
+        .trim_end_matches(".md")
+        .replace('\\', "/")
+        .to_ascii_lowercase()
+}
+
+fn basic_memory_known_target_keys(
+    records: &[BasicMemorySnapshotRecord],
+) -> std::collections::BTreeSet<String> {
+    records
+        .iter()
+        .flat_map(|record| {
+            [
+                Some(record.source_path.as_str()),
+                record.title.as_deref(),
+                record.permalink.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .map(basic_memory_target_key)
+        })
+        .collect()
+}
+
+fn build_basic_memory_accounting(
+    records: &[BasicMemorySnapshotRecord],
+    manifest: &BasicMemorySnapshotManifest,
+) -> BasicMemoryAccountingReport {
+    let known_targets = basic_memory_known_target_keys(records);
+    let mut items = Vec::new();
+    let mut observation_outcomes = BTreeMap::new();
+    let mut relation_outcomes = BTreeMap::new();
+    let mut accounted_observations = 0;
+    let mut accounted_relations = 0;
+
+    for record in records {
+        let source_id = basic_memory_source_id(record);
+        let metadata_source = record
+            .source_path
+            .to_ascii_lowercase()
+            .ends_with("index.md")
+            || record
+                .note_type
+                .as_deref()
+                .is_some_and(|value| value.eq_ignore_ascii_case("index"));
+        let historical_source = record
+            .source_path
+            .to_ascii_lowercase()
+            .starts_with("archive/")
+            || record
+                .source_path
+                .to_ascii_lowercase()
+                .starts_with("history/");
+
+        for (line_index, line) in basic_memory_body_lines(&record.raw_markdown) {
+            let raw_value = line.trim();
+            if raw_value.starts_with("- [[") {
+                if first_basic_memory_target(raw_value).is_some() {
+                    let reason =
+                        "index/navigation link retained as source metadata and relation evidence";
+                    *observation_outcomes
+                        .entry("metadata".to_owned())
+                        .or_insert(0) += 1;
+                    accounted_observations += 1;
+                    items.push(BasicMemoryAccountingItem {
+                        source_id: source_id.clone(),
+                        source_path: record.source_path.clone(),
+                        line_number: line_index + 1,
+                        item_type: "observation".to_owned(),
+                        raw_value: raw_value.to_owned(),
+                        outcome: "metadata".to_owned(),
+                        reason: reason.to_owned(),
+                        importer_version: BASIC_MEMORY_ACCOUNTING_VERSION.to_owned(),
+                        category: None,
+                        target: first_basic_memory_target(raw_value).map(|(target, _)| target),
+                    });
+                }
+            } else if let Some(value) = raw_value.strip_prefix("- [")
+                && let Some((category, content)) = value.split_once("] ")
+                && !category.trim().is_empty()
+                && !content.trim().is_empty()
+            {
+                let (outcome, reason) = classify_accounted_observation(category);
+                *observation_outcomes.entry(outcome.to_owned()).or_insert(0) += 1;
+                accounted_observations += 1;
+                items.push(BasicMemoryAccountingItem {
+                    source_id: source_id.clone(),
+                    source_path: record.source_path.clone(),
+                    line_number: line_index + 1,
+                    item_type: "observation".to_owned(),
+                    raw_value: raw_value.to_owned(),
+                    outcome: outcome.to_owned(),
+                    reason,
+                    importer_version: BASIC_MEMORY_ACCOUNTING_VERSION.to_owned(),
+                    category: Some(category.trim().to_owned()),
+                    target: None,
+                });
+            }
+
+            if raw_value.starts_with("- ")
+                && let Some((target, multiple)) = first_basic_memory_target(raw_value)
+            {
+                let target_key = basic_memory_target_key(&target);
+                let (outcome, reason) = if multiple {
+                    (
+                            "unsupported_with_reason",
+                            "one legacy bullet contains multiple wiki targets; raw line is preserved without guessing a single edge".to_owned(),
+                        )
+                } else if !known_targets.contains(&target_key) {
+                    (
+                        "unresolved_target",
+                        "wiki target does not match any imported source path, title or permalink"
+                            .to_owned(),
+                    )
+                } else if metadata_source {
+                    (
+                            "metadata_only",
+                            "index/navigation relation is retained as metadata rather than treated as semantic project evidence".to_owned(),
+                        )
+                } else if historical_source {
+                    (
+                        "historical_relation",
+                        "relation is retained with historical source context".to_owned(),
+                    )
+                } else {
+                    (
+                        "resolved_relation",
+                        "wiki target resolves to an imported source path, title or permalink"
+                            .to_owned(),
+                    )
+                };
+                *relation_outcomes.entry(outcome.to_owned()).or_insert(0) += 1;
+                accounted_relations += 1;
+                items.push(BasicMemoryAccountingItem {
+                    source_id: source_id.clone(),
+                    source_path: record.source_path.clone(),
+                    line_number: line_index + 1,
+                    item_type: "relation".to_owned(),
+                    raw_value: raw_value.to_owned(),
+                    outcome: outcome.to_owned(),
+                    reason,
+                    importer_version: BASIC_MEMORY_ACCOUNTING_VERSION.to_owned(),
+                    category: raw_value
+                        .strip_prefix("- ")
+                        .and_then(|value| value.split_once("[["))
+                        .map(|(predicate, _)| predicate.trim().to_owned())
+                        .filter(|value| !value.is_empty()),
+                    target: Some(target),
+                });
+            }
+        }
+    }
+
+    let unexplained_observations = manifest
+        .observation_count
+        .map(|expected| expected.saturating_sub(accounted_observations))
+        .unwrap_or(0);
+    let unexplained_relations = manifest
+        .relation_count
+        .map(|expected| expected.saturating_sub(accounted_relations))
+        .unwrap_or(0);
+
+    BasicMemoryAccountingReport {
+        schema: "lantern.basic-memory-accounting/1",
+        importer_version: BASIC_MEMORY_ACCOUNTING_VERSION,
+        snapshot_captured_at: manifest.captured_at.clone(),
+        snapshot_export_sha256: manifest.export_sha256.clone(),
+        source_records: records.len(),
+        expected_observations: manifest.observation_count,
+        accounted_observations,
+        expected_relations: manifest.relation_count,
+        accounted_relations,
+        unexplained_observations,
+        unexplained_relations,
+        observation_outcomes,
+        relation_outcomes,
+        items,
+    }
+}
+
+fn cmd_basic_memory_accounting(path: &Path, output: &Path, json: bool) -> anyhow::Result<()> {
+    let manifest = load_basic_memory_snapshot_manifest(path)?;
+    let records = load_basic_memory_snapshot(path)?;
+    if manifest
+        .note_count
+        .is_some_and(|expected| expected != records.len())
+    {
+        bail!(
+            "snapshot manifest note_count does not match records: expected {:?}, actual {}",
+            manifest.note_count,
+            records.len()
+        );
+    }
+    let report = build_basic_memory_accounting(&records, &manifest);
+    if report.unexplained_observations != 0 || report.unexplained_relations != 0 {
+        bail!(
+            "snapshot accounting is incomplete: unexplained observations={}, relations={}",
+            report.unexplained_observations,
+            report.unexplained_relations
+        );
+    }
+    let encoded = serde_json::to_vec_pretty(&report)?;
+    if let Some(parent) = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create accounting report directory {}",
+                parent.display()
+            )
+        })?;
+    }
+    fs::write(output, encoded)
+        .with_context(|| format!("failed to write accounting report {}", output.display()))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "Basic Memory accounting: {} notes, {}/{} observations, {}/{} relations, unexplained=0",
+            report.source_records,
+            report.accounted_observations,
+            report
+                .expected_observations
+                .unwrap_or(report.accounted_observations),
+            report.accounted_relations,
+            report
+                .expected_relations
+                .unwrap_or(report.accounted_relations),
+        );
+        println!("Report: {}", output.display());
+    }
+    Ok(())
+}
+
+fn cmd_basic_memory_import(
+    client: &HttpClient,
+    path: &Path,
+    dry_run: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let records = load_basic_memory_snapshot(path)?;
+    if dry_run {
+        let result = serde_json::json!({
+            "dry_run": true,
+            "source_records": records.len(),
+            "source_paths": records.iter().map(|record| record.source_path.as_str()).collect::<Vec<_>>()
+        });
+        if json {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            println!(
+                "Basic Memory snapshot is valid: {} source records",
+                records.len()
+            );
+        }
+        return Ok(());
+    }
+
+    let mut summary = BasicMemoryImportSummary {
+        source_records: records.len(),
+        sources_stored: 0,
+        sources_duplicate: 0,
+        episodes_submitted: 0,
+        claim_candidates_submitted: 0,
+        memory_items_submitted: 0,
+        relations_submitted: 0,
+        ledger_events_stored: 0,
+        ledger_events_duplicate: 0,
+        observation_events_stored: 0,
+        observation_events_duplicate: 0,
+        relation_events_stored: 0,
+        relation_events_duplicate: 0,
+    };
+
+    for record in records {
+        let source_response = client
+            .post_json(
+                "/api/v1/sources",
+                &serde_json::json!({
+                    "title": format!("basic-memory/{}", record.source_path),
+                    "kind": "markdown",
+                    "content": record.raw_markdown,
+                }),
+            )
+            .map_err(|error| {
+                anyhow::Error::msg(error).context("is Lighting running? Try: lighting serve")
+            })?;
+        let source_body = HttpClient::handle_response(source_response)?;
+        let source_id = source_body
+            .get("source_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("source import response has no source_id"))?;
+        match source_body
+            .get("outcome")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("duplicate") => summary.sources_duplicate += 1,
+            Some("stored") => summary.sources_stored += 1,
+            other => bail!("source import response has unexpected outcome {other:?}"),
+        }
+
+        let episode_body = client
+            .post_json(
+                "/api/v1/episodes",
+                &serde_json::json!({
+                    "title": format!("Basic Memory whole note: {}", record.source_path),
+                    "source_id": source_id,
+                    "start_byte": 0,
+                    "end_byte": record.raw_markdown.len(),
+                }),
+            )
+            .map_err(|error| {
+                anyhow::Error::msg(error).context("failed to create imported Episode")
+            })?;
+        let episode_body = HttpClient::handle_response(episode_body)?;
+        let episode_id = episode_body
+            .get("episode_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("episode import response has no episode_id"))?;
+        summary.episodes_submitted += 1;
+
+        let upstream_key = record
+            .external_id
+            .clone()
+            .unwrap_or_else(|| record.source_path.clone());
+        let mut metadata = BTreeMap::new();
+        metadata.insert("source_path".to_owned(), record.source_path.clone());
+        metadata.insert("source_id".to_owned(), source_id.to_owned());
+        if let Some(value) = &record.title {
+            metadata.insert("source_title".to_owned(), value.clone());
+        }
+        if let Some(value) = &record.permalink {
+            metadata.insert("permalink".to_owned(), value.clone());
+        }
+        if let Some(value) = &record.note_type {
+            metadata.insert("note_type".to_owned(), value.clone());
+        }
+        if let Some(value) = &record.content_type {
+            metadata.insert("content_type".to_owned(), value.clone());
+        }
+        if let Some(value) = &record.entity_id {
+            metadata.insert("entity_id".to_owned(), value.to_string());
+        }
+        if let Some(value) = &record.source_project {
+            metadata.insert("source_project".to_owned(), value.clone());
+        }
+        if let Some(value) = &record.source_project_id {
+            metadata.insert("source_project_id".to_owned(), value.clone());
+        }
+        let note_event = post_basic_memory_ledger_event(
+            client,
+            format!("basic-memory:{upstream_key}"),
+            record.external_id.as_deref(),
+            format!("Imported Basic Memory note {}", record.source_path),
+            record.updated_at.as_deref(),
+            metadata.clone(),
+        )?;
+        if note_event {
+            summary.ledger_events_duplicate += 1;
+        } else {
+            summary.ledger_events_stored += 1;
+        }
+
+        for (index, (category, content)) in extract_basic_memory_observations(&record.raw_markdown)
+            .into_iter()
+            .enumerate()
+        {
+            let mut observation_metadata = metadata.clone();
+            observation_metadata.insert("record_kind".to_owned(), "observation".to_owned());
+            observation_metadata.insert("observation_index".to_owned(), index.to_string());
+            observation_metadata.insert("category".to_owned(), category.clone());
+            let duplicate = post_basic_memory_ledger_event(
+                client,
+                format!("basic-memory:{upstream_key}:observation:{index}"),
+                record.external_id.as_deref(),
+                format!(
+                    "Imported Basic Memory observation [{category}] from {}: {content}",
+                    record.source_path
+                ),
+                record.updated_at.as_deref(),
+                observation_metadata,
+            )?;
+            if duplicate {
+                summary.observation_events_duplicate += 1;
+            } else {
+                summary.observation_events_stored += 1;
+            }
+
+            if is_truth_bearing_basic_memory_category(&category) {
+                post_basic_memory_claim(
+                    client, &record, source_id, episode_id, &category, &content,
+                )?;
+                summary.claim_candidates_submitted += 1;
+            } else {
+                post_basic_memory_item(client, source_id, episode_id, &category, &content)?;
+                summary.memory_items_submitted += 1;
+            }
+        }
+
+        for (index, (predicate, target)) in extract_basic_memory_relations(&record.raw_markdown)
+            .into_iter()
+            .enumerate()
+        {
+            let mut relation_metadata = metadata.clone();
+            relation_metadata.insert("record_kind".to_owned(), "relation".to_owned());
+            relation_metadata.insert("relation_index".to_owned(), index.to_string());
+            relation_metadata.insert("predicate".to_owned(), predicate.clone());
+            relation_metadata.insert("target".to_owned(), target.clone());
+            let duplicate = post_basic_memory_ledger_event(
+                client,
+                format!("basic-memory:{upstream_key}:relation:{index}"),
+                record.external_id.as_deref(),
+                format!(
+                    "Imported Basic Memory relation {predicate} -> [[{target}]] from {}",
+                    record.source_path
+                ),
+                record.updated_at.as_deref(),
+                relation_metadata,
+            )?;
+            if duplicate {
+                summary.relation_events_duplicate += 1;
+            } else {
+                summary.relation_events_stored += 1;
+            }
+            post_basic_memory_relation(client, episode_id, &predicate, &target)?;
+            summary.relations_submitted += 1;
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+    } else {
+        println!(
+            "Basic Memory import: {} notes, {} sources stored, {} sources already present, {} whole-note Episodes submitted, {} Claim candidates submitted, {} soft Memory Items submitted, {} relations submitted, {} note events stored, {} note events already present, {} observations stored, {} observations already present, {} relations stored, {} relations already present",
+            summary.source_records,
+            summary.sources_stored,
+            summary.sources_duplicate,
+            summary.episodes_submitted,
+            summary.claim_candidates_submitted,
+            summary.memory_items_submitted,
+            summary.relations_submitted,
+            summary.ledger_events_stored,
+            summary.ledger_events_duplicate,
+            summary.observation_events_stored,
+            summary.observation_events_duplicate,
+            summary.relation_events_stored,
+            summary.relation_events_duplicate
+        );
+    }
+    Ok(())
+}
+
+fn is_truth_bearing_basic_memory_category(category: &str) -> bool {
+    matches!(
+        category,
+        "decision" | "rule" | "current" | "preference" | "constraint" | "problem" | "opportunity"
+    )
+}
+
+fn post_basic_memory_claim(
+    client: &HttpClient,
+    record: &BasicMemorySnapshotRecord,
+    source_id: &str,
+    episode_id: &str,
+    category: &str,
+    content: &str,
+) -> anyhow::Result<()> {
+    let response = client
+        .post_json(
+            "/api/v1/claims",
+            &serde_json::json!({
+                "source_id": source_id,
+                "episode_id": episode_id,
+                "subject_key": format!("legacy:basic-memory:{}", record.source_path),
+                "value": content,
+                "predicate_candidate": category,
+                "predicate_status": "candidate",
+                "originator_actor_id": "basic-memory",
+                "speaker_actor_id": "basic-memory",
+                "transmitter_actor_id": "basic-memory",
+                "holder_actor_id": "legacy:shared",
+                "stance": "unobserved",
+                "confidence": 0.35,
+                "extractor": "basic-memory-import",
+                "extractor_version": "1",
+            }),
+        )
+        .map_err(|error| {
+            anyhow::Error::msg(error).context("failed to import Basic Memory Claim candidate")
+        })?;
+    HttpClient::handle_response(response)?;
+    Ok(())
+}
+
+fn post_basic_memory_item(
+    client: &HttpClient,
+    source_id: &str,
+    episode_id: &str,
+    category: &str,
+    content: &str,
+) -> anyhow::Result<()> {
+    let kind = match category {
+        "idea" | "concept" => "idea",
+        "history" => "anecdote",
+        "quote" => "quote",
+        "lesson" => "lesson",
+        _ => "other",
+    };
+    let response = client
+        .post_json(
+            "/api/v1/memory-items",
+            &serde_json::json!({
+                "source_id": source_id,
+                "episode_id": episode_id,
+                "kind": kind,
+                "content": content,
+                "originator_actor_id": "unknown",
+                "transmitter_actor_id": "basic-memory",
+                "holder_actor_id": "legacy:shared",
+                "salience": 0.4,
+            }),
+        )
+        .map_err(|error| {
+            anyhow::Error::msg(error).context("failed to import Basic Memory soft Memory Item")
+        })?;
+    HttpClient::handle_response(response)?;
+    Ok(())
+}
+
+fn post_basic_memory_relation(
+    client: &HttpClient,
+    episode_id: &str,
+    relation_type: &str,
+    target: &str,
+) -> anyhow::Result<()> {
+    let response = client
+        .post_json(
+            "/api/v1/relations",
+            &serde_json::json!({
+                "in_id": episode_id,
+                "out_id": format!("basic-memory:{target}"),
+                "relation_type": relation_type,
+                "origin": "basic-memory-cloud",
+                "confidence": 1.0,
+                "resolved": false,
+            }),
+        )
+        .map_err(|error| {
+            anyhow::Error::msg(error).context("failed to import Basic Memory relation")
+        })?;
+    HttpClient::handle_response(response)?;
+    Ok(())
+}
+
+fn post_basic_memory_ledger_event(
+    client: &HttpClient,
+    event_id: String,
+    external_id: Option<&str>,
+    content: String,
+    observed_at: Option<&str>,
+    metadata: BTreeMap<String, String>,
+) -> anyhow::Result<bool> {
+    let raw_payload = serde_json::to_string(&metadata)?;
+    let response = client
+        .post_json(
+            "/api/v1/ledger/events",
+            &serde_json::json!({
+                "event_id": event_id,
+                "source": "basic-memory-cloud",
+                "external_id": external_id,
+                "session_id": null,
+                "conversation_id": null,
+                "turn_id": null,
+                "actor": "basic-memory-import",
+                "role": "tool",
+                "content": content,
+                "observed_at": observed_at,
+                "received_at": Utc::now().to_rfc3339(),
+                "reply_to": null,
+                "project_hint": "Lantern",
+                "idempotency_key": event_id,
+                "raw_payload": raw_payload,
+                "metadata": metadata,
+            }),
+        )
+        .map_err(|error| {
+            anyhow::Error::msg(error).context("failed to record migration ledger event")
+        })?;
+    let body = HttpClient::handle_response(response)?;
+    body.get("duplicate")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| anyhow::anyhow!("ledger import response has no duplicate field"))
+}
+
+fn extract_basic_memory_observations(markdown: &str) -> Vec<(String, String)> {
+    markdown
+        .lines()
+        .filter_map(|line| {
+            let value = line.trim().strip_prefix("- [")?;
+            let (category, content) = value.split_once("] ")?;
+            let category = category.trim();
+            let content = content.trim();
+            if category.is_empty() || content.is_empty() {
+                return None;
+            }
+            Some((category.to_owned(), content.to_owned()))
+        })
+        .collect()
+}
+
+fn extract_basic_memory_relations(markdown: &str) -> Vec<(String, String)> {
+    markdown
+        .lines()
+        .filter_map(|line| {
+            let value = line.trim().strip_prefix("- ")?;
+            let (predicate, target) = value.split_once(" [[")?;
+            let target = target.strip_suffix("]]")?.trim();
+            let predicate = predicate.trim();
+            if predicate.is_empty() || target.is_empty() {
+                return None;
+            }
+            Some((predicate.to_owned(), target.to_owned()))
+        })
+        .collect()
+}
+
+fn cmd_ledger_ingest(client: &HttpClient, path: &Path, json: bool) -> anyhow::Result<()> {
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("failed to read ledger event file {}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .with_context(|| format!("ledger event file is not valid JSON: {}", path.display()))?;
+    let events = match value {
+        serde_json::Value::Array(events) => events,
+        serde_json::Value::Object(mut object) => object
+            .remove("events")
+            .and_then(|events| events.as_array().cloned())
+            .ok_or_else(|| anyhow::anyhow!("ledger JSON object must contain an events array"))?,
+        _ => bail!("ledger JSON must be an event array or an object containing events"),
+    };
+    let mut results = Vec::new();
+    for event in events {
+        let response = client
+            .post_json("/api/v1/ledger/events", &event)
+            .map_err(|e| {
+                anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve")
+            })?;
+        results.push(HttpClient::handle_response(response)?);
+    }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&results)?);
+    } else {
+        let duplicates = results
+            .iter()
+            .filter(|result| result["duplicate"].as_bool().unwrap_or(false))
+            .count();
+        println!(
+            "Ledger events accepted: {} (duplicates: {duplicates})",
+            results.len()
+        );
+    }
+    Ok(())
+}
+
+fn cmd_remember(client: &HttpClient, input: RememberInput<'_>) -> anyhow::Result<()> {
+    if input.content.trim().is_empty() {
+        bail!("memory content must not be blank");
+    }
+    let mut request = serde_json::json!({
+        "content": input.content,
+        "kind": input.kind,
+        "confidence": input.confidence,
+        "importance": input.importance,
+        "derived_from": input.derived_from,
+        "supersedes": input.supersedes,
+        "contradicts": input.contradicts,
+        "supports": input.supports,
+        "agent": input.agent,
+    });
+    if let Some(project_id) = input.project_id {
+        request["project_id"] = serde_json::json!(project_id);
+    }
+
+    let response = client
+        .post_json("/api/v1/memories", &request)
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if input.json {
+        println!("{}", serde_json::to_string_pretty(&body).unwrap());
+    } else {
+        let memory = body
+            .get("memory")
+            .ok_or_else(|| anyhow::anyhow!("unexpected API response: {body}"))?;
+        println!("Memory ID : {}", memory["id"]);
+        println!("Kind      : {}", memory["kind"]);
+        println!("Status    : {}", memory["status"]);
+        println!("Content   : {}", memory["content"]);
+        println!("Agent     : {}", memory["agent"]);
+        println!("Confidence: {}", memory["confidence"]);
+        println!("Recorded  : {}", memory["recorded_at"]);
+    }
+    Ok(())
+}
+
+fn cmd_recall(
+    client: &HttpClient,
+    project_id: Option<&str>,
+    phrase: Option<&str>,
+    include_inactive: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let body = serde_json::json!({
+        "project_id": project_id,
+        "phrase": phrase,
+        "include_inactive": include_inactive,
+    });
+    let response = client
+        .post_json("/api/v1/memories/recall", &body)
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body).unwrap());
+        return Ok(());
+    }
+    if body["abstained"].as_bool().unwrap_or(false) {
+        println!("I do not have reliable memory of this.");
+        if let Some(reason) = body["reason"].as_str() {
+            println!("{reason}");
+        }
+        return Ok(());
+    }
+    for memory in body["memories"].as_array().into_iter().flatten() {
+        println!(
+            "- [{} | {} | confidence {}] {}",
+            memory["kind"], memory["status"], memory["confidence"], memory["content"]
+        );
+    }
+    Ok(())
+}
+
+fn cmd_context(
+    client: &HttpClient,
+    project_id: Option<&str>,
+    query: Option<&str>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let body = serde_json::json!({"project_id": project_id, "query": query});
+    let response = client
+        .post_json("/api/v1/memories/context", &body)
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body).unwrap());
+    } else if let Some(context) = body["context"].as_str() {
+        print!("{context}");
+    }
+    Ok(())
+}
+
+fn cmd_context_pack(
+    client: &HttpClient,
+    query: &str,
+    actor: Option<&str>,
+    project_hints: &[String],
+    item_budget: usize,
+    token_budget: usize,
+    json: bool,
+) -> anyhow::Result<()> {
+    if query.trim().is_empty() {
+        bail!("context query must not be blank");
+    }
+    let response = client
+        .post_json(
+            "/api/v1/epistemic/context",
+            &serde_json::json!({
+                "query": query,
+                "actor": actor,
+                "project_hints": project_hints,
+                "item_budget": item_budget,
+                "token_budget": token_budget,
+            }),
+        )
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else if let Some(context) = body["context"]["generated_context"].as_str() {
+        print!("{context}");
+    }
+    Ok(())
+}
+
+fn cmd_belief_get(client: &HttpClient, belief_id: &str, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get(&format!("/api/v1/beliefs/{belief_id}"))
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else {
+        println!("{}", serde_json::to_string_pretty(&body["belief"])?);
+    }
+    Ok(())
+}
+
+fn cmd_belief_search(
+    client: &HttpClient,
+    query: &str,
+    include_stale: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let response = client
+        .get_query(
+            "/api/v1/beliefs/search",
+            &[
+                ("query", query),
+                (
+                    "include_stale",
+                    if include_stale { "true" } else { "false" },
+                ),
+            ],
+        )
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else {
+        for belief in body["beliefs"].as_array().into_iter().flatten() {
+            println!(
+                "- [{}] {}.{} = {}{}",
+                belief["holder_key"],
+                belief["subject_key"],
+                belief["predicate_key"],
+                belief["current_value"],
+                if belief["stale"].as_bool().unwrap_or(false) {
+                    " [STALE]"
+                } else {
+                    ""
+                }
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_belief_history(client: &HttpClient, belief_id: &str, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get(&format!("/api/v1/beliefs/{belief_id}/history"))
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    let value = if json { &body } else { &body["revisions"] };
+    println!("{}", serde_json::to_string_pretty(value)?);
+    Ok(())
+}
+
+fn cmd_belief_explain(client: &HttpClient, belief_id: &str, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get(&format!("/api/v1/beliefs/{belief_id}/explain"))
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    println!("{}", serde_json::to_string_pretty(&body)?);
+    if !json {
+        println!("Belief explanation returned with stored Claims and revisions.");
+    }
+    Ok(())
+}
+
+fn cmd_belief_stale(client: &HttpClient, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .get("/api/v1/beliefs/stale")
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    println!("{}", serde_json::to_string_pretty(&body)?);
+    if !json {
+        println!("Stale projections are excluded from current Context Packs.");
+    }
+    Ok(())
+}
+
+fn cmd_correction_record(
+    client: &HttpClient,
+    target_belief_id: &str,
+    correction_text: &str,
+    replacement_value: &str,
+    json: bool,
+) -> anyhow::Result<()> {
+    if correction_text.trim().is_empty() || replacement_value.trim().is_empty() {
+        bail!("correction text and replacement value must not be blank");
+    }
+    let response = client
+        .post_json(
+            "/api/v1/corrections",
+            &serde_json::json!({
+                "target_belief_id": target_belief_id,
+                "correction_text": correction_text,
+                "replacement_value": replacement_value,
+            }),
+        )
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else {
+        println!("Correction recorded for belief {target_belief_id}.");
+        println!(
+            "{}",
+            body["correction"]["reconciliation"]["decision"]["action"]
+        );
+    }
+    Ok(())
+}
+
+fn cmd_memory_supersede(client: &HttpClient, memory_id: &str, json: bool) -> anyhow::Result<()> {
+    let response = client
+        .post_json(
+            &format!("/api/v1/memories/{memory_id}/supersede"),
+            &serde_json::json!({}),
+        )
+        .map_err(|e| anyhow::Error::msg(e).context("is Lighting running? Try: lighting serve"))?;
+    let body = HttpClient::handle_response(response)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&body).unwrap());
+    } else {
+        println!("Memory superseded: {memory_id}");
+    }
     Ok(())
 }
 
@@ -1299,10 +2944,12 @@ mod tests {
         let client = HttpClient::new("http://127.0.0.1:1");
         let result = cmd_retrieve(&client, "   ", false);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("must not be blank"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("must not be blank")
+        );
     }
 
     #[test]
@@ -1344,6 +2991,78 @@ mod tests {
             }
             _ => panic!("expected Retrieve variant"),
         }
+    }
+
+    #[test]
+    fn basic_memory_extractors_preserve_unknown_categories_and_relation_targets() {
+        let markdown = "# Note\n\n- [decision] Keep the source intact\n- [unusual-label] Preserve this too\n- related_to [[Lantern Keeper]]\n- governed_by [[A title with spaces]]\n";
+
+        assert_eq!(
+            extract_basic_memory_observations(markdown),
+            vec![
+                ("decision".to_owned(), "Keep the source intact".to_owned()),
+                ("unusual-label".to_owned(), "Preserve this too".to_owned())
+            ]
+        );
+        assert_eq!(
+            extract_basic_memory_relations(markdown),
+            vec![
+                ("related_to".to_owned(), "Lantern Keeper".to_owned()),
+                ("governed_by".to_owned(), "A title with spaces".to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn basic_memory_accounting_covers_tagged_and_index_items() {
+        let records = vec![
+            BasicMemorySnapshotRecord {
+                source_project: None,
+                source_project_id: None,
+                source_path: "index.md".to_owned(),
+                title: Some("Index".to_owned()),
+                permalink: Some("index".to_owned()),
+                external_id: Some("index-source".to_owned()),
+                entity_id: None,
+                note_type: Some("index".to_owned()),
+                content_type: Some("text/markdown".to_owned()),
+                updated_at: None,
+                raw_markdown: "---\ntitle: Index\n---\n\n# Index\n\n- [[Known]]\n".to_owned(),
+            },
+            BasicMemorySnapshotRecord {
+                source_project: None,
+                source_project_id: None,
+                source_path: "Known.md".to_owned(),
+                title: Some("Known".to_owned()),
+                permalink: Some("known".to_owned()),
+                external_id: Some("known-source".to_owned()),
+                entity_id: None,
+                note_type: Some("note".to_owned()),
+                content_type: Some("text/markdown".to_owned()),
+                updated_at: None,
+                raw_markdown:
+                    "---\ntitle: Known\n---\n\n- [decision] Keep it\n- related_to [[Index]]\n"
+                        .to_owned(),
+            },
+        ];
+        let manifest = BasicMemorySnapshotManifest {
+            captured_at: Some("2026-09-12".to_owned()),
+            note_count: Some(2),
+            observation_count: Some(2),
+            relation_count: Some(2),
+            export_sha256: None,
+        };
+
+        let report = build_basic_memory_accounting(&records, &manifest);
+
+        assert_eq!(report.accounted_observations, 2);
+        assert_eq!(report.accounted_relations, 2);
+        assert_eq!(report.unexplained_observations, 0);
+        assert_eq!(report.unexplained_relations, 0);
+        assert_eq!(report.observation_outcomes["metadata"], 1);
+        assert_eq!(report.observation_outcomes["claim"], 1);
+        assert_eq!(report.relation_outcomes["metadata_only"], 1);
+        assert_eq!(report.relation_outcomes["resolved_relation"], 1);
     }
 
     // ── Project handoff tests ──────────────────────────────────────────────

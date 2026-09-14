@@ -1,16 +1,16 @@
 //! Live SurrealDB integration tests for Episode association HTTP endpoints.
 
+use axum::Router;
 use axum::body::Body;
 use axum::http::{self, Request, StatusCode};
-use axum::Router;
 use lighting_service::episode_ops::EpisodeService;
 use lighting_service::marker_ops::MarkerService;
 use lighting_service::source_ops::SourceService;
-use lighting_service::{build_router, AppState, EpisodeAssociationService, ProjectService};
+use lighting_service::{AppState, EpisodeAssociationService, ProjectService, build_router};
 use lighting_store_surreal::{
     StoreConfig, SurrealMemoryPathRepository, SurrealSourceRepository, SurrealStore,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -29,6 +29,7 @@ async fn full_app() -> Router {
     dotenvy::dotenv().ok();
     let db = db_name();
     let mut c = StoreConfig::from_env();
+    c.storage = "remote-surreal".to_owned();
     c.namespace = "lighting_test".to_owned();
     c.database = db;
     let s = SurrealStore::connect(&c).await.expect("connect");
@@ -48,6 +49,9 @@ async fn full_app() -> Router {
         retrieval_service: None,
         project_retrieval_service: None,
         tethers_client: None,
+        memory_service: None,
+        ledger_service: None,
+        epistemic_service: None,
     })
 }
 async fn body_json(body: Body) -> Value {
