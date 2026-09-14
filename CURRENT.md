@@ -3,7 +3,7 @@
 ## Repository
 
 - Canonical branch: `master`
-- Canonical engineering merge: `4e40e48f4b336cebce216338c9a4bdbc02e26ba6`
+- Canonical engineering/documentation tip: `8cfd05461f0534c71872137f74acc0b6c959703a`
 - `feature/lantern-full-move` has been merged into `master` through PR #3.
 - Active hackathon branch: `codex/nebius-authority-foundation`
 - This checkout contains the canonical epistemic foundation plus the hackathon
