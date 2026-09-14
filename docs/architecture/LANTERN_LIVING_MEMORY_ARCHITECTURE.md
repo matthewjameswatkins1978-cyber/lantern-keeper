@@ -1,41 +1,60 @@
 # Lantern Living Memory Architecture
 
-Status: **CANONICAL CURRENT**
+Status: **canonical current architecture; epistemic slice verified on the
+feature line and not yet merged to `master`**
 
 Lantern Keeper is a local-first shared memory for humans and AI. Sources
 preserve what happened; Claims preserve what was asserted; Beliefs preserve
 current reconciled understanding; and Memory Items preserve useful material
-that is not ready to become truth. Lucy is the routine Memory Foreman and
-Matthew remains the ultimate authority about Matthew.
+that is not ready to become truth.
 
-## Current vertical slice
+## The four-layer boundary
 
-The repository now contains the typed epistemic vocabulary and durable
-SurrealDB-backed stores for Claims, Beliefs, immutable Belief revisions, soft
-Memory Items, Traces, and Proposals. The HTTP surface exposes capture,
-durable Claim-to-Belief reconciliation, belief projection/listing and explicit
-stale invalidation, plus soft-memory capture/search. The existing
-Source, Episode, project, ledger, retrieval, export, and Tethers-preview
-surfaces remain intact.
+```text
+Source  ->  Episode  ->  Claim  ->  Belief
+ evidence    event       assertion   current projection
 
-Claims are append-only. Beliefs are read projections and may be invalidated
-without changing their truth state. Reconciliation preserves superseded
-projections and records the transition, supporting Claim IDs, and prior
-projection lineage. Staleness is therefore separate from `active`, `disputed`,
-`superseded`, and `archived` state. Imported Basic Memory material remains
-evidence until a later reconciliation step assigns an appropriate trust class.
+                    +-> Memory Item
+                    |   soft possibility
+                    +-> Trace / Proposal
+                        governance explanation
+```
 
-The SurrealDB adapter stores an engine-independent JSON payload
-with indexed operational fields. This keeps the domain model independent of
-SurrealDB while allowing deterministic deduplication and safe recovery export.
+Sources and Episodes are evidence. Claims are immutable assertions that point
+back to evidence and retain perspective. Beliefs are projections that may be
+reconciled, superseded, invalidated, or marked stale without rewriting the
+evidence. Memory Items are deliberately softer and need not become Claims.
 
 ## Governing constitution
 
 > Matthew talks. Lucy remembers. Machines assist. Matthew corrects.
-
 > Remember generously. Assert cautiously.
+> Authorship, transmission, endorsement, and belief ownership are separate.
 
-> Authorship, transmission, endorsement and belief ownership are separate.
+The architecture does not infer consensus from repetition, silence, quotation,
+or assistant output. A generated narrative or Context Pack is a disposable
+view and never becomes evidence merely because it was generated.
 
-The full cutover remains gated on migration verification, retrieval behaviour,
-correction tests, and a real Lucy-native client path.
+## Current vertical slice
+
+The verified feature line contains typed epistemic records and durable stores
+for Claims, Beliefs, immutable Belief revisions, soft Memory Items, Traces, and
+Proposals. It also retains the Source, Episode, Project, ledger, retrieval,
+export, and bounded Tethers-preview surfaces.
+
+The feature line currently supports durable Claim-to-Belief reconciliation,
+belief inspection, correction evidence, stale invalidation, bounded Foreman
+review, deterministic Context Packs, export accounting, and a local stdio MCP
+bridge. A connected Lucy-native client proof and final cutover remain gates.
+
+The canonical `master` branch still ships the earlier Source-backed Project
+loop. This distinction is intentional: architecture may describe the accepted
+direction, but documentation must not present an unmerged feature as shipped.
+
+## Storage and recovery
+
+The domain model remains independent of SurrealDB. The local adapter uses
+embedded, versioned SurrealKV for the normal path and keeps an engine-independent
+logical export for recovery and migration. The service binds locally by default;
+remote access, hosted memory, and raw database mutation are not implicit parts
+of the architecture.

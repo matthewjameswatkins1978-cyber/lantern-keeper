@@ -1,21 +1,36 @@
 # Memory Governance
 
-Status: **CANONICAL CURRENT**
+Status: **canonical current invariant**
 
 Matthew is the ultimate human authority. Lucy is the sole routine Memory
 Foreman. Extractors, Dreamer, semantic matchers, and external agents may
-identify or propose material but do not establish shared truth by themselves.
+identify or propose material, but they do not establish shared truth by
+themselves.
 
-Silence has zero endorsement weight. Quoting is not authorship. Repetition is
-not adoption. Assistant output cannot independently prove a proposition about
-Matthew. Uncertain or creative material belongs in soft Memory Items rather
-than being forced into factual predicates.
+## Promotion boundary
 
-Corrections are rollback events: preserve the old evidence, stop treating the
-affected projection as settled context, mark dependent projections stale, and
-record the correction as new evidence. Invalidation is eager; semantic repair
-is lazy and explicit.
+Uncertain, creative, or merely useful material belongs in a soft Memory Item.
+A factual Claim needs evidence, perspective, a usable predicate or an explicit
+unmapped state, and a governed reconciliation step. Unknown predicates remain
+unknown rather than being silently promoted.
+
+## Corrections are additive
+
+A correction is a new evidence event. It preserves the old Source, Episode,
+Claim, and Belief lineage; adds the correction evidence and Claim; invalidates
+the affected current projection; and marks dependent projections stale when
+necessary. Semantic repair is explicit and lazy after eager stale invalidation.
+
+Historical truth is not deleted merely because current understanding changed.
+Current retrieval should prefer active projections, while a historical query or
+named prior value may request the historical view.
+
+## Governance records
+
+Proposal and Trace records provide the queue and audit boundary. Foreman
+accept/reject/modify/defer decisions are bounded and traceable. A candidate
+generator or an external AI cannot directly mutate canonical Beliefs.
 
 Basic Memory is a migration source and rollback archive, not a permanent
-runtime dependency. Cutover is not permitted until all acceptance gates are
-green.
+runtime dependency. Cutover is not permitted until migration, recovery,
+connected-client, and shadow-comparison gates are green.

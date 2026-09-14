@@ -1,23 +1,39 @@
 # Context Compiler
 
-Status: **CANONICAL CURRENT — deterministic first slice implemented**
+Status: **canonical current architecture; deterministic first slice verified
+on the feature line**
 
-The canonical compiler now combines deterministic typed Belief candidates and
-lexical soft-memory candidates into a bounded Context Pack. Packs have stable
-IDs, typed Matthew/Lucy/shared/legacy sections, explicit stale exclusions,
-current-versus-historical belief sections, source and episode references from
-selected evidence, candidate scores and reasons, item and token budgets, and a
-persisted retrieval trace. Ordinary current queries exclude superseded beliefs;
-history wording or a directly named historical value opts the historical
-projection back in. The service, MCP bridge, and `lighting context-pack` CLI
-expose this first slice.
+The Context Compiler turns a request into a bounded, inspectable Context Pack.
+It is a read projection over evidence and memory; it is not a new source of
+truth.
 
-The remaining retrieval lanes are deliberate follow-up work: exact typed
-predicate lookup, full-text filtering, richer project/association queries,
-bounded graph expansion, and optional semantic candidates. Project hints are
-accepted and traced, but are currently used as additional deterministic lexical
-seeds rather than as a separate graph-backed project index. They must extend
-this compiler rather than create a second context path.
+## Current behaviour
 
-Context Packs are disposable read projections with traceable selected and
-omitted IDs. They are not evidence and must not be fed back as self-citation.
+The verified feature line combines deterministic typed Belief candidates and
+lexical soft-memory candidates. Packs have:
+
+- stable IDs and typed Matthew, Lucy, shared, and legacy sections;
+- current and historical belief separation;
+- explicit stale and superseded exclusions for ordinary current queries;
+- Source and Episode references from selected evidence;
+- candidate scores, reasons, selected/omitted IDs, and a persisted retrieval
+  Trace;
+- item and token budgets with deterministic tie-breaking.
+
+History wording or a directly named historical value can request the historical
+projection. Project hints are accepted and traced, but remain deterministic
+lexical seeds until a graph-backed project index is deliberately added.
+
+## Non-negotiable boundaries
+
+- Context Packs are disposable projections, not evidence.
+- A pack must not be fed back as self-citation.
+- The compiler returns less context with uncertainty when evidence is weak; it
+  does not invent a missing answer.
+- Retrieval failure must be visible and must not silently become fabricated
+  remembered context.
+
+Exact typed predicate lookup, richer full-text filtering, graph-backed project
+associations, bounded graph expansion, and optional semantic candidates remain
+follow-up lanes. They must extend this compiler rather than create a second
+context path.
