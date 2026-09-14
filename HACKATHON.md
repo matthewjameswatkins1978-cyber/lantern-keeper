@@ -12,15 +12,16 @@ The exact starting revisions are recorded in
 
 ## Built during Nebius 2026
 
-This section will be updated only as each item is implemented and verified:
+This section is updated only as each item is implemented and verified:
 
-- independent authenticated Principal and authority state;
-- deterministic authority checks and control-plane evidence;
-- Tethers authority bridge, receipts, and execution boundary;
-- bounded Nebius/Nemotron Dreamer candidates;
-- Tavily external evidence and adversarial laundering fixtures;
-- OpenShell effect proof and the trust console;
-- adversarial benchmark, resettable demo, and recovery parity.
+- [x] independent authenticated Principal and authority state;
+- [x] deterministic authority checks and control-plane evidence;
+- [x] candidate-only Nebius/Nemotron Dreamer adapter with strict validation;
+- [x] canonical SHA-256, hash-linked execution-receipt core;
+- [ ] Tethers authority bridge and real execution boundary;
+- [ ] Tavily external evidence and adversarial laundering fixtures;
+- [ ] OpenShell effect proof and the trust console;
+- [ ] adversarial benchmark, resettable demo, and recovery parity.
 
 Unverified sponsor calls, hosted deployments, and public submission state will
 remain explicitly marked until real evidence exists.

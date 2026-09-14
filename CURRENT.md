@@ -5,8 +5,10 @@
 - Canonical branch: `master`
 - Canonical engineering merge: `4e40e48f4b336cebce216338c9a4bdbc02e26ba6`
 - `feature/lantern-full-move` has been merged into `master` through PR #3.
-- The merge reconciled the later master documentation checkpoint without force-pushing either line.
-- This is an engineering checkpoint, not the final Basic Memory cutover or a public release.
+- Active hackathon branch: `codex/nebius-authority-foundation`
+- This checkout contains the canonical epistemic foundation plus the hackathon
+  authority, Dreamer, evidence, receipt, and CI slices.
+- This is an engineering checkpoint, not a public release.
 
 ## Phase
 
@@ -27,6 +29,16 @@ The epistemic memory foundation is now canonical on `master`. Foundation moderni
 - Predicate/dimension normalization, explicit unmapped Claims, echo suppression, direct-holder gates, and transitive stale propagation are implemented.
 - The repaired Basic Memory snapshot accounts for 61 notes, 496 observations, and 275 relations with zero unexplained items.
 - A real 1,479-record logical export/restore parity drill has passed.
+- `PrincipalId`, `AuthorityGrant`, `AuthorityRevocation`, exact authority
+  checks, expiry/revocation handling, and a deterministic authority matrix are
+  present. Authority writes are restricted to a server-created control
+  session and CSRF token; public routes are read/check/explain only.
+- The optional Nebius Dreamer adapter returns strictly validated candidates and
+  cannot mutate canonical memory or authority. Invalid model output fails
+  closed.
+- Execution receipts have canonical JSON, SHA-256 hashes, previous-receipt
+  links, and tamper/continuity tests. Hash chaining proves content continuity
+  and order, not signer identity.
 
 ## Still missing or partial
 
@@ -35,6 +47,10 @@ The epistemic memory foundation is now canonical on `master`. Foundation moderni
 - Service-level representative retrieval after a fresh restore remains to be accepted.
 - Exact typed/fused retrieval, richer graph-backed project associations, bounded graph expansion, and Dreamer operations remain later work.
 - Normal ChatGPT/Lucy full read/write custom MCP access is a separate OpenAI product-access limitation. Codex Desktop integration is already proven and must not be confused with that product gate.
+- The authority service is currently process-local and is not yet persisted in
+  SurrealKV. The Tethers provider/Trail bridge, live Tavily evidence,
+  genuine OpenShell enforcement, trust console, hosted demo, and live Nebius
+  proof remain incomplete. The new offline CI lane is green on this branch.
 
 ## Environment
 

@@ -5,9 +5,12 @@ This living checklist records only work actually implemented and verified.
 ## Phases
 
 - [x] A — preflight, isolated branch, and baseline record.
-- [ ] B — independent Principal and authority foundation.
-- [ ] C — Tethers decision bridge and receipts.
-- [ ] D — bounded Nemotron Dreamer and candidate validation.
+- [x] B — independent Principal and authority foundation (local ledger and
+  control-plane API).
+- [ ] C — Tethers decision bridge and receipts (receipt core exists; bridge is
+  still pending).
+- [x] D — bounded Nemotron Dreamer and candidate validation (live provider
+  proof is still pending).
 - [ ] E — Tavily external-evidence lane and non-amplification tests.
 - [ ] F — adversarial benchmark and baseline comparison.
 - [ ] G — genuine OpenShell effect boundary.
@@ -17,11 +20,11 @@ This living checklist records only work actually implemented and verified.
 
 ## Current checkpoint
 
-Phase B has started with a pure `lighting-core` authority domain. It defines
-typed authenticated principals, append-only grants and revocations, exact
-scope matching, expiry, and deterministic decisions. The next implementation
-slice is the trusted control-plane service/API; no model, Claim, Belief,
-Dreamer, or external evidence path may receive those write operations.
+Phase B is implemented as a pure `lighting-core` authority domain plus a
+trusted-session service/API. It defines typed authenticated principals,
+append-only grants and revocations, exact scope matching, expiry, and
+deterministic decisions. Authority writes require a server-created session and
+CSRF token; there is no public endpoint that creates a control session.
 
 ## Evidence rule
 
@@ -31,4 +34,6 @@ evidence. Offline fixtures may prove failure behaviour and architecture but
 must not be described as live provider proof.
 
 Phase D has a candidate-only Nebius adapter with strict local response
-validation. Live Token Factory credentials/model availability remain unverified.
+validation. The adapter can call the OpenAI-compatible Token Factory endpoint
+when configured, but live credentials/model availability have not been proved
+in this workspace.

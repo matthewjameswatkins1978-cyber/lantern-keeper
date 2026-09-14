@@ -17,3 +17,7 @@ and verifies the grant/revocation ledger was not changed by checking.
 
 Live-model and hostile-world benchmark results will be added only after real
 provider evidence is available.
+
+Execution receipts use canonical JSON plus SHA-256 and a previous-receipt link.
+This proves content continuity and ordering; it is not presented as an
+identity signature.
