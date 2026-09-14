@@ -38,6 +38,7 @@ pub mod source_ops;
 pub mod source_outline_dto;
 pub mod source_routes;
 pub mod state;
+pub mod tavily;
 pub mod tethers_engine_client;
 pub mod tethers_preview;
 pub mod tethers_routes;

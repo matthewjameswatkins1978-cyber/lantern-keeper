@@ -7,6 +7,9 @@ pub struct DreamerEvidence {
     pub source_id: String,
     pub episode_id: Option<String>,
     pub evidence_text: String,
+    /// External evidence is retained as evidence but must remain visibly
+    /// external throughout the Dreamer request and candidate explanation.
+    pub external: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -37,3 +37,8 @@ Phase D has a candidate-only Nebius adapter with strict local response
 validation. The adapter can call the OpenAI-compatible Token Factory endpoint
 when configured, but live credentials/model availability have not been proved
 in this workspace.
+
+The Tavily adapter is now implemented as an untrusted evidence client. Results
+are converted into explicitly external Dreamer evidence and have no authority
+or canonical-mutation operation. Live Tavily credentials and a hostile-world
+run remain unverified, so Phase E is still open.

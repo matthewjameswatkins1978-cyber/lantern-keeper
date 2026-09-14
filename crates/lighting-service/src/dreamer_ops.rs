@@ -175,6 +175,7 @@ mod tests {
                 source_id: "source-1".to_owned(),
                 episode_id: Some("episode-1".to_owned()),
                 evidence_text: "I now use SuperEditor everywhere".to_owned(),
+                external: false,
             }],
         }
     }
