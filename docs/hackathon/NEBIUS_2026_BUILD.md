@@ -23,8 +23,16 @@ This living checklist records only work actually implemented and verified.
 Phase B is implemented as a pure `lighting-core` authority domain plus a
 trusted-session service/API. It defines typed authenticated principals,
 append-only grants and revocations, exact scope matching, expiry, and
-deterministic decisions. Authority writes require a server-created session and
-CSRF token; there is no public endpoint that creates a control session.
+deterministic decisions. A trusted bootstrap binds each control session to a
+principal, and the public mutation API accepts only grant/revocation intent.
+The service owns issuer, session ID, timestamps, generated IDs, and the
+`authority-control-*` provenance placeholder; unknown security fields are
+rejected and cross-principal revocation is denied. There is no public endpoint
+that creates a control session.
+
+The placeholder is intentionally honest: it prevents arbitrary client
+provenance but is not yet a persisted Lantern Source/Episode event. Persisted
+authority and the real Source/Episode bridge remain out of this closeout.
 
 ## Evidence rule
 

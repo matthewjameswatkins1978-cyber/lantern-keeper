@@ -47,7 +47,7 @@ pub mod tethers_routes;
 mod tests;
 
 pub use app::build_router;
-pub use authority_ops::AuthorityService;
+pub use authority_ops::{AuthenticatedControlSession, AuthorityService, ControlSession};
 pub use dreamer_ops::{DreamerOperationError, DreamerProvider, DreamerService, NebiusDreamer};
 pub use episode_association_ops::EpisodeAssociationService;
 pub use episode_ops::EpisodeService;

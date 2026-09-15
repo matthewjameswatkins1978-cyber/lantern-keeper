@@ -1,13 +1,13 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
 };
 use chrono::Utc;
 use lighting_core::{AuthorityCheck, AuthorityDecision, DenyReason};
 
 use crate::{
-    authority_dto::{AuthorityCheckRequest, GrantRequest, RevocationRequest},
+    authority_dto::{AuthorityCheckRequest, GrantIntent, RevocationIntent},
     authority_ops::AuthorityOperationError,
     state::AppState,
 };
@@ -92,7 +92,7 @@ pub async fn explain(
 pub async fn grant(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<GrantRequest>,
+    body: Result<Json<GrantIntent>, JsonRejection>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let Some(service) = state.authority_service else {
         return error_response(
@@ -100,17 +100,23 @@ pub async fn grant(
             AuthorityOperationError::Unavailable,
         );
     };
+    let Ok(Json(intent)) = body else {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            AuthorityOperationError::Invalid("invalid grant intent".to_owned()),
+        );
+    };
     let result = service
         .issue_from_control_plane(
             &header(&headers, "x-lantern-session"),
             &header(&headers, "x-lantern-csrf"),
-            request.grant,
+            intent,
         )
         .await;
     match result {
-        Ok(()) => (
+        Ok(grant) => (
             StatusCode::CREATED,
-            Json(serde_json::json!({"status": "granted"})),
+            Json(serde_json::json!({"status": "granted", "grant": grant})),
         ),
         Err(error) => error_response(error_status(&error), error),
     }
@@ -119,7 +125,7 @@ pub async fn grant(
 pub async fn revoke(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<RevocationRequest>,
+    body: Result<Json<RevocationIntent>, JsonRejection>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let Some(service) = state.authority_service else {
         return error_response(
@@ -127,17 +133,23 @@ pub async fn revoke(
             AuthorityOperationError::Unavailable,
         );
     };
+    let Ok(Json(intent)) = body else {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            AuthorityOperationError::Invalid("invalid revocation intent".to_owned()),
+        );
+    };
     let result = service
         .revoke_from_control_plane(
             &header(&headers, "x-lantern-session"),
             &header(&headers, "x-lantern-csrf"),
-            request.revocation,
+            intent,
         )
         .await;
     match result {
-        Ok(()) => (
+        Ok(revocation) => (
             StatusCode::CREATED,
-            Json(serde_json::json!({"status": "revoked"})),
+            Json(serde_json::json!({"status": "revoked", "revocation": revocation})),
         ),
         Err(error) => error_response(error_status(&error), error),
     }
@@ -198,6 +210,7 @@ fn error_status(error: &AuthorityOperationError) -> StatusCode {
         AuthorityOperationError::Unauthenticated | AuthorityOperationError::InvalidCsrf => {
             StatusCode::UNAUTHORIZED
         }
+        AuthorityOperationError::ExpiredSession => StatusCode::UNAUTHORIZED,
         AuthorityOperationError::Invalid(_) => StatusCode::BAD_REQUEST,
     }
 }

@@ -31,8 +31,10 @@ The epistemic memory foundation is now canonical on `master`. Foundation moderni
 - A real 1,479-record logical export/restore parity drill has passed.
 - `PrincipalId`, `AuthorityGrant`, `AuthorityRevocation`, exact authority
   checks, expiry/revocation handling, and a deterministic authority matrix are
-  present. Authority writes are restricted to a server-created control
-  session and CSRF token; public routes are read/check/explain only.
+  present. Authority writes are restricted to a trusted bootstrap-created,
+  principal-bound control session and CSRF token. Public mutation routes accept
+  only intent DTOs; issuer, session ID, timestamps, IDs, and provenance are
+  server-owned, and cross-principal revocation is rejected.
 - The optional Nebius Dreamer adapter returns strictly validated candidates and
   cannot mutate canonical memory or authority. Invalid model output fails
   closed.
@@ -48,7 +50,8 @@ The epistemic memory foundation is now canonical on `master`. Foundation moderni
 - Exact typed/fused retrieval, richer graph-backed project associations, bounded graph expansion, and Dreamer operations remain later work.
 - Normal ChatGPT/Lucy full read/write custom MCP access is a separate OpenAI product-access limitation. Codex Desktop integration is already proven and must not be confused with that product gate.
 - The authority service is currently process-local and is not yet persisted in
-  SurrealKV. The Tethers provider/Trail bridge, live Tavily evidence,
+  SurrealKV. Its generated `authority-control-*` Episode IDs are provenance
+  placeholders, not persisted Lantern Source/Episode records. The Tethers provider/Trail bridge, live Tavily evidence,
   genuine OpenShell enforcement, trust console, hosted demo, and live Nebius
   proof remain incomplete. The new offline CI lane is green on this branch.
 
