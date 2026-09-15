@@ -89,6 +89,14 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(authority_routes::check),
         )
         .route(
+            "/api/v1/tethers/authority/check",
+            axum::routing::post(authority_routes::check_tethers),
+        )
+        .route(
+            "/api/v1/tethers/receipts",
+            axum::routing::post(authority_routes::ingest_tethers_receipt),
+        )
+        .route(
             "/api/v1/authority/explain/{grant_id}",
             axum::routing::get(authority_routes::explain),
         );

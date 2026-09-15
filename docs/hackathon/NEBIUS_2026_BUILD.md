@@ -7,8 +7,8 @@ This living checklist records only work actually implemented and verified.
 - [x] A — preflight, isolated branch, and baseline record.
 - [x] B — independent Principal and authority foundation (persistent ledger,
   provenance, receipts, and control-plane API).
-- [ ] C — Tethers decision bridge and receipts (receipt core exists; bridge is
-  still pending).
+- [x] C — Tethers decision bridge and receipts (local HTTP bridge, persistent
+  decision/outcome receipts, and fail-closed execution gates).
 - [x] D — bounded Nemotron Dreamer and candidate validation (live provider
   proof is still pending).
 - [ ] E — Tavily external-evidence lane and non-amplification tests.
@@ -44,6 +44,20 @@ restart, export/restore, provenance, non-amplification, and ephemeral-secret
 regressions. The local full workspace test command is additionally subject to
 the host's intermittent Windows linker resource exhaustion; CI-equivalent
 compile, clippy, and focused suites remain green locally.
+
+## Phase C — Tethers bridge
+
+The Rust Tethers host now checks host-configured authority-required
+capabilities against Lantern using `lantern.authority.check/1`, records a
+server-sealed decision receipt before dispatch, and records an outcome receipt
+after the existing durable Trail outcome. Tethers policy remains the first
+authority: Deny and Unavailable do not query Lantern, Ask remains an exact
+one-time approval, and no Lantern grant can disable a Tethers gate.
+
+The bridge is local `http://` transport only and uses the process environment
+variable `LANTERN_TETHERS_AUDIT_TOKEN`; the token is not persisted or exported.
+OpenShell remains outside this milestone. Full cross-repository acceptance is
+pending the final clean-branch test and CI evidence.
 
 ## Evidence rule
 

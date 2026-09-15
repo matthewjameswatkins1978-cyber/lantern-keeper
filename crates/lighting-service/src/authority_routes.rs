@@ -12,6 +12,8 @@ use crate::{
     state::AppState,
 };
 
+use crate::authority_dto::{TethersAuthorityCheckRequest, TethersReceiptIntent};
+
 pub async fn list_grants(State(state): State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
     let Some(service) = state.authority_service else {
         return error_response(
@@ -57,6 +59,71 @@ pub async fn check(
         Ok(decision) => (
             StatusCode::OK,
             Json(decision_json(&request.check, decision)),
+        ),
+        Err(error) => error_response(error_status(&error), error),
+    }
+}
+
+pub async fn check_tethers(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<TethersAuthorityCheckRequest>, JsonRejection>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.authority_service else {
+        return error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            AuthorityOperationError::Unavailable,
+        );
+    };
+    let token = bearer_token(&headers);
+    if !service.accepts_tethers_token(&token) {
+        return error_response(
+            StatusCode::UNAUTHORIZED,
+            AuthorityOperationError::Unauthenticated,
+        );
+    }
+    let Ok(Json(request)) = body else {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            AuthorityOperationError::Invalid("invalid Tethers authority request".to_owned()),
+        );
+    };
+    match service.check_tethers(&request).await {
+        Ok(decision) => (
+            StatusCode::OK,
+            tethers_decision_json(decision, &request.action_id),
+        ),
+        Err(error) => error_response(error_status(&error), error),
+    }
+}
+
+pub async fn ingest_tethers_receipt(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<TethersReceiptIntent>, JsonRejection>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.authority_service else {
+        return error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            AuthorityOperationError::Unavailable,
+        );
+    };
+    if !service.accepts_tethers_token(&bearer_token(&headers)) {
+        return error_response(
+            StatusCode::UNAUTHORIZED,
+            AuthorityOperationError::Unauthenticated,
+        );
+    }
+    let Ok(Json(intent)) = body else {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            AuthorityOperationError::Invalid("invalid Tethers receipt intent".to_owned()),
+        );
+    };
+    match service.record_tethers_receipt(intent).await {
+        Ok(receipt) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({"receipt": receipt})),
         ),
         Err(error) => error_response(error_status(&error), error),
     }
@@ -170,6 +237,36 @@ fn header(headers: &HeaderMap, name: &str) -> String {
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_owned()
+}
+
+fn bearer_token(headers: &HeaderMap) -> String {
+    headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn tethers_decision_json(decision: AuthorityDecision, action_id: &str) -> Json<serde_json::Value> {
+    match decision {
+        AuthorityDecision::Allow {
+            grant_id,
+            expires_at,
+        } => Json(serde_json::json!({
+            "wire_version": "lantern.authority.decision/1",
+            "decision": "ALLOW",
+            "grant_id": grant_id,
+            "expires_at": expires_at,
+            "action_id": action_id,
+        })),
+        AuthorityDecision::Deny { reason } => Json(serde_json::json!({
+            "wire_version": "lantern.authority.decision/1",
+            "decision": "DENY",
+            "reason_code": reason_code(&reason),
+            "action_id": action_id,
+        })),
+    }
 }
 
 fn decision_json(check: &AuthorityCheck, decision: AuthorityDecision) -> serde_json::Value {

@@ -1,0 +1,14 @@
+{
+  "wire_version": "lantern.receipt.intent/1",
+  "kind": "decision",
+  "action_id": "action-1",
+  "principal_id": "agent:lucy",
+  "capability_id": "demo.export_summary",
+  "capability_version": "1",
+  "decision": "ALLOW",
+  "grant_id": "grant-1",
+  "scope": {
+    "kind": "unrestricted"
+  },
+  "executed": false
+}

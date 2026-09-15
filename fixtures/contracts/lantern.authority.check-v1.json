@@ -1,0 +1,11 @@
+{
+  "wire_version": "lantern.authority.check/1",
+  "action_id": "action-1",
+  "principal_id": "agent:lucy",
+  "capability_id": "demo.export_summary",
+  "capability_version": "1",
+  "scope": {
+    "kind": "unrestricted"
+  },
+  "constraints": {}
+}
