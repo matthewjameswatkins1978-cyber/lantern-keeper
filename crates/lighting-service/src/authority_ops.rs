@@ -3,8 +3,9 @@ use std::{collections::HashMap, sync::Arc};
 use chrono::{DateTime, Duration, Utc};
 use lighting_core::{
     AuthorityCheck, AuthorityDecision, AuthorityError, AuthorityGrant, AuthorityGrantId,
-    AuthorityLedger, AuthorityRevocation, AuthorityRevocationId, Episode, EpisodeId, EpisodeTitle,
-    MemoryPathRepository, NewSource, PrincipalId, Source, SourceContent, SourceKind, SourceRange,
+    AuthorityLedger, AuthorityRequest, AuthorityRevocation, AuthorityRevocationId, Episode,
+    EpisodeId, EpisodeTitle, ExecutionReceipt, MemoryPathRepository, NewSource, PrincipalId,
+    ReceiptChain, ReceiptDecision, Source, SourceContent, SourceKind, SourceRange,
     SourceRepository, SourceTitle, StoreSourceResult,
 };
 use lighting_store_surreal::{
@@ -14,7 +15,9 @@ use lighting_store_surreal::{
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::authority_dto::{GrantIntent, RevocationIntent};
+use crate::authority_dto::{
+    GrantIntent, RevocationIntent, TethersAuthorityCheckRequest, TethersReceiptIntent,
+};
 
 #[derive(Clone)]
 pub struct AuthorityService {
@@ -23,6 +26,9 @@ pub struct AuthorityService {
     persistence: Option<Arc<SurrealAuthorityRepository>>,
     source_repository: Option<Arc<SurrealSourceRepository>>,
     memory_path_repository: Option<Arc<SurrealMemoryPathRepository>>,
+    receipt_chain: Arc<RwLock<ReceiptChain>>,
+    receipt_persistence: Option<Arc<lighting_store_surreal::SurrealReceiptRepository>>,
+    tethers_audit_token: Option<String>,
 }
 
 /// The only session record accepted by an authority mutation. It is created
@@ -67,6 +73,9 @@ impl AuthorityService {
             persistence: None,
             source_repository: None,
             memory_path_repository: None,
+            receipt_chain: Arc::new(RwLock::new(ReceiptChain::default())),
+            receipt_persistence: None,
+            tethers_audit_token: std::env::var("LANTERN_TETHERS_AUDIT_TOKEN").ok(),
         }
     }
 
@@ -79,8 +88,20 @@ impl AuthorityService {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             persistence: Some(Arc::new(SurrealAuthorityRepository::new(store.clone()))),
             source_repository: Some(Arc::new(SurrealSourceRepository::new(store.clone()))),
-            memory_path_repository: Some(Arc::new(SurrealMemoryPathRepository::new(store))),
+            memory_path_repository: Some(Arc::new(SurrealMemoryPathRepository::new(store.clone()))),
+            receipt_chain: Arc::new(RwLock::new(ReceiptChain::default())),
+            receipt_persistence: Some(Arc::new(
+                lighting_store_surreal::SurrealReceiptRepository::new(store),
+            )),
+            tethers_audit_token: std::env::var("LANTERN_TETHERS_AUDIT_TOKEN").ok(),
         }
+    }
+
+    /// Trusted embedding seam for tests and local process integration. The
+    /// normal application obtains this value only from the environment.
+    pub fn with_tethers_audit_token(mut self, token: impl Into<String>) -> Self {
+        self.tethers_audit_token = Some(token.into());
+        self
     }
 
     pub async fn migrate(&self) -> Result<(), AuthorityOperationError> {
@@ -138,6 +159,133 @@ impl AuthorityService {
         check: &AuthorityCheck,
     ) -> Result<AuthorityDecision, AuthorityOperationError> {
         Ok(self.read_ledger().await?.check(check))
+    }
+
+    pub fn accepts_tethers_token(&self, token: &str) -> bool {
+        let expected = self
+            .tethers_audit_token
+            .clone()
+            .or_else(|| std::env::var("LANTERN_TETHERS_AUDIT_TOKEN").ok());
+        expected.is_some_and(|expected| !expected.is_empty() && expected == token)
+    }
+
+    pub async fn check_tethers(
+        &self,
+        request: &TethersAuthorityCheckRequest,
+    ) -> Result<AuthorityDecision, AuthorityOperationError> {
+        if request.wire_version != "lantern.authority.check/1" {
+            return Err(AuthorityOperationError::Invalid(
+                "unsupported authority wire version".to_owned(),
+            ));
+        }
+        if request.action_id.trim().is_empty()
+            || request.capability_id.trim().is_empty()
+            || request.capability_version.trim().is_empty()
+        {
+            return Err(AuthorityOperationError::Invalid(
+                "authority identity fields cannot be blank".to_owned(),
+            ));
+        }
+        let check = AuthorityCheck {
+            request: AuthorityRequest {
+                action_id: request.action_id.clone(),
+                principal_id: request.principal_id.clone(),
+                capability_id: request.capability_id.clone(),
+                capability_version: request.capability_version.clone(),
+                scope: request.scope.clone(),
+                constraints: request.constraints.clone(),
+            },
+            at: Utc::now(),
+        };
+        self.check(&check).await
+    }
+
+    pub async fn record_tethers_receipt(
+        &self,
+        intent: TethersReceiptIntent,
+    ) -> Result<ExecutionReceipt, AuthorityOperationError> {
+        if intent.wire_version != "lantern.receipt.intent/1" {
+            return Err(AuthorityOperationError::Invalid(
+                "unsupported receipt wire version".to_owned(),
+            ));
+        }
+        if !matches!(intent.kind.as_str(), "decision" | "outcome") {
+            return Err(AuthorityOperationError::Invalid(
+                "receipt kind must be decision or outcome".to_owned(),
+            ));
+        }
+        if intent.action_id.trim().is_empty()
+            || intent.capability_id.trim().is_empty()
+            || intent.capability_version.trim().is_empty()
+        {
+            return Err(AuthorityOperationError::Invalid(
+                "receipt identity fields cannot be blank".to_owned(),
+            ));
+        }
+        if intent.decision == ReceiptDecision::Allow
+            && intent.grant_id.is_none()
+            && intent.approval_id.is_none()
+        {
+            return Err(AuthorityOperationError::Invalid(
+                "allow receipt must identify a grant or approval".to_owned(),
+            ));
+        }
+        if intent.executed && intent.outcome.is_none() {
+            return Err(AuthorityOperationError::Invalid(
+                "executed receipt must include an outcome".to_owned(),
+            ));
+        }
+        let now = Utc::now();
+        let candidate = ExecutionReceipt {
+            receipt_id: lighting_core::ReceiptId::new(format!(
+                "receipt_{}",
+                Uuid::new_v4().simple()
+            ))
+            .map_err(|e| AuthorityOperationError::Invalid(e.to_string()))?,
+            action_id: lighting_core::ActionId::new(intent.action_id)
+                .map_err(|e| AuthorityOperationError::Invalid(e.to_string()))?,
+            capability_id: intent.capability_id,
+            capability_version: intent.capability_version,
+            principal_id: intent.principal_id,
+            decision: intent.decision,
+            grant_id: intent.grant_id,
+            approval_id: intent.approval_id,
+            scope: intent.scope,
+            project_id: None,
+            trail_id: intent.trail_id,
+            requested_at: now,
+            decided_at: now,
+            executed: intent.executed,
+            outcome: intent.outcome,
+            result_ref: intent.result_ref,
+            reason_code: intent.reason_code,
+            previous_receipt_hash: None,
+            receipt_hash: String::new(),
+        };
+        if let Some(repository) = &self.receipt_persistence {
+            let mut chain = repository
+                .load_chain()
+                .await
+                .map_err(|e| AuthorityOperationError::Persistence(e.to_string()))?;
+            chain
+                .seal_and_append(candidate)
+                .map_err(|e| AuthorityOperationError::Invalid(e.to_string()))?;
+            let receipt = chain.receipts().last().cloned().ok_or_else(|| {
+                AuthorityOperationError::Persistence("receipt chain append failed".to_owned())
+            })?;
+            repository
+                .append(receipt.clone())
+                .await
+                .map_err(|e| AuthorityOperationError::Persistence(e.to_string()))?;
+            return Ok(receipt);
+        }
+        let mut chain = self.receipt_chain.write().await;
+        chain
+            .seal_and_append(candidate)
+            .map_err(|e| AuthorityOperationError::Invalid(e.to_string()))?;
+        chain.receipts().last().cloned().ok_or_else(|| {
+            AuthorityOperationError::Persistence("receipt chain append failed".to_owned())
+        })
     }
 
     pub async fn explain(

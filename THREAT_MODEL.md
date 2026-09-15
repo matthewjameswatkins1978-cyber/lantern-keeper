@@ -78,3 +78,18 @@ authentication material.
 
 Tethers, genuine OpenShell enforcement, trust-console work, and live provider
 proof remain separate hardening gates.
+
+# Milestone 3 authority bridge boundary
+
+The Tethers bridge is a separate authenticated service boundary. Lantern
+checks only the host-supplied principal, resolved capability/version, exact
+canonical Tethers scope, and constraints; it does not parse planner arguments
+or decide Tethers policy. Tethers DENY, UNAVAILABLE, ASK, schema failure,
+scope failure, replay failure, and Trail failure remain decisive before any
+provider effect.
+
+The bridge token is process environment material (`LANTERN_TETHERS_AUDIT_TOKEN`)
+and is not accepted in request bodies, runtime configuration, receipts,
+exports, or OpenShell inputs. Lantern owns receipt IDs, timestamps, predecessor
+links, and hashes. Outcome receipt failure after provider invocation is an
+audit failure and is not retried.
