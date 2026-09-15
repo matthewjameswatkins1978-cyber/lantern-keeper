@@ -56,8 +56,9 @@ one-time approval, and no Lantern grant can disable a Tethers gate.
 
 The bridge is local `http://` transport only and uses the process environment
 variable `LANTERN_TETHERS_AUDIT_TOKEN`; the token is not persisted or exported.
-OpenShell remains outside this milestone. Full cross-repository acceptance is
-pending the final clean-branch test and CI evidence.
+OpenShell remains outside this milestone. Cross-repository acceptance is
+complete for this milestone through the clean committed branches and passing
+Lantern Keeper and Tethers CI checks.
 
 ## Evidence rule
 
