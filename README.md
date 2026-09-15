@@ -65,6 +65,29 @@ Ideas, fragments, quotes, creative seeds, tensions, and open loops can be rememb
 
 Dreamer, extractors, semantic matchers, and external agents may propose Claims, soft memories, associations, contradictions, or correction suggestions. Lucy is the routine Memory Foreman, but Foreman review is bounded and traceable. Candidate generation does not directly establish canonical Beliefs.
 
+## The memory trust kernel
+
+Lantern Keeper is the hackathon's memory trust kernel for personal AI. It is
+designed to answer three questions about every important remembered statement:
+
+```text
+WHY DO YOU BELIEVE THIS?
+IS IT STILL TRUE?
+IS THIS INFORMATION ALLOWED TO MAKE YOU ACT?
+```
+
+The security boundary is intentionally independent of the epistemic model:
+
+```text
+Source -> Episode -> Claim -> Belief       (what Lantern knows or believes)
+Principal -> AuthorityGrant -> Tethers      (what an agent may do)
+```
+
+Memory may influence reasoning, but it cannot create or revoke authority. The
+current hackathon status and evidence are in
+[`HACKATHON.md`](HACKATHON.md), [`THREAT_MODEL.md`](THREAT_MODEL.md), and
+[`docs/hackathon/NEBIUS_2026_BUILD.md`](docs/hackathon/NEBIUS_2026_BUILD.md).
+
 ## What works today
 
 The epistemic memory foundation is now merged into canonical `master`.
@@ -81,6 +104,11 @@ It includes:
 - a bounded local stdio MCP bridge exposing `lantern_context`, `lantern_remember`, `lantern_search`, `lantern_why`, `lantern_correct`, `lantern_status`, `lantern_foreman_queue`, and `lantern_foreman_review`;
 - a real Codex Desktop MCP proof with all eight tools, remember/search/context/why/correct, current/history separation, provenance, and restart persistence;
 - a repaired Basic Memory snapshot with 61 notes, 496 observations, and 275 relations accounted for with no unexplained items.
+
+The Nebius integration is deliberately candidate-only: the optional Nemotron
+adapter can propose validated Dreamer candidates, but it has no authority-write
+operation. Live provider availability must be proved separately; see
+[`docs/hackathon/NEBIUS_INTEGRATION.md`](docs/hackathon/NEBIUS_INTEGRATION.md).
 
 See [`CURRENT.md`](CURRENT.md) for the exact operational state.
 

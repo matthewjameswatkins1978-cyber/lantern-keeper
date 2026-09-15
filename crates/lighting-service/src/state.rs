@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use crate::authority_ops::AuthorityService;
+use crate::dreamer_ops::DreamerService;
 use crate::episode_association_ops::EpisodeAssociationService;
 use crate::episode_ops::EpisodeService;
 use crate::epistemic_ops::EpistemicService;
@@ -26,6 +28,8 @@ pub struct AppState {
     pub memory_service: Option<MemoryService>,
     pub ledger_service: Option<LedgerService>,
     pub epistemic_service: Option<EpistemicService>,
+    pub authority_service: Option<AuthorityService>,
+    pub dreamer_service: Option<DreamerService>,
 }
 
 impl AppState {
@@ -43,6 +47,8 @@ impl AppState {
             memory_service: None,
             ledger_service: None,
             epistemic_service: None,
+            authority_service: None,
+            dreamer_service: None,
         }
     }
 

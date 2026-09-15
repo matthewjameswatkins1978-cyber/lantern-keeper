@@ -23,10 +23,11 @@ clap = { version = "4.5", features = ["derive", "env"] }
 dotenvy = "0.15"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 sha2 = "0.10"
 surrealdb = { version = "=3.3.0-beta.4", default-features = false, features = ["kv-surrealkv", "protocol-ws"] }
 thiserror = "2.0"
-tokio = { version = "1", features = ["fs", "macros", "net", "process", "rt-multi-thread", "signal", "time", "io-util"] }
+tokio = { version = "1", features = ["fs", "macros", "net", "process", "rt-multi-thread", "signal", "time", "io-util", "sync"] }
 tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

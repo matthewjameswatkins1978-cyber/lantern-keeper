@@ -2060,6 +2060,7 @@ dependencies = [
  "dotenvy",
  "lighting-core",
  "lighting-store-surreal",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror",

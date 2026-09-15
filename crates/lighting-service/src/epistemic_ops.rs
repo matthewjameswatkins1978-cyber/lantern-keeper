@@ -1059,7 +1059,9 @@ impl EpistemicService {
                 break;
             }
             let item_tokens = estimate_belief_tokens(&belief);
-            let eligible = belief.state == BeliefState::Active || history_requested;
+            let eligible = belief.state == BeliefState::Active
+                || history_requested
+                || historical_value_requested(&belief, &query_tokens);
             if eligible
                 && !belief.stale
                 && estimated_token_usage.saturating_add(item_tokens) <= token_budget
@@ -1616,6 +1618,15 @@ fn history_requested(query_tokens: &[String]) -> bool {
                 | "replaced"
                 | "replacement"
         )
+    })
+}
+
+fn historical_value_requested(belief: &Belief, query_tokens: &[String]) -> bool {
+    let value_tokens = context_tokens(&belief.current_value);
+    value_tokens.iter().any(|value_token| {
+        query_tokens
+            .iter()
+            .any(|query_token| query_token == value_token)
     })
 }
 

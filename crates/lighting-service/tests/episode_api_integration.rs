@@ -47,6 +47,8 @@ async fn app() -> Router {
         memory_service: None,
         ledger_service: None,
         epistemic_service: None,
+        authority_service: None,
+        dreamer_service: None,
     };
     build_router(st)
 }
@@ -156,6 +158,8 @@ async fn episode_survives_fresh_connection_with_exact_excerpt() {
         memory_service: None,
         ledger_service: None,
         epistemic_service: None,
+        authority_service: None,
+        dreamer_service: None,
     });
     let content = "Persistence test content line\nSecond line here\n";
     let sid = cs(&a1, content).await;
@@ -203,6 +207,8 @@ async fn episode_survives_fresh_connection_with_exact_excerpt() {
         memory_service: None,
         ledger_service: None,
         epistemic_service: None,
+        authority_service: None,
+        dreamer_service: None,
     });
     let gr = a2
         .oneshot(

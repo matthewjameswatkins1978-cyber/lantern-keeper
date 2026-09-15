@@ -10,13 +10,22 @@ use std::{fmt, str::FromStr};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod authority;
+pub mod dreamer;
 pub mod epistemic;
 pub mod ledger;
 pub mod memory;
 pub mod memory_path;
+pub mod receipt;
 pub mod source;
 pub mod source_outline;
 
+pub use authority::{
+    AuthenticationClass, AuthorityCheck, AuthorityDecision, AuthorityError, AuthorityGrant,
+    AuthorityLedger, AuthorityRequest, AuthorityRevocation, AuthorityScope, DenyReason, Principal,
+    PrincipalKind,
+};
+pub use dreamer::{CandidateKind, DreamerCandidate, DreamerCandidateError, EvidenceReference};
 pub use epistemic::{
     Actor, Belief, BeliefLineage, BeliefRevision, BeliefState, Claim, ContextPack, ContextTrace,
     DimensionDefinition, EpistemicError, EpistemicRepository, EpistemicRepositoryError, Frame,
@@ -39,6 +48,7 @@ pub use memory_path::{
     MarkerError, MemoryPathRepository, MemoryPathRepositoryError, Project, ProjectError,
     ProjectLinkKind, ProjectName, ProjectStatus, SourceRange, SourceRangeError, StoreMarkerResult,
 };
+pub use receipt::{ExecutionReceipt, ReceiptChain, ReceiptDecision, ReceiptError, ReceiptOutcome};
 pub use source::{
     NewSource, Source, SourceContent, SourceError, SourceFingerprint, SourceId, SourceKind,
     SourceRepository, SourceRepositoryError, SourceTitle, StoreSourceResult, find_all_matches,
@@ -109,6 +119,14 @@ identifier_type!(TraceId);
 identifier_type!(ProposalId);
 identifier_type!(ContextPackId);
 identifier_type!(RelationId);
+identifier_type!(ActorId);
+identifier_type!(PrincipalId);
+identifier_type!(AuthorityGrantId);
+identifier_type!(AuthorityRevocationId);
+identifier_type!(ActionId);
+identifier_type!(ReceiptId);
+identifier_type!(TrailId);
+identifier_type!(ApprovalId);
 
 #[cfg(test)]
 mod tests {

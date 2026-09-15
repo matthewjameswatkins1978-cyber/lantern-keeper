@@ -1,4 +1,10 @@
 pub mod app;
+pub mod authority_dto;
+pub mod authority_ops;
+pub mod authority_routes;
+pub mod dreamer_dto;
+pub mod dreamer_ops;
+pub mod dreamer_routes;
 pub mod episode_association_dto;
 pub mod episode_association_ops;
 pub mod episode_association_routes;
@@ -32,6 +38,7 @@ pub mod source_ops;
 pub mod source_outline_dto;
 pub mod source_routes;
 pub mod state;
+pub mod tavily;
 pub mod tethers_engine_client;
 pub mod tethers_preview;
 pub mod tethers_routes;
@@ -40,6 +47,8 @@ pub mod tethers_routes;
 mod tests;
 
 pub use app::build_router;
+pub use authority_ops::{AuthenticatedControlSession, AuthorityService, ControlSession};
+pub use dreamer_ops::{DreamerOperationError, DreamerProvider, DreamerService, NebiusDreamer};
 pub use episode_association_ops::EpisodeAssociationService;
 pub use episode_ops::EpisodeService;
 pub use epistemic_ops::EpistemicService;

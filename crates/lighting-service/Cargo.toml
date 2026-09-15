@@ -13,6 +13,7 @@ lighting-core = { path = "../lighting-core" }
 lighting-store-surreal = { path = "../lighting-store-surreal" }
 serde.workspace = true
 serde_json.workspace = true
+reqwest.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tower.workspace = true
