@@ -55,10 +55,26 @@ This project does not claim to detect every malicious source, certify the truth
 of a Claim, secure a compromised host kernel, or authenticate a person merely
 because an epistemic Actor record uses that person's name.
 
-## Current authority provenance limitation
+## Authority persistence and provenance
 
-Authority mutation currently runs against a process-local ledger. The service
-generates an `authority-control-*` Episode ID for each grant or revocation so
-the provenance field cannot be supplied by a client, but the ID is not yet a
-persisted Source/Episode event. Persisted authority, the real Lantern
-Source/Episode bridge, Tethers, and OpenShell remain separate hardening work.
+Authority grants, revocations, and execution receipts are durable SurrealKV
+records. On restart, the service reconstructs the append-only authority ledger
+from persisted grants and revocations; failed persistent reads are explicit
+unavailability and fail closed rather than using an empty in-memory ledger.
+Logical export/restore preserves active grants, revoked grants, receipts, and
+their Source/Episode provenance.
+
+For each authority mutation, the service writes canonical authenticated
+operation evidence to a PlainText Source and creates an Episode with a full
+SourceRange over that evidence. The operation stores that Episode ID as
+provenance. The semantic memory path has no operation that can interpret this
+Source as a grant: evidence can explain an authority decision, but it cannot
+confer authority.
+
+Control sessions and CSRF tokens are intentionally runtime-only. They are not
+persisted or exported, so restart requires a fresh trusted session bootstrap;
+the session ID retained on a grant or revocation is an audit association, not
+authentication material.
+
+Tethers, genuine OpenShell enforcement, trust-console work, and live provider
+proof remain separate hardening gates.

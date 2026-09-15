@@ -144,7 +144,7 @@ async fn session_principal_cannot_be_spoofed_by_grant_body() {
 
     let response = post_json(&app, "/api/v1/authority/grants", Some(&session), body).await;
     assert_eq!(response.status(), 400);
-    assert!(service.list_grants().await.is_empty());
+    assert!(service.list_grants().await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -213,7 +213,7 @@ async fn different_principal_cannot_revoke_grant() {
     )
     .await;
     assert_eq!(response.status(), 400);
-    assert!(service.list_revocations().await.is_empty());
+    assert!(service.list_revocations().await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -271,7 +271,7 @@ async fn arbitrary_source_episode_cannot_be_supplied() {
 
     let response = post_json(&app, "/api/v1/authority/grants", Some(&session), body).await;
     assert_eq!(response.status(), 400);
-    assert!(service.list_grants().await.is_empty());
+    assert!(service.list_grants().await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -293,5 +293,5 @@ async fn expired_control_session_cannot_mutate_authority() {
     )
     .await;
     assert_eq!(response.status(), 401);
-    assert!(service.list_grants().await.is_empty());
+    assert!(service.list_grants().await.unwrap().is_empty());
 }

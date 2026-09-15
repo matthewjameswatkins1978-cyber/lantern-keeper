@@ -68,7 +68,15 @@ impl SurrealStore {
         let groups: [(&str, &[&str]); 4] = [
             (
                 "ledger.ndjson",
-                &["source", "episode", "marker", "ledger_event"],
+                &[
+                    "source",
+                    "episode",
+                    "marker",
+                    "ledger_event",
+                    "authority_grant",
+                    "authority_revocation",
+                    "receipt",
+                ],
             ),
             ("projects.ndjson", &["project"]),
             (
@@ -334,6 +342,10 @@ fn is_datetime_field(field: &str) -> bool {
     matches!(
         field,
         "created_at"
+            | "issued_at"
+            | "expires_at"
+            | "revoked_at"
+            | "requested_at"
             | "updated_at"
             | "generated_at"
             | "received_at"
@@ -356,6 +368,9 @@ fn is_export_table(table: &str) -> bool {
             | "episode"
             | "marker"
             | "ledger_event"
+            | "authority_grant"
+            | "authority_revocation"
+            | "receipt"
             | "project"
             | "episode_project_relation"
             | "episode_marker_relation"

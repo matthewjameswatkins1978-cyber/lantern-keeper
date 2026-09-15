@@ -12,7 +12,7 @@ The durable model is one graph with several record types:
 
 The core types live in `lighting-core` and have no storage dependency. The
 SurrealDB adapter lives in `lighting-store-surreal`; its current epistemic
-migration is schema version 9. Records carry stable IDs, timestamps, and deterministic keys where
+migration is schema version 10. Records carry stable IDs, timestamps, and deterministic keys where
 replay matters. Sources, Episodes, and Claims have no ordinary update/delete
 repository operations.
 

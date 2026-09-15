@@ -24,7 +24,7 @@ mod mcp;
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 4317;
 const EXPECTED_SURREALDB_VERSION: &str = "3.3.0-beta.4";
-const EXPECTED_SCHEMA_VERSION: i64 = 9;
+const EXPECTED_SCHEMA_VERSION: i64 = 10;
 
 fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -576,6 +576,16 @@ async fn serve() -> anyhow::Result<()> {
         .context("failed to apply canonical epistemic schema migration")?;
     info!("Canonical epistemic schema migration applied successfully");
 
+    let authority_service = lighting_service::AuthorityService::with_store(store.clone());
+    authority_service
+        .migrate()
+        .await
+        .context("failed to apply durable authority schema migration")?;
+    lighting_store_surreal::SurrealReceiptRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to apply durable receipt schema migration")?;
+
     let source_repo: Arc<dyn lighting_core::SourceRepository> = Arc::new(repo);
     let mp_repo: Arc<dyn lighting_core::MemoryPathRepository> = Arc::new(mp_repo);
     let memory_repo: Arc<dyn lighting_core::MemoryRepository> = Arc::new(memory_repo);
@@ -616,7 +626,7 @@ async fn serve() -> anyhow::Result<()> {
         memory_service: Some(memory_service),
         ledger_service: Some(ledger_service),
         epistemic_service: Some(epistemic_service),
-        authority_service: Some(lighting_service::AuthorityService::new()),
+        authority_service: Some(authority_service),
         dreamer_service: std::env::var("NEBIUS_API_KEY")
             .ok()
             .and_then(|_| lighting_service::NebiusDreamer::from_env().ok())
@@ -665,6 +675,14 @@ async fn export_data(output: std::path::PathBuf) -> anyhow::Result<()> {
         .migrate()
         .await
         .context("failed to initialise the canonical epistemic schema")?;
+    lighting_store_surreal::SurrealAuthorityRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the authority schema")?;
+    lighting_store_surreal::SurrealReceiptRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the receipt schema")?;
     let summary: ExportSummary = store
         .export_to(&output)
         .await
@@ -702,6 +720,14 @@ async fn restore_data(input: std::path::PathBuf) -> anyhow::Result<()> {
         .migrate()
         .await
         .context("failed to initialise the canonical epistemic schema")?;
+    lighting_store_surreal::SurrealAuthorityRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the authority schema")?;
+    lighting_store_surreal::SurrealReceiptRepository::new(store.clone())
+        .migrate()
+        .await
+        .context("failed to initialise the receipt schema")?;
     let summary = store
         .restore_from(&input)
         .await

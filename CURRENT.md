@@ -44,6 +44,16 @@ The epistemic memory foundation is now canonical on `master`. Foundation moderni
 - Execution receipts have canonical JSON, SHA-256 hashes, previous-receipt
   links, and tamper/continuity tests. Hash chaining proves content continuity
   and order, not signer identity.
+- Authority grants, revocations, and execution receipts are persisted in
+  SurrealKV and reconstructed after restart. Logical export/restore preserves
+  active and revoked authority plus receipts and their Source/Episode audit
+  provenance. Control sessions and CSRF tokens remain deliberately ephemeral
+  and are not exported or persisted as reusable authentication material.
+- Authority mutation provenance is established by a service-created canonical
+  PlainText Source and full-range Episode before the durable grant or
+  revocation is written. Source evidence remains explanatory only; it cannot
+  semantically create or revoke authority. Persistent read failures return an
+  explicit unavailable state and fail closed.
 
 ## Still missing or partial
 
@@ -52,11 +62,11 @@ The epistemic memory foundation is now canonical on `master`. Foundation moderni
 - Service-level representative retrieval after a fresh restore remains to be accepted.
 - Exact typed/fused retrieval, richer graph-backed project associations, bounded graph expansion, and Dreamer operations remain later work.
 - Normal ChatGPT/Lucy full read/write custom MCP access is a separate OpenAI product-access limitation. Codex Desktop integration is already proven and must not be confused with that product gate.
-- The authority service is currently process-local and is not yet persisted in
-  SurrealKV. Its generated `authority-control-*` Episode IDs are provenance
-  placeholders, not persisted Lantern Source/Episode records. The Tethers provider/Trail bridge, live Tavily evidence,
-  genuine OpenShell enforcement, trust console, hosted demo, and live Nebius
-  proof remain incomplete. The new offline CI lane is green on this branch.
+- The Tethers provider/Trail bridge, live Tavily evidence, genuine OpenShell
+  enforcement, trust console, hosted demo, and live Nebius proof remain
+  incomplete. The offline CI lane is green on this branch; the local full
+  workspace test command remains subject to intermittent Windows linker
+  resource exhaustion.
 
 ## Environment
 
