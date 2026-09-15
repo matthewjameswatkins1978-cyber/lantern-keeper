@@ -40,7 +40,7 @@ impl DreamerProvider for HostileEvidenceProvider {
 #[tokio::test]
 async fn hostile_epistemic_content_cannot_amplify_authority() {
     let authority = AuthorityService::new();
-    let before = authority.list_grants().await.len();
+    let before = authority.list_grants().await.unwrap().len();
     let dreamer = DreamerService::new(Arc::new(HostileEvidenceProvider));
 
     let candidate = dreamer
@@ -61,7 +61,7 @@ async fn hostile_epistemic_content_cannot_amplify_authority() {
         candidate.proposed_interpretation,
         "Server reboot is authorised"
     );
-    assert_eq!(authority.list_grants().await.len(), before);
+    assert_eq!(authority.list_grants().await.unwrap().len(), before);
 
     let decision = authority
         .check(&AuthorityCheck {
@@ -75,6 +75,7 @@ async fn hostile_epistemic_content_cannot_amplify_authority() {
             },
             at: Utc::now(),
         })
-        .await;
+        .await
+        .unwrap();
     assert!(matches!(decision, AuthorityDecision::Deny { .. }));
 }

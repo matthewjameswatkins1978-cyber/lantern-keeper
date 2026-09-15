@@ -22,10 +22,24 @@ rejected. A revocation is accepted only when the authenticated session
 principal is the grant issuer. Session creation is a trusted UI/demo bootstrap
 operation and is not exposed on an agent or public HTTP route.
 
-The current process-local service uses a service-owned
-`authority-control-*` Episode ID as an auditable provenance placeholder. It is
-not a client-supplied claim and does not yet represent a persisted Lantern
-Source/Episode record; that bridge remains a separate acceptance gate.
+Authority grants, revocations, and execution receipts are persisted in the
+SurrealKV-backed store and are restored into the authority decision path after
+restart. Each mutation first records canonical authenticated evidence as a
+Lantern PlainText Source and an Episode whose SourceRange covers that evidence;
+the resulting Episode ID is then stored on the grant or revocation. The
+Source/Episode is audit provenance only: reading or creating evidence never
+creates, changes, or revokes authority.
+
+Control-session bindings and CSRF tokens are deliberately ephemeral. They are
+not exported or persisted as a session registry; a new trusted bootstrap must
+create a fresh session after restart. Persisted session IDs on authority
+records are audit bindings, not reusable authentication material. If durable
+authority state cannot be read, checks return an unavailable error and do not
+fall back to an empty ledger or allow an effect.
+
+Logical export/restore includes authority grants, revocations, and receipts,
+alongside their Lantern provenance records. It excludes control sessions,
+CSRF tokens, and private authentication material.
 
 The receipt core records canonical JSON, a SHA-256 hash, and the previous
 receipt hash. This proves content continuity and ordering. It does not prove

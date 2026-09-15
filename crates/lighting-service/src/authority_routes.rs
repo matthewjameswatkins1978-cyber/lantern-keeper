@@ -19,10 +19,10 @@ pub async fn list_grants(State(state): State<AppState>) -> (StatusCode, Json<ser
             AuthorityOperationError::Unavailable,
         );
     };
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({"grants": service.list_grants().await})),
-    )
+    match service.list_grants().await {
+        Ok(grants) => (StatusCode::OK, Json(serde_json::json!({"grants": grants}))),
+        Err(error) => error_response(error_status(&error), error),
+    }
 }
 
 pub async fn list_revocations(
@@ -34,10 +34,13 @@ pub async fn list_revocations(
             AuthorityOperationError::Unavailable,
         );
     };
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({"revocations": service.list_revocations().await})),
-    )
+    match service.list_revocations().await {
+        Ok(revocations) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"revocations": revocations})),
+        ),
+        Err(error) => error_response(error_status(&error), error),
+    }
 }
 
 pub async fn check(
@@ -50,11 +53,13 @@ pub async fn check(
             AuthorityOperationError::Unavailable,
         );
     };
-    let decision = service.check(&request.check).await;
-    (
-        StatusCode::OK,
-        Json(decision_json(&request.check, decision)),
-    )
+    match service.check(&request.check).await {
+        Ok(decision) => (
+            StatusCode::OK,
+            Json(decision_json(&request.check, decision)),
+        ),
+        Err(error) => error_response(error_status(&error), error),
+    }
 }
 
 pub async fn explain(
@@ -73,7 +78,11 @@ pub async fn explain(
             AuthorityOperationError::Invalid("grant_id cannot be blank".to_owned()),
         );
     };
-    let Some((grant, revocation)) = service.explain(&grant_id).await else {
+    let explained = match service.explain(&grant_id).await {
+        Ok(explained) => explained,
+        Err(error) => return error_response(error_status(&error), error),
+    };
+    let Some((grant, revocation)) = explained else {
         return error_response(
             StatusCode::NOT_FOUND,
             AuthorityOperationError::Invalid("grant not found".to_owned()),
@@ -211,6 +220,7 @@ fn error_status(error: &AuthorityOperationError) -> StatusCode {
             StatusCode::UNAUTHORIZED
         }
         AuthorityOperationError::ExpiredSession => StatusCode::UNAUTHORIZED,
+        AuthorityOperationError::Persistence(_) => StatusCode::SERVICE_UNAVAILABLE,
         AuthorityOperationError::Invalid(_) => StatusCode::BAD_REQUEST,
     }
 }

@@ -5,8 +5,8 @@ This living checklist records only work actually implemented and verified.
 ## Phases
 
 - [x] A — preflight, isolated branch, and baseline record.
-- [x] B — independent Principal and authority foundation (local ledger and
-  control-plane API).
+- [x] B — independent Principal and authority foundation (persistent ledger,
+  provenance, receipts, and control-plane API).
 - [ ] C — Tethers decision bridge and receipts (receipt core exists; bridge is
   still pending).
 - [x] D — bounded Nemotron Dreamer and candidate validation (live provider
@@ -23,16 +23,27 @@ This living checklist records only work actually implemented and verified.
 Phase B is implemented as a pure `lighting-core` authority domain plus a
 trusted-session service/API. It defines typed authenticated principals,
 append-only grants and revocations, exact scope matching, expiry, and
-deterministic decisions. A trusted bootstrap binds each control session to a
-principal, and the public mutation API accepts only grant/revocation intent.
-The service owns issuer, session ID, timestamps, generated IDs, and the
-`authority-control-*` provenance placeholder; unknown security fields are
-rejected and cross-principal revocation is denied. There is no public endpoint
-that creates a control session.
+deterministic decisions. Durable SurrealKV repositories reconstruct authority
+and receipt state after restart. Each mutation creates a service-owned
+canonical Source and full-range Episode, then stores the real Episode ID on
+the durable grant or revocation. A trusted bootstrap binds each control
+session to a principal, and the public mutation API accepts only
+grant/revocation intent. The service owns issuer, session ID, timestamps,
+generated IDs, and provenance; unknown security fields are rejected and
+cross-principal revocation is denied. There is no public endpoint that creates
+a control session.
 
-The placeholder is intentionally honest: it prevents arbitrary client
-provenance but is not yet a persisted Lantern Source/Episode event. Persisted
-authority and the real Source/Episode bridge remain out of this closeout.
+Control sessions and CSRF tokens are deliberately ephemeral and excluded from
+logical export/restore. Authority grants, revocations, receipts, and their
+Lantern provenance are exportable and restorable. Source evidence explains an
+authority operation but cannot semantically create or revoke authority.
+Persistent read failures return unavailable and fail closed.
+
+The Milestone 2 persistence/provenance acceptance suite contains all required
+restart, export/restore, provenance, non-amplification, and ephemeral-secret
+regressions. The local full workspace test command is additionally subject to
+the host's intermittent Windows linker resource exhaustion; CI-equivalent
+compile, clippy, and focused suites remain green locally.
 
 ## Evidence rule
 
