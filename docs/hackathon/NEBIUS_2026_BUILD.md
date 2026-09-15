@@ -50,3 +50,14 @@ The Tavily adapter is now implemented as an untrusted evidence client. Results
 are converted into explicitly external Dreamer evidence and have no authority
 or canonical-mutation operation. Live Tavily credentials and a hostile-world
 run remain unverified, so Phase E is still open.
+
+## PR #4 security closeout
+
+- Old PR head: `caf5ab0c4b9634c922be8e850b668c8cb1e9f7d7`.
+- Verified security-closeout head: `194c7c1d1c014d9dbf574569101642746fe7d142`.
+- PR #4 merged normally into `master` as
+  `79da8f83c1f41b8ba7ad7e92cb89fdfc9f14c4bf` after green GitHub CI.
+- The closeout proves that no client-supplied field can make an authenticated
+  session issue or revoke authority as another principal. The focused API
+  suite has seven passing regression tests, and the full GitHub workspace
+  suite passed on the merged head's source commit.

@@ -3,9 +3,12 @@
 ## Repository
 
 - Canonical branch: `master`
-- Canonical engineering/documentation tip: `8cfd05461f0534c71872137f74acc0b6c959703a`
+- Canonical engineering/documentation tip: `79da8f83c1f41b8ba7ad7e92cb89fdfc9f14c4bf`
 - `feature/lantern-full-move` has been merged into `master` through PR #3.
-- Active hackathon branch: `codex/nebius-authority-foundation`
+- The hackathon authority/evidence work was merged through PR #4 at
+  `79da8f83c1f41b8ba7ad7e92cb89fdfc9f14c4bf`; its verified pre-merge head was
+  `194c7c1d1c014d9dbf574569101642746fe7d142`.
+- Active development branch: `master`
 - This checkout contains the canonical epistemic foundation plus the hackathon
   authority, Dreamer, evidence, receipt, and CI slices.
 - This is an engineering checkpoint, not a public release.
