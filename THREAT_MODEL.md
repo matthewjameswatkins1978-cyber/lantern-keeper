@@ -116,6 +116,10 @@ The live cross-repository Lantern decision/outcome receipt run has passed in
 the local M4/M5 environment and is linked from the final machine-readable
 artifact. Hosted deployment and resistance to a compromised host remain
 unverified; the local OpenShell/Tethers result does not establish those claims.
+The ordering is decision receipt before the OpenShell effect, then Tethers
+Trail outcome, then outcome receipt. The proof uses a local development
+service and does not establish hosted Nebius deployment or protection against
+a compromised host, gateway, Docker Desktop, kernel, or operator.
 
 # Milestone 5 cognitive plane boundary
 

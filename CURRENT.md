@@ -1,4 +1,4 @@
-# Lantern Keeper — Current
+# Lantern Warden — Current
 
 ## Repository
 
@@ -55,7 +55,7 @@ The epistemic memory foundation is now canonical on `master`. Foundation moderni
   semantically create or revoke authority. Persistent read failures return an
   explicit unavailable state and fail closed.
 
-## Milestone 4 working checkpoint
+## Milestone 4 closeout checkpoint
 
 The companion Tethers M4 branch now contains a capability-specific OpenShell
 executor and a real opt-in boundary test. On the verified Windows WSL2/Docker
@@ -68,8 +68,9 @@ retry.
 
 The local effect boundary is verified, and the cross-repository run connecting
 a live Lantern authority decision receipt and outcome receipt to the OpenShell
-effect has now passed locally. This working checkpoint does not claim Nebius
-deployment, a controlled hostile website, or a public demo.
+effect has now passed locally. The run used a local authenticated development
+service. This working checkpoint does not claim Nebius deployment, a controlled
+hostile website, or a public demo.
 
 ## Milestone 5 working checkpoint
 

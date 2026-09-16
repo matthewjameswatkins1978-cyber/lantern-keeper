@@ -67,6 +67,9 @@ The local cross-repository run showing a live Lantern authority decision
 receipt and outcome receipt surrounding the OpenShell effect has passed. Hosted
 deployment, public presentation, and proof against a compromised host remain
 unverified; the current local evidence must not be presented as any of those.
+The run showed a live Lantern Warden authority decision receipt before the
+OpenShell effect and a Lantern outcome receipt after the Tethers Trail outcome,
+using an authenticated local development service with embedded persistence.
 
 Known limitations and the remaining Tethers, Tavily, OpenShell, persistence,
 and deployment work are tracked in [`CURRENT.md`](CURRENT.md) and
