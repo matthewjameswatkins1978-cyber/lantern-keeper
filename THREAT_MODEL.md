@@ -112,9 +112,25 @@ gateway configuration, Docker Desktop, kernel, or operator. Local TLS
 verification bypass and unauthenticated local gateway access are explicit
 development settings only.
 
-The M4 live closeout run established the cross-repository ordering with the
-authenticated Lantern Warden authority service: decision receipt before the
-OpenShell effect, then Tethers Trail outcome, then outcome receipt. The proof
-uses a local development service and does not establish hosted Nebius
-deployment or protection against a compromised host, gateway, Docker Desktop,
-kernel, or operator.
+The live cross-repository Lantern decision/outcome receipt run has passed in
+the local M4/M5 environment and is linked from the final machine-readable
+artifact. Hosted deployment and resistance to a compromised host remain
+unverified; the local OpenShell/Tethers result does not establish those claims.
+The ordering is decision receipt before the OpenShell effect, then Tethers
+Trail outcome, then outcome receipt. The proof uses a local development
+service and does not establish hosted Nebius deployment or protection against
+a compromised host, gateway, Docker Desktop, kernel, or operator.
+
+# Milestone 5 cognitive plane boundary
+
+Tavily is an untrusted external-evidence provider. Each returned result is
+stored as evidence with origin metadata and Source/Episode provenance before it
+is supplied to Nemotron. The Dreamer prompt explicitly treats retrieved text
+as data, not instructions, and its strict candidate shape contains no grant,
+revocation, approval, authenticated identity, or executable-action field.
+
+The live M5 path proved search, evidence persistence, candidate interpretation,
+and the unchanged authority boundary together. It does not prove that the
+retrieved claim is true, that a model is trustworthy, or that repetition makes
+an external claim authoritative. Deterministic authority checks, Tethers
+policy, and OpenShell remain separate trusted gates.

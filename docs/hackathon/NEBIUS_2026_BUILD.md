@@ -9,9 +9,10 @@ This living checklist records only work actually implemented and verified.
   provenance, receipts, and control-plane API).
 - [x] C — Tethers decision bridge and receipts (local HTTP bridge, persistent
   decision/outcome receipts, and fail-closed execution gates).
-- [x] D — bounded Nemotron Dreamer and candidate validation (live provider
-  proof is still pending).
-- [ ] E — Tavily external-evidence lane and non-amplification tests.
+- [x] D — bounded Nemotron Dreamer and candidate validation, including live
+  Nebius Token Factory proof.
+- [x] E — Tavily external-evidence lane, provenance, and non-amplification
+  regressions.
 - [ ] F — adversarial benchmark and baseline comparison.
 - [x] G — bounded OpenShell effect boundary (local WSL/Docker, authenticated
   Lantern Warden authority, Tethers Trail, and receipt ordering proven).
@@ -74,9 +75,25 @@ when configured, but live credentials/model availability have not been proved
 in this workspace.
 
 The Tavily adapter is now implemented as an untrusted evidence client. Results
-are converted into explicitly external Dreamer evidence and have no authority
-or canonical-mutation operation. Live Tavily credentials and a hostile-world
-run remain unverified, so Phase E is still open.
+are persisted as Source/Episode evidence with provider metadata and normalized
+hashes, then passed to the candidate-only Dreamer. The live Tavily search,
+live Nemotron interpretation, combined embedded-SurrealKV cognitive-plane
+test, and existing hostile-content non-amplification regression passed. This
+does not claim the public demo, a controlled hostile website, or a final UI.
+
+## Phase D/E — live cognitive plane
+
+Lantern Warden now exposes a bounded
+`POST /api/v1/cognitive/search-interpret` route. It searches Tavily with the
+basic, low-cost mode, stores each result as external Source/Episode evidence,
+and invokes Nebius Token Factory using the configured NVIDIA Nemotron model.
+The response includes only evidence records, a typed candidate, sanitized
+provider telemetry, and explicit `canonical_mutation: false` and
+`authority_changed: false` markers. It has no authority-write or execution
+operation.
+
+The exact live commands and machine-readable results are recorded in
+[`NEBIUS_2026_M5.md`](NEBIUS_2026_M5.md) and `docs/hackathon/evidence/`.
 
 ## Phase G — bounded OpenShell effect boundary
 
@@ -97,9 +114,13 @@ egress through the default-deny proxy with HTTP 403, and exposed no Lantern
 control credential or audit token. The Tethers opt-in test also passed through
 the real durable replay and shared result-anchor boundary.
 
-This is local cross-repository evidence, not a claim of a live Nebius
-deployment. The exact commands and environment requirements are recorded in
-[`NEBIUS_2026_OPENSHELL.md`](NEBIUS_2026_OPENSHELL.md).
+This is local cross-repository evidence, not a claim of a hosted deployment.
+The authenticated Lantern Warden authority check and server-sealed decision
+and outcome receipts were exercised around one successful OpenShell effect on
+the M4 closeout branches. The exact commands and environment requirements are
+recorded in [`NEBIUS_2026_OPENSHELL.md`](NEBIUS_2026_OPENSHELL.md), with the
+machine-readable linkage in
+[`evidence/m5-full-trust-chain.json`](evidence/m5-full-trust-chain.json).
 
 ## PR #4 security closeout
 

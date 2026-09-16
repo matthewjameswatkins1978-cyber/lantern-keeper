@@ -63,12 +63,31 @@ returned denial. `gateway-insecure` and local unauthenticated-user mode are
 development-only settings for the self-signed local gateway and are not a
 production deployment posture.
 
-The M4 closeout run showed a live Lantern Warden authority decision receipt
-before the OpenShell effect and a Lantern outcome receipt after the Tethers
-Trail outcome. The run used an authenticated local development service with
-embedded persistence. It must not be presented as Nebius deployment or as
-proof that a compromised host cannot bypass its own operating system.
+The local cross-repository run showing a live Lantern authority decision
+receipt and outcome receipt surrounding the OpenShell effect has passed. Hosted
+deployment, public presentation, and proof against a compromised host remain
+unverified; the current local evidence must not be presented as any of those.
+The run showed a live Lantern Warden authority decision receipt before the
+OpenShell effect and a Lantern outcome receipt after the Tethers Trail outcome,
+using an authenticated local development service with embedded persistence.
 
 Known limitations and the remaining Tethers, Tavily, OpenShell, persistence,
 and deployment work are tracked in [`CURRENT.md`](CURRENT.md) and
 [`THREAT_MODEL.md`](THREAT_MODEL.md).
+
+## M5 cognitive plane
+
+Tavily results enter Lantern only as external Source/Episode evidence. The
+record preserves the query, URL, domain, title, retrieval time, rank, provider
+metadata, content, and normalized evidence hash. The Nemotron provider receives
+that evidence under a versioned candidate-only prompt and returns a typed
+candidate; provider/model metadata is assigned by Lantern rather than trusted
+from model output. The live orchestration test confirmed that the persisted
+Source and Episode identifiers remain attached to the evidence path.
+
+`NEBIUS_API_KEY` and `TAVILY_API_KEY` are read only from the process
+environment. They are not placed in prompts, Sources, Episodes, candidates,
+receipts, sandbox environments, or evidence files. Provider timeouts and
+unavailable responses are explicit failures; no semantic output is fabricated.
+Neither external content, model output, confidence, repetition, nor a summary
+has an operation that creates or changes an `AuthorityGrant`.

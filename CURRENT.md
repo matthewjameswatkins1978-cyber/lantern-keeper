@@ -66,11 +66,25 @@ audit token was present in the sandbox environment. The executor uses the
 existing Tethers supervised-child owner and has no unsandboxed fallback or
 retry.
 
-The cross-repository closeout run connected the live Lantern Warden authority
-check and decision receipt to the existing Tethers guarded boundary, performed
-the real OpenShell effect, and recorded the Tethers outcome before the Lantern
-outcome receipt. The run used a local authenticated development service and
-does not claim Nebius deployment, live Tavily evidence, or a public demo.
+The local effect boundary is verified, and the cross-repository run connecting
+a live Lantern authority decision receipt and outcome receipt to the OpenShell
+effect has now passed locally. The run used a local authenticated development
+service. This working checkpoint does not claim Nebius deployment, a controlled
+hostile website, or a public demo.
+
+## Milestone 5 working checkpoint
+
+The live cognitive plane is now verified on the M5 branch. Tavily basic search
+results are retained as explicitly external evidence with query, URL, domain,
+title, retrieval time, rank, provider metadata, and a normalized hash. The
+bounded orchestration path persists each result as a Source and Episode before
+passing it to the candidate-only Nemotron Dreamer. A live Nebius Token Factory
+call using `nvidia/nemotron-3-super-120b-a12b` produced a validated candidate;
+the combined live test confirmed that evidence provenance survived persistence
+and that neither canonical memory nor authority changed.
+
+Provider keys remain environment-only. Provider failure is typed and fail
+closed, model metadata is server-owned, and model confidence is not proof.
 
 ## Still missing or partial
 
@@ -79,10 +93,11 @@ does not claim Nebius deployment, live Tavily evidence, or a public demo.
 - Service-level representative retrieval after a fresh restore remains to be accepted.
 - Exact typed/fused retrieval, richer graph-backed project associations, bounded graph expansion, and Dreamer operations remain later work.
 - Normal ChatGPT/Lucy full read/write custom MCP access is a separate OpenAI product-access limitation. Codex Desktop integration is already proven and must not be confused with that product gate.
-- Live Tavily evidence, trust console, hosted demo, and live Nebius proof
-  remain incomplete. The local M4 closeout is not a hosted deployment claim.
-  The offline CI lane is green on this branch; the local full workspace test
-  command remains subject to intermittent Windows linker resource exhaustion.
+- The trust console, hosted demo, and Nebius/Tavily public presentation remain
+  incomplete. The OpenShell effect boundary and live cross-repository Lantern
+  receipt run are locally verified on the M4/M5 working branches. The offline CI
+  lane is green on this branch; the local full workspace test command remains
+  subject to intermittent Windows linker resource exhaustion.
 
 ## Environment
 

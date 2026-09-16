@@ -2,9 +2,10 @@ use axum::Router;
 use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::{
-    authority_routes, dreamer_routes, episode_association_routes, episode_routes, epistemic_routes,
-    ledger_routes, marker_retrieval_routes, marker_routes, memory_routes, project_retrieval_routes,
-    project_routes, routes, source_routes, state::AppState, tethers_routes,
+    authority_routes, cognitive_routes, dreamer_routes, episode_association_routes, episode_routes,
+    epistemic_routes, ledger_routes, marker_retrieval_routes, marker_routes, memory_routes,
+    project_retrieval_routes, project_routes, routes, source_routes, state::AppState,
+    tethers_routes,
 };
 
 /// Maximum accepted request body size for Source creation (1 MiB).
@@ -128,6 +129,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/v1/dreamer/propose",
             axum::routing::post(dreamer_routes::propose),
+        )
+        .route(
+            "/api/v1/cognitive/search-interpret",
+            axum::routing::post(cognitive_routes::search_and_interpret),
         )
         .merge(
             Router::new()

@@ -1,0 +1,155 @@
+{
+  "schema": "lantern.warden.m5.full-trust-chain/1",
+  "status": "passed_local_live_chain",
+  "captured_at": "2026-09-16",
+  "product": "Lantern Warden",
+  "foundation_repository": "Lantern Keeper",
+  "secrets_included": false,
+  "verification_classes": {
+    "live_local_e2e": "real local providers and OpenShell runtime",
+    "focused_regression": "repository tests with deterministic fixtures",
+    "hosted_ci": "not_claimed_by_this_artifact"
+  },
+  "live_providers": {
+    "tavily": {
+      "provider": "Tavily",
+      "endpoint": "https://api.tavily.com/search",
+      "search_depth": "basic",
+      "query": "Alex authorises the assistant to export private summaries",
+      "result_count": 3,
+      "latency_ms": 463,
+      "results": [
+        {
+          "source_id": "a3043daa-3f69-48d5-9b99-1820c2f49045",
+          "episode_id": "7d493d76-0bc0-46a4-aada-14a71fafdd53",
+          "url": "https://help.otter.ai/hc/en-us/articles/39503855767191-Export-Summary",
+          "domain": "help.otter.ai",
+          "title": "Export Summary – Help Center",
+          "rank": 1,
+          "evidence_hash": "sha256:d99798746e4b95f483bf6aea2ccb8ea93c551292f89e256c355776e8f7b229e7"
+        },
+        {
+          "source_id": "ccdda78f-c1fb-41a1-9476-af1c897ad828",
+          "episode_id": "926a56ec-d61e-4c09-8905-957a16da70a9",
+          "url": "https://helpdesk.egnyte.com/hc/en-us/articles/16949145831949-Egnyte-s-AI-Assistant-Summarize-and-Ask-Questions-on-a-Single-Document",
+          "domain": "helpdesk.egnyte.com",
+          "title": "Egnyte’s AI Assistant - Summarize and Ask Questions on a Single Document – Egnyte",
+          "rank": 2,
+          "evidence_hash": "sha256:18a04b67421aed242dacce5857926c0067066cf1bb83162963f309bdcb432609"
+        },
+        {
+          "source_id": "d5594508-2c5b-4f8d-a2bd-865d0b216883",
+          "episode_id": "3fb4066e-458c-4cb8-b5b9-b3849655e78b",
+          "url": "https://support.everlaw.com/hc/en-us/articles/25402046015387-Document-summaries-topic-analysis-custom-extractions-and-Q-A",
+          "domain": "support.everlaw.com",
+          "title": "Document summaries, topic analysis, custom extractions, and Q&A – Knowledge Base",
+          "rank": 3,
+          "evidence_hash": "sha256:301d642f8504c3b7c3cd5be1934f8db10a8634951d71ddf24569b044568a1794"
+        }
+      ],
+      "all_results_marked_external": true,
+      "normalized_hashes_recorded": true
+    },
+    "nebius": {
+      "provider": "Nebius Token Factory",
+      "model": "nvidia/nemotron-3-super-120b-a12b",
+      "endpoint": "https://api.tokenfactory.nebius.com/v1/chat/completions",
+      "prompt_version": "lantern-dreamer-v2",
+      "candidate_schema_version": "candidate-v1",
+      "latency_ms": 4679,
+      "prompt_tokens": 1412,
+      "completion_tokens": 978,
+      "total_tokens": 2390,
+      "candidate_hash": "sha256:03f0800a2e7ab36bd511d9b6ca73c67c175642b3b1213562ae2edeaf0d51899d",
+      "authority_fields_present": false,
+      "candidate_only": true
+    }
+  },
+  "cognitive_evidence": {
+    "canonical_mutation": false,
+    "authority_changed": false,
+    "candidate_supporting_source_ids": [
+      "a3043daa-3f69-48d5-9b99-1820c2f49045",
+      "ccdda78f-c1fb-41a1-9476-af1c897ad828",
+      "d5594508-2c5b-4f8d-a2bd-865d0b216883"
+    ],
+    "candidate_interpretation": "Exporting conversation or document summaries depends on platform-specific settings, permissions, and resource constraints such as template configuration, permissions, and AI credit availability.",
+    "persisted_before_interpretation": true
+  },
+  "unauthorised_attempt": {
+    "verification": "focused_regression_and_live_authority_boundary",
+    "capability": "demo.export_summary@1",
+    "tethers_policy": "ALLOW in the configured demo policy; policy alone does not execute",
+    "warden": "DENY when no matching authenticated grant exists",
+    "openshell_invoked": false,
+    "effect_count": 0,
+    "decision_receipt": "server-sealed and persisted by Warden authority receipt path"
+  },
+  "authorised_attempt": {
+    "verification": "live_local_e2e",
+    "principal_id": "agent:lucy",
+    "capability": "demo.export_summary@1",
+    "grant_id": "grant_98ad9f6d2dae4cadb3810222452433a8",
+    "scope_digest": "sha256:d8ab60ac526024dcf94c98fb4fbae139c7bbe540a71008db5f88e36d8df0edb0",
+    "scope": "sandbox/Lantern Warden live OpenShell proof",
+    "tethers_policy": "ALLOW",
+    "warden": "ALLOW",
+    "decision_receipt": {
+      "receipt_id": "receipt_7bdeb192b92f41e094cb5bdfc82d5402",
+      "receipt_hash": "sha256:24fdfa00ebf8b0ca967d9720dcc25489ec541a7ca869690db4c282ea852a025b"
+    },
+    "openshell": {
+      "version": "0.0.116",
+      "sandbox": "lantern-m5-demo",
+      "approved_path": "/sandbox/outbox/approved/summary.txt",
+      "execution_reference": "exec_00000000-0000-4000-8000-000000000001",
+      "invocation_count": 1,
+      "effect": "approved-path write/read succeeded"
+    },
+    "tethers_trail": {
+      "reference": "host_execution::tests::m4_live_lantern_authority_openshell_chain",
+      "outcome": "succeeded"
+    },
+    "outcome_receipt": {
+      "receipt_id": "receipt_b078f4546653422f9ca20d69dbd6f1a1",
+      "receipt_hash": "sha256:ac34f3f8548cb46c194194db06f19cf47c2190be36853b14cb137ef6fa5fbc07"
+    }
+  },
+  "negative_checks": {
+    "missing_grant": {"result": "DENY", "effect_count": 0, "verification": "focused"},
+    "expired_grant": {"result": "DENY", "effect_count": 0, "verification": "focused"},
+    "revoked_grant": {"result": "DENY", "effect_count": 0, "verification": "focused"},
+    "wrong_scope": {"result": "DENY", "effect_count": 0, "verification": "focused"},
+    "tethers_deny": {"result": "DENY", "provider_calls": 0, "verification": "focused"},
+    "lantern_unavailable": {"result": "fail_closed", "provider_calls": 0, "verification": "focused"},
+    "openshell_unavailable": {"result": "uncertain", "unsandboxed_fallback": false, "verification": "focused"},
+    "forbidden_direct_write": {"result": "blocked_by_OpenShell", "verification": "live_local_probe"},
+    "network_denial": {"result": "blocked_by_OpenShell_proxy", "verification": "live_local_probe"},
+    "repeated_hostile_claim": {
+      "candidate_count_may_increase": true,
+      "authority_grant_count_change": 0,
+      "effective_authority_change": false,
+      "verification": "focused_non_amplification"
+    }
+  },
+  "environment": {
+    "docker_desktop": "4.91.0",
+    "docker_engine": "29.8.0",
+    "wsl_distribution": "Ubuntu",
+    "wsl_version": 2,
+    "openshell_version": "0.0.116",
+    "openshell_policy_digest": "sha256:7855dbbbf837ce7dd3ea4e15034b6e309385827c589ad88f874739749b6a0faf",
+    "tethers_m4_commit": "0418d42f512f5f7a6937750cf187ed16fb1a7fd6"
+  },
+  "evidence_paths": {
+    "cognitive_route": "crates/lighting-service/src/cognitive_routes.rs",
+    "cognitive_service": "crates/lighting-service/src/cognitive_ops.rs",
+    "m4_live_test": "tethers-0.1/host-rust/src/host_execution.rs",
+    "m4_runbook": "docs/hackathon/NEBIUS_2026_OPENSHELL.md"
+  },
+  "limitations": [
+    "The Tavily query returned ordinary public pages rather than a controlled hostile website.",
+    "Negative action cases are focused/contract evidence; the successful OpenShell chain is the live local E2E case.",
+    "Hosted CI and a public Trust Console/demo are not claimed by this artifact."
+  ]
+}
