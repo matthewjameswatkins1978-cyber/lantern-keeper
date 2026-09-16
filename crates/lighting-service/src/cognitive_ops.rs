@@ -133,7 +133,7 @@ fn _assert_record_is_evidence_only(_: &ExternalEvidenceRecord) {}
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc};
+    use std::sync::Arc;
 
     use super::*;
     use crate::dreamer_ops::{DreamerService, NebiusDreamer};
@@ -217,9 +217,9 @@ mod tests {
                 .iter()
                 .all(|record| record.source_id.is_some() && record.episode_id.is_some())
         );
-        assert_eq!(response.canonical_mutation, false);
-        assert_eq!(response.authority_changed, false);
+        assert!(!response.canonical_mutation);
+        assert!(!response.authority_changed);
         assert_eq!(response.candidate.provider, "Nebius Token Factory");
-        let _ = std::fs::remove_dir_all(PathBuf::from(path));
+        let _ = std::fs::remove_dir_all(path);
     }
 }
