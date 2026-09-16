@@ -71,3 +71,20 @@ or as proof that a compromised host cannot bypass its own operating system.
 Known limitations and the remaining Tethers, Tavily, OpenShell, persistence,
 and deployment work are tracked in [`CURRENT.md`](CURRENT.md) and
 [`THREAT_MODEL.md`](THREAT_MODEL.md).
+
+## M5 cognitive plane
+
+Tavily results enter Lantern only as external Source/Episode evidence. The
+record preserves the query, URL, domain, title, retrieval time, rank, provider
+metadata, content, and normalized evidence hash. The Nemotron provider receives
+that evidence under a versioned candidate-only prompt and returns a typed
+candidate; provider/model metadata is assigned by Lantern rather than trusted
+from model output. The live orchestration test confirmed that the persisted
+Source and Episode identifiers remain attached to the evidence path.
+
+`NEBIUS_API_KEY` and `TAVILY_API_KEY` are read only from the process
+environment. They are not placed in prompts, Sources, Episodes, candidates,
+receipts, sandbox environments, or evidence files. Provider timeouts and
+unavailable responses are explicit failures; no semantic output is fabricated.
+Neither external content, model output, confidence, repetition, nor a summary
+has an operation that creates or changes an `AuthorityGrant`.

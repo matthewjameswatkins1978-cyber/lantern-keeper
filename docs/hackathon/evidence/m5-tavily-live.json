@@ -1,0 +1,18 @@
+{
+  "schema": "lantern.warden.m5.tavily-live/1",
+  "status": "passed",
+  "captured_at": "2026-09-16",
+  "provider": "Tavily",
+  "endpoint": "https://api.tavily.com/search",
+  "query": "Alex weekly summaries local export authorization",
+  "search_depth": "basic",
+  "latency_ms": 463,
+  "result_count": 3,
+  "first_result": {
+    "url": "https://product-docs-repo.illumio.com/Tech-Docs/Core/26.1/REST-APIs/out/en/events-administration/traffic-flow-types-and-properties/export-traffic-flow-summaries.html",
+    "title": "Export Traffic Flow Summaries"
+  },
+  "results_marked_external": true,
+  "normalized_hashes_recorded": true,
+  "secrets_included": false
+}

@@ -2,6 +2,9 @@ pub mod app;
 pub mod authority_dto;
 pub mod authority_ops;
 pub mod authority_routes;
+pub mod cognitive_dto;
+pub mod cognitive_ops;
+pub mod cognitive_routes;
 pub mod dreamer_dto;
 pub mod dreamer_ops;
 pub mod dreamer_routes;
@@ -48,6 +51,7 @@ mod tests;
 
 pub use app::build_router;
 pub use authority_ops::{AuthenticatedControlSession, AuthorityService, ControlSession};
+pub use cognitive_ops::{CognitiveOperationError, CognitivePlaneService};
 pub use dreamer_ops::{DreamerOperationError, DreamerProvider, DreamerService, NebiusDreamer};
 pub use episode_association_ops::EpisodeAssociationService;
 pub use episode_ops::EpisodeService;

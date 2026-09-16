@@ -71,6 +71,20 @@ connects a live Lantern authority decision receipt to that OpenShell effect is
 still an acceptance gate. This working checkpoint does not claim Nebius
 deployment, live Tavily evidence, or a public demo.
 
+## Milestone 5 working checkpoint
+
+The live cognitive plane is now verified on the M5 branch. Tavily basic search
+results are retained as explicitly external evidence with query, URL, domain,
+title, retrieval time, rank, provider metadata, and a normalized hash. The
+bounded orchestration path persists each result as a Source and Episode before
+passing it to the candidate-only Nemotron Dreamer. A live Nebius Token Factory
+call using `nvidia/nemotron-3-super-120b-a12b` produced a validated candidate;
+the combined live test confirmed that evidence provenance survived persistence
+and that neither canonical memory nor authority changed.
+
+Provider keys remain environment-only. Provider failure is typed and fail
+closed, model metadata is server-owned, and model confidence is not proof.
+
 ## Still missing or partial
 
 - Basic Memory shadow comparison against representative real memories.
@@ -78,12 +92,12 @@ deployment, live Tavily evidence, or a public demo.
 - Service-level representative retrieval after a fresh restore remains to be accepted.
 - Exact typed/fused retrieval, richer graph-backed project associations, bounded graph expansion, and Dreamer operations remain later work.
 - Normal ChatGPT/Lucy full read/write custom MCP access is a separate OpenAI product-access limitation. Codex Desktop integration is already proven and must not be confused with that product gate.
-- The Tethers provider/Trail bridge, live Tavily evidence, trust console,
-  hosted demo, and live Nebius proof remain incomplete. The OpenShell effect
-  boundary is locally verified on the M4 working branch, but its live
-  cross-repository Lantern receipt run remains pending. The offline CI lane is
-  green on this branch; the local full workspace test command remains subject
-  to intermittent Windows linker resource exhaustion.
+- The trust console, hosted demo, and Nebius/Tavily public presentation remain
+  incomplete. The OpenShell effect boundary is locally verified on the M4
+  working branch, but its live cross-repository Lantern receipt run remains
+  pending. The offline CI lane is green on this branch; the local full
+  workspace test command remains subject to intermittent Windows linker
+  resource exhaustion.
 
 ## Environment
 

@@ -1,0 +1,18 @@
+{
+  "schema": "lantern.warden.m5.nebius-live/1",
+  "status": "passed",
+  "captured_at": "2026-09-16",
+  "provider": "Nebius Token Factory",
+  "endpoint": "https://api.tokenfactory.nebius.com/v1/chat/completions",
+  "model": "nvidia/nemotron-3-super-120b-a12b",
+  "prompt_version": "lantern-dreamer-v2",
+  "candidate_schema_version": "candidate-v1",
+  "finish_reason": "stop",
+  "latency_ms": 5751,
+  "prompt_tokens": 160,
+  "completion_tokens": 518,
+  "total_tokens": 678,
+  "structured_candidate": true,
+  "authority_fields_present": false,
+  "secrets_included": false
+}

@@ -115,3 +115,17 @@ development settings only.
 The live cross-repository Lantern decision/outcome receipt run is still a hard
 acceptance gate; the local OpenShell/Tethers result alone does not establish
 that claim.
+
+# Milestone 5 cognitive plane boundary
+
+Tavily is an untrusted external-evidence provider. Each returned result is
+stored as evidence with origin metadata and Source/Episode provenance before it
+is supplied to Nemotron. The Dreamer prompt explicitly treats retrieved text
+as data, not instructions, and its strict candidate shape contains no grant,
+revocation, approval, authenticated identity, or executable-action field.
+
+The live M5 path proved search, evidence persistence, candidate interpretation,
+and the unchanged authority boundary together. It does not prove that the
+retrieved claim is true, that a model is trustworthy, or that repetition makes
+an external claim authoritative. Deterministic authority checks, Tethers
+policy, and OpenShell remain separate trusted gates.
