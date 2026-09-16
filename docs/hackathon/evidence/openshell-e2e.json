@@ -1,0 +1,45 @@
+{
+  "schema": "lantern.openshell.evidence/1",
+  "status": "partial_verified",
+  "captured_at": "2026-09-16",
+  "scope": "local_openshell_tethers_boundary",
+  "secrets_included": false,
+  "workstation": {
+    "docker_desktop": "4.91.0",
+    "docker_engine": "29.8.0",
+    "wsl_distribution": "Ubuntu",
+    "wsl_version": 2,
+    "openshell_version": "0.0.116"
+  },
+  "gateway": {
+    "endpoint": "https://127.0.0.1:17670",
+    "tls_configured": true,
+    "jwt_configured": true,
+    "development_mode": true
+  },
+  "sandbox": {
+    "name": "lantern-m4-demo",
+    "id": "2905eea7-6623-4ee1-952e-830d443efcc5",
+    "phase": "Ready",
+    "landlock": "hard_requirement",
+    "approved_path": "/sandbox/outbox/approved/summary.txt",
+    "forbidden_path": "/sandbox/outbox/forbidden/summary.txt",
+    "network_policy": "default_deny"
+  },
+  "probes": {
+    "approved_write_and_read": "pass",
+    "forbidden_write": "denied_permission",
+    "https_egress": "denied_proxy_403",
+    "lantern_control_credentials_present": false,
+    "audit_token_present": false
+  },
+  "tethers": {
+    "branch": "codex/openshell-m4",
+    "test": "openshell_executor::tests::valid_grant_executes_once_in_openshell",
+    "environment_gate": "LANTERN_OPENSHELL_E2E=1",
+    "result": "pass"
+  },
+  "lantern_authority_live": false,
+  "cross_repository_receipt_run": "pending",
+  "nebius_deployment": false
+}

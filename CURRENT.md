@@ -1,4 +1,4 @@
-# Lantern Keeper — Current
+# Lantern Warden — Current
 
 ## Repository
 
@@ -55,6 +55,23 @@ The epistemic memory foundation is now canonical on `master`. Foundation moderni
   semantically create or revoke authority. Persistent read failures return an
   explicit unavailable state and fail closed.
 
+## Milestone 4 closeout checkpoint
+
+The companion Tethers M4 branch now contains a capability-specific OpenShell
+executor and a real opt-in boundary test. On the verified Windows WSL2/Docker
+workstation, OpenShell 0.0.116 created a hard-Landlock sandbox: the approved
+synthetic summary write/read succeeded, the forbidden path was denied, HTTPS
+egress returned the sandbox proxy's 403, and no Lantern control credential or
+audit token was present in the sandbox environment. The executor uses the
+existing Tethers supervised-child owner and has no unsandboxed fallback or
+retry.
+
+The cross-repository closeout run connected the live Lantern Warden authority
+check and decision receipt to the existing Tethers guarded boundary, performed
+the real OpenShell effect, and recorded the Tethers outcome before the Lantern
+outcome receipt. The run used a local authenticated development service and
+does not claim Nebius deployment, live Tavily evidence, or a public demo.
+
 ## Still missing or partial
 
 - Basic Memory shadow comparison against representative real memories.
@@ -62,11 +79,10 @@ The epistemic memory foundation is now canonical on `master`. Foundation moderni
 - Service-level representative retrieval after a fresh restore remains to be accepted.
 - Exact typed/fused retrieval, richer graph-backed project associations, bounded graph expansion, and Dreamer operations remain later work.
 - Normal ChatGPT/Lucy full read/write custom MCP access is a separate OpenAI product-access limitation. Codex Desktop integration is already proven and must not be confused with that product gate.
-- The Tethers provider/Trail bridge, live Tavily evidence, genuine OpenShell
-  enforcement, trust console, hosted demo, and live Nebius proof remain
-  incomplete. The offline CI lane is green on this branch; the local full
-  workspace test command remains subject to intermittent Windows linker
-  resource exhaustion.
+- Live Tavily evidence, trust console, hosted demo, and live Nebius proof
+  remain incomplete. The local M4 closeout is not a hosted deployment claim.
+  The offline CI lane is green on this branch; the local full workspace test
+  command remains subject to intermittent Windows linker resource exhaustion.
 
 ## Environment
 

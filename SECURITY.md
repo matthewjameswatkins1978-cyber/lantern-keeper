@@ -45,6 +45,30 @@ The receipt core records canonical JSON, a SHA-256 hash, and the previous
 receipt hash. This proves content continuity and ordering. It does not prove
 signer identity or secure a compromised host.
 
+## OpenShell effect boundary
+
+The M4 effect lane preserves the same separation. Tethers policy and Lantern
+authority remain before dispatch; OpenShell is only the final sandbox effect
+enforcer. The adapter accepts a Tethers `DispatchReadyAction` for the one
+synthetic `demo.export_summary@1` capability, uses a fixed approved output
+path, and clears the child environment except for the Windows system-path
+allowlist needed to start WSL. It does not read or forward Lantern control
+credentials, audit tokens, or provider secrets, and it has no unsandboxed
+fallback or retry.
+
+The verified local sandbox uses hard Landlock filesystem rules, a writable
+approved outbox only, and default-deny network egress. The forbidden outbox
+write and HTTPS egress probes were run against the real OpenShell gateway and
+returned denial. `gateway-insecure` and local unauthenticated-user mode are
+development-only settings for the self-signed local gateway and are not a
+production deployment posture.
+
+The M4 closeout run showed a live Lantern Warden authority decision receipt
+before the OpenShell effect and a Lantern outcome receipt after the Tethers
+Trail outcome. The run used an authenticated local development service with
+embedded persistence. It must not be presented as Nebius deployment or as
+proof that a compromised host cannot bypass its own operating system.
+
 Known limitations and the remaining Tethers, Tavily, OpenShell, persistence,
 and deployment work are tracked in [`CURRENT.md`](CURRENT.md) and
 [`THREAT_MODEL.md`](THREAT_MODEL.md).

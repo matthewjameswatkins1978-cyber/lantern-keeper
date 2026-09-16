@@ -93,3 +93,28 @@ and is not accepted in request bodies, runtime configuration, receipts,
 exports, or OpenShell inputs. Lantern owns receipt IDs, timestamps, predecessor
 links, and hashes. Outcome receipt failure after provider invocation is an
 audit failure and is not retried.
+
+# Milestone 4 OpenShell effect boundary
+
+The M4 working branch adds a narrow effect adapter for one synthetic export.
+The order remains Tethers policy, exact capability resolution, Lantern
+authority when required, durable pre-dispatch intent/replay admission, then
+OpenShell. OpenShell cannot mint a grant, approve an action, replace Tethers,
+or select a different output path. If OpenShell is unavailable or its policy
+rejects the request, the host reports uncertainty and never executes the same
+action outside the sandbox.
+
+The real local sandbox evidence covers hard Landlock rules, approved-path
+write/read, forbidden-path denial, default-deny HTTPS egress, and absence of
+Lantern control credentials and audit tokens. This reduces the effect of a
+compromised tool process but does not protect against a compromised host,
+gateway configuration, Docker Desktop, kernel, or operator. Local TLS
+verification bypass and unauthenticated local gateway access are explicit
+development settings only.
+
+The M4 live closeout run established the cross-repository ordering with the
+authenticated Lantern Warden authority service: decision receipt before the
+OpenShell effect, then Tethers Trail outcome, then outcome receipt. The proof
+uses a local development service and does not establish hosted Nebius
+deployment or protection against a compromised host, gateway, Docker Desktop,
+kernel, or operator.

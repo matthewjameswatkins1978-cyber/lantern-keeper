@@ -13,7 +13,8 @@ This living checklist records only work actually implemented and verified.
   proof is still pending).
 - [ ] E — Tavily external-evidence lane and non-amplification tests.
 - [ ] F — adversarial benchmark and baseline comparison.
-- [ ] G — genuine OpenShell effect boundary.
+- [x] G — bounded OpenShell effect boundary (local WSL/Docker, authenticated
+  Lantern Warden authority, Tethers Trail, and receipt ordering proven).
 - [ ] H — POWER / STILL TRUE / WHY trust console.
 - [ ] I — resettable public synthetic demo.
 - [ ] J — submission hardening, clean clone, CI, and release evidence.
@@ -76,6 +77,29 @@ The Tavily adapter is now implemented as an untrusted evidence client. Results
 are converted into explicitly external Dreamer evidence and have no authority
 or canonical-mutation operation. Live Tavily credentials and a hostile-world
 run remain unverified, so Phase E is still open.
+
+## Phase G — bounded OpenShell effect boundary
+
+The M4 working branches add one capability-specific effect lane for
+`demo.export_summary@1`. Tethers remains responsible for action validation,
+capability resolution, Tethers policy, Lantern authority when configured,
+durable pre-dispatch intent, replay admission, and post-effect outcome
+receipts. The OpenShell adapter receives only a `DispatchReadyAction` and
+writes the fixed synthetic output path
+`/sandbox/outbox/approved/summary.txt`; it cannot choose an arbitrary path or
+fall back to an unsandboxed process.
+
+On the verified Windows workstation, Docker Desktop 4.91.0 / Docker Engine
+29.8.0 under WSL2 ran OpenShell 0.0.116 with a TLS/JWT-enabled local gateway.
+The sandbox applied a hard Landlock policy, allowed the approved write/read,
+rejected a forbidden-path write with `Permission denied`, rejected HTTPS
+egress through the default-deny proxy with HTTP 403, and exposed no Lantern
+control credential or audit token. The Tethers opt-in test also passed through
+the real durable replay and shared result-anchor boundary.
+
+This is local cross-repository evidence, not a claim of a live Nebius
+deployment. The exact commands and environment requirements are recorded in
+[`NEBIUS_2026_OPENSHELL.md`](NEBIUS_2026_OPENSHELL.md).
 
 ## PR #4 security closeout
 

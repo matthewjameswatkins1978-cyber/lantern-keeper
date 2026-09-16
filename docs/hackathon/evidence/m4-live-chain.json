@@ -1,0 +1,94 @@
+{
+  "schema": "lantern.warden.openshell.m4-live-chain/1",
+  "status": "pass",
+  "captured_at": "2026-09-16",
+  "secrets_included": false,
+  "repositories": {
+    "tethers": {
+      "repository": "matthewjameswatkins1978-cyber/tethers-lang",
+      "baseline_sha": "07870c356e034103573c5499347c61fce0700218",
+      "published_m4_sha": "0418d42f512f5f7a6937750cf187ed16fb1a7fd6",
+      "closeout_branch": "codex/openshell-m4-closeout"
+    },
+    "resolve": {
+      "repository": "matthewjameswatkins1978-cyber/Resolve01",
+      "semantic_authority_sha": "8d42e5b061f86b2b2a2c1949c629654968a550ff"
+    },
+    "lantern": {
+      "repository": "matthewjameswatkins1978-cyber/lantern-keeper",
+      "closeout_branch": "codex/lantern-warden-m4-closeout"
+    }
+  },
+  "workstation": {
+    "windows": "Windows 10 Pro 25H2 build 26220",
+    "wsl_distribution": "Ubuntu 26.04.1 LTS",
+    "wsl_version": 2,
+    "docker_desktop": "4.91.0",
+    "docker_engine": "29.8.0"
+  },
+  "openshell": {
+    "version": "0.0.116",
+    "gateway_endpoint": "https://127.0.0.1:17670",
+    "gateway_health": "pass",
+      "sandbox_name": "lantern-m5-demo",
+    "sandbox_phase": "Ready",
+    "policy_digest": "sha256:7855dbbbf837ce7dd3ea4e15034b6e309385827c589ad88f874739749b6a0faf",
+    "landlock": "hard_requirement",
+    "network_policy": "default_deny",
+    "approved_path": "/sandbox/outbox/approved/summary.txt"
+  },
+  "live_chain": {
+    "lantern_endpoint": "http://127.0.0.1:4318",
+    "authority_authentication": "bearer token accepted by existing Tethers routes",
+    "principal_id": "agent:lucy",
+    "grant_id": "grant_98ad9f6d2dae4cadb3810222452433a8",
+    "authority_check": "ALLOW",
+    "decision_receipt": {
+      "status": "accepted and persisted",
+      "receipt_id": "receipt_7bdeb192b92f41e094cb5bdfc82d5402",
+      "receipt_hash": "sha256:24fdfa00ebf8b0ca967d9720dcc25489ec541a7ca869690db4c282ea852a025b"
+    },
+    "tethers_guard_admission": "Admitted",
+    "provider_effect": "OpenShell approved-path write/read",
+    "provider_invocations": 1,
+    "tethers_trail_outcome": "succeeded",
+    "outcome_receipt": {
+      "status": "accepted and persisted",
+      "receipt_id": "receipt_b078f4546653422f9ca20d69dbd6f1a1",
+      "receipt_hash": "sha256:ac34f3f8548cb46c194194db06f19cf47c2190be36853b14cb137ef6fa5fbc07"
+    },
+    "receipt_order": [
+      "authority decision",
+      "decision receipt",
+      "durable Tethers intent/replay admission",
+      "guard admission",
+      "OpenShell effect",
+      "Tethers Trail outcome",
+      "Lantern outcome receipt"
+    ]
+  },
+  "negative_matrix": {
+    "missing_grant": "pass",
+    "wrong_scope": "pass",
+    "revoked_grant": "pass",
+    "expired_grant": "pass",
+    "tethers_deny": "pass",
+    "lantern_unavailable": "pass",
+    "openshell_unavailable": "pass",
+    "hostile_filesystem": "pass",
+    "network_denial": "pass",
+    "credential_isolation": "pass",
+    "rejected_or_indeterminate_admission_provider_calls": 0
+  },
+  "evidence_paths": {
+    "tethers_live_test": "tethers-0.1/host-rust/src/host_execution.rs",
+    "tethers_conformance": "tethers-0.1/host-rust/tests/resolve_r0_p4_conformance.rs",
+    "lantern_fixture": "crates/lighting-service/examples/m4_live_authority_server.rs",
+    "runbook": "docs/hackathon/NEBIUS_2026_OPENSHELL.md"
+  },
+  "limitations": [
+    "local development gateway uses TLS verification bypass",
+    "no Nebius deployment claim",
+    "no claim against a compromised host, gateway, Docker Desktop, kernel, or operator"
+  ]
+}
