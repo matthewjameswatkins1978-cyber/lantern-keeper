@@ -1,0 +1,107 @@
+{
+  "schema": "lantern.warden.m7.public-demo/1",
+  "status": "container_verified_nebius_deployment_blocked",
+  "source_commit": "7d5f432",
+  "verification_timestamp_utc": "2026-09-16T14:03:15Z",
+  "deployment": {
+    "status": "not_provisioned",
+    "provider": "Nebius Serverless AI",
+    "endpoint_name": null,
+    "endpoint_id": null,
+    "public_url": null,
+    "platform": "cpu-d3",
+    "preset": "4vcpu-16gb",
+    "deployment_timestamp_utc": null,
+    "blocker": "Nebius AI Cloud management provisioning is not authenticated on this host: the nebius CLI, project/subnet selection, and a Nebius Cloud management profile/access token are unavailable. The supplied Token Factory provider key was not used for cloud provisioning or public live inference."
+  },
+  "image": {
+    "repository": "lantern-warden/demo",
+    "tags": [
+      "7d5f432",
+      "m7"
+    ],
+    "platform": "linux/amd64",
+    "runtime_user": "lantern",
+    "local_image_digest": "sha256:be82f37dbaa8749284fffa794c17ec4b9602d940dd9c02fac6dc2fcbe3b44f4e",
+    "registry_push": "not_performed"
+  },
+  "health": {
+    "http_status": 200,
+    "body": {
+      "product": "Lantern Warden",
+      "status": "ready",
+      "mode": "public-demo",
+      "version": "0.1.0",
+      "live_cognition": false
+    }
+  },
+  "console": {
+    "http_status": 200,
+    "root_redirect": {
+      "http_status": 307,
+      "location": "/console"
+    },
+    "state_mode": "REPLAY",
+    "deployment_mode": "public-demo",
+    "live_cognition": false
+  },
+  "replay": {
+    "status": "passed",
+    "accepted_evidence": "docs/hackathon/evidence/m5-full-trust-chain.json",
+    "unauthenticated_attempt": "DENY / NO_AUTHENTICATED_GRANT",
+    "accepted_replay": "ALLOW / REPLAY / VERIFIED receipt and SUCCESS trail",
+    "revoked_replay": "DENY / GRANT_REVOKED",
+    "provider_independence": "replay works with Nebius and Tavily offline"
+  },
+  "public_route_probes": {
+    "authority_grants": 404,
+    "authority_revocations": 404,
+    "tethers_authority_check": 404,
+    "tethers_receipts": 404,
+    "cognitive_search_interpret": 404,
+    "dreamer_propose": 404,
+    "project_tethers_preview": 404,
+    "authority_check": 404,
+    "local_console_grant_route": 404,
+    "path_traversal_probe": 404,
+    "oversized_request": 413
+  },
+  "security": {
+    "content_security_policy": "present",
+    "x_content_type_options": "nosniff",
+    "x_frame_options": "DENY",
+    "referrer_policy": "no-referrer",
+    "permissions_policy": "camera=(), microphone=(), geolocation=()",
+    "broad_cors": "not_configured",
+    "secret_probe": "passed; configured secret names and values absent from HTML/API output",
+    "personal_data": "not included",
+    "provider_calls_in_public_mode": 0
+  },
+  "clean_room": {
+    "status": "passed",
+    "build": "docker build --platform linux/amd64",
+    "dependency_cache": "fresh Linux container cache",
+    "host_ciborium_cache_issue_reproduced": false,
+    "container_smoke": "passed",
+    "restart_smoke": "passed; health 200 and replay state available after stop/start"
+  },
+  "verification": {
+    "cargo_fmt": "passed",
+    "cargo_check_workspace_all_targets_all_features": "passed",
+    "cargo_clippy_workspace_all_targets_all_features": "passed",
+    "lighting_service_tests": "79 passed, 1 ignored integration test",
+    "lighting_tests": "11 passed",
+    "docker_image_build": "passed",
+    "ci": "pending"
+  },
+  "cost_control": {
+    "nebius_resources_created": false,
+    "running_cost": "none from this run"
+  },
+  "limitations": [
+    "A public Nebius URL and live endpoint smoke test remain unverified because cloud provisioning credentials are not available in this checkout.",
+    "Public mode is intentionally replay-only; it does not demonstrate public live Nemotron/Tavily cognition or public OpenShell execution.",
+    "The tested image digest is local-only until it is pushed to a registry."
+  ],
+  "secrets_included": false
+}
