@@ -66,10 +66,10 @@ audit token was present in the sandbox environment. The executor uses the
 existing Tethers supervised-child owner and has no unsandboxed fallback or
 retry.
 
-The local effect boundary is verified, but the cross-repository run that
-connects a live Lantern authority decision receipt to that OpenShell effect is
-still an acceptance gate. This working checkpoint does not claim Nebius
-deployment, live Tavily evidence, or a public demo.
+The local effect boundary is verified, and the cross-repository run connecting
+a live Lantern authority decision receipt and outcome receipt to the OpenShell
+effect has now passed locally. This working checkpoint does not claim Nebius
+deployment, a controlled hostile website, or a public demo.
 
 ## Milestone 5 working checkpoint
 
@@ -93,11 +93,10 @@ closed, model metadata is server-owned, and model confidence is not proof.
 - Exact typed/fused retrieval, richer graph-backed project associations, bounded graph expansion, and Dreamer operations remain later work.
 - Normal ChatGPT/Lucy full read/write custom MCP access is a separate OpenAI product-access limitation. Codex Desktop integration is already proven and must not be confused with that product gate.
 - The trust console, hosted demo, and Nebius/Tavily public presentation remain
-  incomplete. The OpenShell effect boundary is locally verified on the M4
-  working branch, but its live cross-repository Lantern receipt run remains
-  pending. The offline CI lane is green on this branch; the local full
-  workspace test command remains subject to intermittent Windows linker
-  resource exhaustion.
+  incomplete. The OpenShell effect boundary and live cross-repository Lantern
+  receipt run are locally verified on the M4/M5 working branches. The offline CI
+  lane is green on this branch; the local full workspace test command remains
+  subject to intermittent Windows linker resource exhaustion.
 
 ## Environment
 

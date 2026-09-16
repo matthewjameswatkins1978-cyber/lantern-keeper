@@ -14,8 +14,8 @@ This living checklist records only work actually implemented and verified.
 - [x] E — Tavily external-evidence lane, provenance, and non-amplification
   regressions.
 - [ ] F — adversarial benchmark and baseline comparison.
-- [~] G — bounded OpenShell effect boundary (local WSL/Docker and Tethers
-  opt-in E2E proven; cross-repository Lantern receipt run remains pending).
+- [x] G — bounded OpenShell effect boundary (local WSL/Docker, authenticated
+  Lantern Warden authority, Tethers Trail, and receipt ordering proven).
 - [ ] H — POWER / STILL TRUE / WHY trust console.
 - [ ] I — resettable public synthetic demo.
 - [ ] J — submission hardening, clean clone, CI, and release evidence.
@@ -114,10 +114,13 @@ egress through the default-deny proxy with HTTP 403, and exposed no Lantern
 control credential or audit token. The Tethers opt-in test also passed through
 the real durable replay and shared result-anchor boundary.
 
-This is local effect-boundary evidence, not a claim of a live Nebius
-deployment or a completed Lantern-authority-to-OpenShell cross-repository run.
-The exact commands and environment requirements are recorded in
-[`NEBIUS_2026_OPENSHELL.md`](NEBIUS_2026_OPENSHELL.md).
+This is local cross-repository evidence, not a claim of a hosted deployment.
+The authenticated Lantern Warden authority check and server-sealed decision
+and outcome receipts were exercised around one successful OpenShell effect on
+the M4 closeout branches. The exact commands and environment requirements are
+recorded in [`NEBIUS_2026_OPENSHELL.md`](NEBIUS_2026_OPENSHELL.md), with the
+machine-readable linkage in
+[`evidence/m5-full-trust-chain.json`](evidence/m5-full-trust-chain.json).
 
 ## PR #4 security closeout
 

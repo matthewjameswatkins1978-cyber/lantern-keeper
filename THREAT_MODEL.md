@@ -112,9 +112,10 @@ gateway configuration, Docker Desktop, kernel, or operator. Local TLS
 verification bypass and unauthenticated local gateway access are explicit
 development settings only.
 
-The live cross-repository Lantern decision/outcome receipt run is still a hard
-acceptance gate; the local OpenShell/Tethers result alone does not establish
-that claim.
+The live cross-repository Lantern decision/outcome receipt run has passed in
+the local M4/M5 environment and is linked from the final machine-readable
+artifact. Hosted deployment and resistance to a compromised host remain
+unverified; the local OpenShell/Tethers result does not establish those claims.
 
 # Milestone 5 cognitive plane boundary
 

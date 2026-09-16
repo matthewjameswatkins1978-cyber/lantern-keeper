@@ -13,6 +13,14 @@ Tavily search
 AuthorityGrant
   -> Tethers policy
   -> OpenShell effect boundary
+
+The completed local integration proof is:
+
+```text
+external evidence -> Source/Episode -> candidate-only Nemotron
+  -> Tethers policy -> authenticated Warden authority -> OpenShell
+  -> Tethers Trail -> Warden receipts
+```
 ```
 
 ## Live provider proof
@@ -60,12 +68,13 @@ Episodes, receipts, sandbox environment, or evidence files.
 - [`m5-nebius-live.json`](evidence/m5-nebius-live.json)
 - [`m5-tavily-live.json`](evidence/m5-tavily-live.json)
 - [`m5-poisoning-demo.json`](evidence/m5-poisoning-demo.json)
+- [`m5-full-trust-chain.json`](evidence/m5-full-trust-chain.json)
 
 ## Remaining limitations
 
 The final Trust Console and polished three-minute demo are not part of M5.
-The live M4 cross-repository run that places Lantern authority decision and
-outcome receipts around the OpenShell effect remains pending. The live query
-used ordinary public search results rather than a controlled hostile website;
-the deterministic hostile-content and non-amplification checks remain the
-acceptance evidence for that threat class.
+The live query used ordinary public search results rather than a controlled
+hostile website. The deterministic hostile-content and non-amplification
+checks remain the acceptance evidence for that threat class. The full
+negative action matrix is recorded as focused/contract evidence; this local
+run did not claim hosted CI execution or a public demo.
