@@ -20,6 +20,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 mod mcp;
+mod trust_console;
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 4317;
@@ -586,6 +587,16 @@ async fn serve() -> anyhow::Result<()> {
         .await
         .context("failed to apply durable receipt schema migration")?;
 
+    let trust_console = if env::var("LANTERN_TRUST_CONSOLE").ok().as_deref() == Some("1") {
+        Some(
+            trust_console::TrustConsole::new(authority_service.clone())
+                .await
+                .context("failed to configure the local Trust Console")?,
+        )
+    } else {
+        None
+    };
+
     let source_repo: Arc<dyn lighting_core::SourceRepository> = Arc::new(repo);
     let mp_repo: Arc<dyn lighting_core::MemoryPathRepository> = Arc::new(mp_repo);
     let memory_repo: Arc<dyn lighting_core::MemoryRepository> = Arc::new(memory_repo);
@@ -636,7 +647,11 @@ async fn serve() -> anyhow::Result<()> {
 
     info!(%address, "Starting Lighting — durable Source storage is ready");
 
-    let app = build_router(app_state);
+    let mut app = build_router(app_state);
+    if let Some(console) = trust_console {
+        app = app.merge(trust_console::router(console));
+        info!("Local M6 Trust Console enabled at /console");
+    }
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
