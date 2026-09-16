@@ -4,7 +4,7 @@ Lantern Keeper is a local-first, event-sourced epistemic memory for humans and A
 
 That separation is the point. Ordinary AI memory can turn a summary into a fact, a repeated sentence into consensus, or a correction into a rewrite. Lantern Keeper keeps a route back to what actually happened.
 
-> Matthew talks. Lucy remembers. Machines assist. Matthew corrects.
+> Entity talks. Lucy remembers. Machines assist. Entity corrects.
 
 ## The idea in one diagram
 
