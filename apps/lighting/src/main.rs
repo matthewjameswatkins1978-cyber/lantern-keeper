@@ -9,7 +9,8 @@ use lighting_service::source_ops::SourceService;
 use lighting_service::tethers_engine_client::{TethersEngineClient, TethersEngineError};
 use lighting_service::{
     AppState, EpisodeAssociationService, EpisodeService, LedgerService, MarkerRetrievalService,
-    MarkerService, MemoryService, ProjectRetrievalService, ProjectService, build_router,
+    MarkerService, MemoryService, ProjectRetrievalService, ProjectService, build_public_router,
+    build_router,
 };
 use lighting_store_surreal::{
     ExportSummary, StoreConfig, SurrealEpistemicRepository, SurrealLedgerRepository,
@@ -587,15 +588,17 @@ async fn serve() -> anyhow::Result<()> {
         .await
         .context("failed to apply durable receipt schema migration")?;
 
-    let trust_console = if env::var("LANTERN_TRUST_CONSOLE").ok().as_deref() == Some("1") {
-        Some(
-            trust_console::TrustConsole::new(authority_service.clone())
-                .await
-                .context("failed to configure the local Trust Console")?,
-        )
-    } else {
-        None
-    };
+    let public_demo = env::var("WARDEN_PUBLIC_DEMO").ok().as_deref() == Some("1");
+    let trust_console =
+        if !public_demo && env::var("LANTERN_TRUST_CONSOLE").ok().as_deref() == Some("1") {
+            Some(
+                trust_console::TrustConsole::new(authority_service.clone())
+                    .await
+                    .context("failed to configure the local Trust Console")?,
+            )
+        } else {
+            None
+        };
 
     let source_repo: Arc<dyn lighting_core::SourceRepository> = Arc::new(repo);
     let mp_repo: Arc<dyn lighting_core::MemoryPathRepository> = Arc::new(mp_repo);
@@ -647,8 +650,17 @@ async fn serve() -> anyhow::Result<()> {
 
     info!(%address, "Starting Lighting — durable Source storage is ready");
 
-    let mut app = build_router(app_state);
-    if let Some(console) = trust_console {
+    let mut app = if public_demo {
+        info!("Public-demo mode enabled; restricted router only");
+        build_public_router(app_state)
+    } else {
+        build_router(app_state)
+    };
+    if public_demo {
+        app = app.merge(trust_console::public_router(
+            trust_console::PublicReplayConsole::new(),
+        ));
+    } else if let Some(console) = trust_console {
         app = app.merge(trust_console::router(console));
         info!("Local M6 Trust Console enabled at /console");
     }
@@ -854,8 +866,10 @@ fn service_address() -> anyhow::Result<SocketAddr> {
         Err(_) => DEFAULT_PORT,
     };
 
-    if host != "127.0.0.1" && host != "localhost" {
-        bail!("Lighting currently supports localhost-only binding; set LIGHTING_HOST=127.0.0.1");
+    let public_container_bind =
+        env::var("WARDEN_PUBLIC_DEMO").ok().as_deref() == Some("1") && host == "0.0.0.0";
+    if host != "127.0.0.1" && host != "localhost" && !public_container_bind {
+        bail!("Lighting supports localhost binding, or 0.0.0.0 only in WARDEN_PUBLIC_DEMO mode");
     }
 
     format!("{host}:{port}")

@@ -6,6 +6,58 @@ That separation is the point. Ordinary AI memory can turn a summary into a fact,
 
 > Matthew talks. Lucy remembers. Machines assist. Matthew corrects.
 
+## Lantern Warden
+
+Memory can influence thought.
+Only authority can permit action.
+
+Lantern Warden is the judge-facing trust console built on Lantern Keeper. It
+separates four questions that are often collapsed by an AI system:
+
+| State | Question | Meaning |
+| --- | --- | --- |
+| **HEARD** | What did it hear? | External evidence and its Source → Episode provenance |
+| **THOUGHT** | What does it think? | A candidate interpretation, never a canonical mutation |
+| **AUTHORISED** | Is it allowed? | Tethers policy plus an authenticated Warden authority decision |
+| **DONE** | What actually happened? | OpenShell effect, Trail, and linked receipts |
+
+The public demo is replay-first and synthetic-only. It is designed to show the
+accepted execution evidence without exposing grant administration, Tethers
+control, OpenShell control, personal memory, or credentials. The public
+endpoint is not a production deployment.
+
+### Trust chain
+
+```text
+Tavily external evidence
+          ↓
+Lantern Sources / Episodes
+          ↓
+Nemotron candidate cognition
+          ↓
+Lantern Warden state
+          X  no automatic authority edge
+          X
+Authenticated AuthorityGrant
+          ↓
+Tethers policy
+          ↓
+OpenShell
+          ↓
+Trail + Warden receipts
+```
+
+Tavily supplies bounded external evidence; NVIDIA Nemotron through Nebius
+Token Factory supplies candidate interpretation; Tethers supplies the
+deterministic policy boundary; OpenShell supplies the sandboxed effect
+boundary. None of the external evidence or model output can create authority.
+
+Local console: `LANTERN_TRUST_CONSOLE=1 cargo run --locked -p lighting -- serve`,
+then open `http://127.0.0.1:4317/console`. The public container mode is
+`WARDEN_PUBLIC_DEMO=1`; it registers only the health, version, static console,
+and replay-only surface. Release image instructions and limitations are in
+[`docs/hackathon/M7_PUBLIC_DEMO.md`](docs/hackathon/M7_PUBLIC_DEMO.md).
+
 ## The idea in one diagram
 
 ```text

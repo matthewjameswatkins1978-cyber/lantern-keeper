@@ -22,3 +22,10 @@ jobs:
       - run: cargo check --locked --workspace --all-targets --all-features
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --locked --workspace -- --test-threads=1
+
+  public-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Linux amd64 public image
+        run: docker build --platform linux/amd64 --tag lantern-warden/demo:ci .

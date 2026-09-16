@@ -259,24 +259,157 @@ impl TrustConsole {
 
     async fn public_state(&self) -> Result<Value, AuthorityOperationError> {
         let state = self.state.read().await.clone();
-        Ok(json!({
-            "mode": "REPLAY",
-            "persona": {
-                "name": PERSONA_NAME,
-                "id": PERSONA_ID,
-                "preference": "Keep weekly summaries local."
+        replay_payload(
+            state,
+            if is_public_demo() {
+                "public-demo"
+            } else {
+                "local-demo"
             },
-            "state": state,
-            "providers": {
-                "tavily": if std::env::var("TAVILY_API_KEY").is_ok() { "LIVE" } else { "OFFLINE" },
-                "nebius_nemotron": if std::env::var("NEBIUS_API_KEY").is_ok() { "LIVE" } else { "OFFLINE" },
-                "lantern_warden": "READY",
-                "tethers": "REPLAY",
-                "openshell": "REPLAY"
-            },
-            "replay_artifact": serde_json::from_str::<Value>(REPLAY_ARTIFACT)
-                .map_err(|error| AuthorityOperationError::Invalid(error.to_string()))?
-        }))
+            !is_public_demo()
+                && std::env::var("TAVILY_API_KEY").is_ok()
+                && std::env::var("NEBIUS_API_KEY").is_ok(),
+        )
+    }
+}
+
+/// Replay-only public console adapter. It has no AuthorityService, control
+/// session, or mutation path; its actions only move the synthetic display
+/// through the accepted M4/M5 evidence sequence.
+#[derive(Clone)]
+pub struct PublicReplayConsole {
+    state: Arc<tokio::sync::RwLock<ConsoleState>>,
+    reset_counter: Arc<AtomicU64>,
+}
+
+impl PublicReplayConsole {
+    pub fn new() -> Self {
+        Self {
+            state: Arc::new(tokio::sync::RwLock::new(ConsoleState {
+                reset_id: "m7-public-reset-0".to_owned(),
+                phase: "READY",
+                grant: None,
+                revocation_id: None,
+                last_decision: None,
+            })),
+            reset_counter: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    async fn state(&self) -> Result<Value, AuthorityOperationError> {
+        replay_payload(self.state.read().await.clone(), "public-demo", false)
+    }
+
+    async fn reset(&self) -> ConsoleState {
+        let state = ConsoleState {
+            reset_id: format!(
+                "m7-public-reset-{}",
+                self.reset_counter.fetch_add(1, Ordering::Relaxed) + 1
+            ),
+            phase: "READY",
+            grant: None,
+            revocation_id: None,
+            last_decision: None,
+        };
+        *self.state.write().await = state.clone();
+        state
+    }
+
+    async fn attack(&self) -> ConsoleState {
+        let mut state = self.state.write().await;
+        state.phase = "ATTACKED";
+        state.last_decision = Some(DecisionView {
+            decision: "DENY",
+            reason_code: Some("NO_AUTHENTICATED_GRANT"),
+            grant_id: None,
+            openshell_invoked: false,
+        });
+        state.clone()
+    }
+
+    async fn grant(&self) -> ConsoleState {
+        let mut state = self.state.write().await;
+        state.phase = "GRANTED";
+        state.grant = Some(accepted_replay_grant());
+        state.revocation_id = None;
+        state.last_decision = None;
+        state.clone()
+    }
+
+    async fn wrong_scope(&self) -> ConsoleState {
+        let mut state = self.state.write().await;
+        state.phase = "WRONG_SCOPE";
+        state.last_decision = Some(DecisionView {
+            decision: "DENY",
+            reason_code: Some("SCOPE_MISMATCH"),
+            grant_id: None,
+            openshell_invoked: false,
+        });
+        state.clone()
+    }
+
+    async fn retry(&self) -> Value {
+        let mut state = self.state.write().await;
+        let grant_id = state.grant.as_ref().map(|grant| grant.grant_id.clone());
+        let revoked = state.phase == "REVOKED";
+        if let Some(grant_id) = grant_id.filter(|_| !revoked) {
+            state.phase = "SUCCEEDED_REPLAY";
+            state.last_decision = Some(DecisionView {
+                decision: "ALLOW",
+                reason_code: None,
+                grant_id: Some(grant_id.clone()),
+                openshell_invoked: false,
+            });
+            json!({
+                "status": "success",
+                "mode": "REPLAY",
+                "authority": state.last_decision,
+                "openshell": "EXECUTED",
+                "trail": "SUCCESS",
+                "receipt": "VERIFIED",
+                "grant_id": grant_id,
+                "replay_reference": "docs/hackathon/evidence/m5-full-trust-chain.json",
+                "execution_reference": "exec_00000000-0000-4000-8000-000000000001",
+                "artifact": "/sandbox/outbox/approved/summary.txt"
+            })
+        } else {
+            state.last_decision = Some(DecisionView {
+                decision: "DENY",
+                reason_code: Some(if revoked {
+                    "GRANT_REVOKED"
+                } else {
+                    "NO_AUTHENTICATED_GRANT"
+                }),
+                grant_id: None,
+                openshell_invoked: false,
+            });
+            json!({
+                "status": "denied",
+                "mode": "REPLAY",
+                "authority": state.last_decision,
+                "openshell": "NOT INVOKED",
+                "effect": "NONE"
+            })
+        }
+    }
+
+    async fn revoke(&self) -> ConsoleState {
+        let mut state = self.state.write().await;
+        state.phase = "REVOKED";
+        state.revocation_id = Some("accepted-m5-revocation".to_owned());
+        state.last_decision = Some(DecisionView {
+            decision: "DENY",
+            reason_code: Some("GRANT_REVOKED"),
+            grant_id: state.grant.as_ref().map(|grant| grant.grant_id.clone()),
+            openshell_invoked: false,
+        });
+        state.clone()
+    }
+}
+
+impl Default for PublicReplayConsole {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -297,6 +430,27 @@ pub fn router(console: TrustConsole) -> Router {
         .layer(Extension(Arc::new(console)))
 }
 
+pub fn public_router(console: PublicReplayConsole) -> Router {
+    Router::new()
+        .route("/console", get(page))
+        .route(
+            "/console/controlled-hostile-page",
+            get(controlled_hostile_page),
+        )
+        .route("/api/v1/console/state", get(public_state))
+        .route("/api/v1/console/replay/state", get(public_state))
+        .route("/api/v1/console/replay/reset", post(public_reset))
+        .route("/api/v1/console/replay/attack", post(public_attack))
+        .route("/api/v1/console/replay/grant", post(public_replay_grant))
+        .route(
+            "/api/v1/console/replay/wrong-scope",
+            post(public_wrong_scope),
+        )
+        .route("/api/v1/console/replay/retry", post(public_retry))
+        .route("/api/v1/console/replay/revoke", post(public_revoke))
+        .layer(Extension(Arc::new(console)))
+}
+
 async fn page() -> Html<&'static str> {
     Html(PAGE)
 }
@@ -313,6 +467,46 @@ async fn state(
         .await
         .map(Json)
         .map_err(error_response)
+}
+
+async fn public_state(
+    Extension(console): Extension<Arc<PublicReplayConsole>>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    console.state().await.map(Json).map_err(error_response)
+}
+
+async fn public_reset(
+    Extension(console): Extension<Arc<PublicReplayConsole>>,
+) -> Json<ConsoleState> {
+    Json(console.reset().await)
+}
+
+async fn public_attack(
+    Extension(console): Extension<Arc<PublicReplayConsole>>,
+) -> Json<ConsoleState> {
+    Json(console.attack().await)
+}
+
+async fn public_replay_grant(
+    Extension(console): Extension<Arc<PublicReplayConsole>>,
+) -> Json<ConsoleState> {
+    Json(console.grant().await)
+}
+
+async fn public_wrong_scope(
+    Extension(console): Extension<Arc<PublicReplayConsole>>,
+) -> Json<ConsoleState> {
+    Json(console.wrong_scope().await)
+}
+
+async fn public_retry(Extension(console): Extension<Arc<PublicReplayConsole>>) -> Json<Value> {
+    Json(console.retry().await)
+}
+
+async fn public_revoke(
+    Extension(console): Extension<Arc<PublicReplayConsole>>,
+) -> Json<ConsoleState> {
+    Json(console.revoke().await)
 }
 
 async fn reset(
@@ -361,6 +555,59 @@ fn demo_scope(value: &str) -> AuthorityScope {
         ("allowed_prefixes", "sandbox/"),
     ])
     .expect("fixed demo scope")
+}
+
+fn is_public_demo() -> bool {
+    std::env::var("WARDEN_PUBLIC_DEMO").ok().as_deref() == Some("1")
+}
+
+fn replay_payload(
+    state: ConsoleState,
+    deployment_mode: &str,
+    live_cognition: bool,
+) -> Result<Value, AuthorityOperationError> {
+    Ok(json!({
+        "mode": "REPLAY",
+        "deployment_mode": deployment_mode,
+        "live_cognition": live_cognition,
+        "persona": {
+            "name": PERSONA_NAME,
+            "id": PERSONA_ID,
+            "preference": "Keep weekly summaries local."
+        },
+        "state": state,
+        "providers": {
+            "tavily": if live_cognition { "LIVE" } else { "OFFLINE" },
+            "nebius_nemotron": if live_cognition { "LIVE" } else { "OFFLINE" },
+            "lantern_warden": "READY",
+            "tethers": "REPLAY",
+            "openshell": "REPLAY"
+        },
+        "replay_artifact": serde_json::from_str::<Value>(REPLAY_ARTIFACT)
+            .map_err(|error| AuthorityOperationError::Invalid(error.to_string()))?
+    }))
+}
+
+fn accepted_replay_grant() -> PublicGrant {
+    let artifact = serde_json::from_str::<Value>(REPLAY_ARTIFACT)
+        .expect("committed replay artifact must be valid JSON");
+    let accepted = &artifact["authorised_attempt"];
+    PublicGrant {
+        grant_id: accepted["grant_id"]
+            .as_str()
+            .unwrap_or("accepted-m5-grant")
+            .to_owned(),
+        principal_id: accepted["principal_id"]
+            .as_str()
+            .unwrap_or("accepted-replay")
+            .to_owned(),
+        capability: accepted["capability"]
+            .as_str()
+            .unwrap_or("demo.export_summary@1")
+            .to_owned(),
+        scope: accepted["scope"].clone(),
+        expires_at: None,
+    }
 }
 
 fn public_grant(grant: &lighting_core::AuthorityGrant) -> PublicGrant {
@@ -528,5 +775,29 @@ mod tests {
             payload["replay_artifact"]["cognitive_evidence"]["authority_changed"],
             false
         );
+    }
+
+    #[tokio::test]
+    async fn public_replay_flow_is_labelled_and_has_no_authority_service() {
+        let console = PublicReplayConsole::new();
+        let initial = console.state().await.unwrap();
+        assert_eq!(initial["deployment_mode"], "public-demo");
+        assert_eq!(initial["live_cognition"], false);
+
+        console.attack().await;
+        let denied = console.retry().await;
+        assert_eq!(denied["mode"], "REPLAY");
+        assert_eq!(denied["authority"]["reason_code"], "NO_AUTHENTICATED_GRANT");
+
+        console.grant().await;
+        let allowed = console.retry().await;
+        assert_eq!(allowed["mode"], "REPLAY");
+        assert_eq!(allowed["status"], "success");
+        assert_eq!(allowed["openshell"], "EXECUTED");
+
+        console.revoke().await;
+        let after_revoke = console.retry().await;
+        assert_eq!(after_revoke["authority"]["reason_code"], "GRANT_REVOKED");
+        assert_eq!(after_revoke["openshell"], "NOT INVOKED");
     }
 }

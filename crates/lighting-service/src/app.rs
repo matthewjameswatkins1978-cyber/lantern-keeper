@@ -1,5 +1,7 @@
-use axum::Router;
+use axum::http::{HeaderName, HeaderValue};
+use axum::{Router, response::Redirect};
 use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::{
     authority_routes, cognitive_routes, dreamer_routes, episode_association_routes, episode_routes,
@@ -259,4 +261,118 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(project_retrieval_routes::retrieve_by_project),
         )
         .with_state(state)
+}
+
+/// Builds the intentionally small public-demo surface. The full application
+/// router is not mounted here, so authority administration, memory mutation,
+/// receipt ingestion, Tethers control, and execution-adjacent routes do not
+/// exist in public-demo mode.
+pub fn build_public_router(state: AppState) -> Router {
+    Router::new()
+        .route("/", axum::routing::get(|| async { Redirect::temporary("/console") }))
+        .route("/health", axum::routing::get(routes::public_health))
+        .route("/health/live", axum::routing::get(routes::live))
+        .route("/health/ready", axum::routing::get(routes::ready))
+        .route("/api/v1/version", axum::routing::get(routes::version))
+        .layer(RequestBodyLimitLayer::new(16 * 1024))
+        .layer(SetResponseHeaderLayer::overriding(
+            HeaderName::from_static("content-security-policy"),
+            HeaderValue::from_static(
+                "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+            ),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            HeaderName::from_static("x-content-type-options"),
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            HeaderName::from_static("x-frame-options"),
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            HeaderName::from_static("referrer-policy"),
+            HeaderValue::from_static("no-referrer"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            HeaderName::from_static("permissions-policy"),
+            HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+        ))
+        .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn public_router_does_not_register_control_or_memory_routes() {
+        let app = build_public_router(AppState::new_unready());
+        for path in [
+            "/api/v1/authority/grants",
+            "/api/v1/authority/revocations",
+            "/api/v1/tethers/authority/check",
+            "/api/v1/tethers/receipts",
+            "/api/v1/sources",
+            "/api/v1/memories",
+            "/api/v1/ledger/events",
+            "/api/v1/cognitive/search-interpret",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                axum::http::StatusCode::NOT_FOUND,
+                "{path}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn public_router_sets_restrictive_headers_and_health_shape() {
+        let app = build_public_router(AppState::new_unready());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        assert_eq!(response.headers()["x-frame-options"], "DENY");
+        assert_eq!(response.headers()["referrer-policy"], "no-referrer");
+        assert!(
+            response.headers()["content-security-policy"]
+                .to_str()
+                .unwrap()
+                .contains("frame-ancestors 'none'")
+        );
+
+        let oversized = build_public_router(AppState::new_unready())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/health")
+                    .header("content-length", 16 * 1024 + 1)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            oversized.status(),
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE
+        );
+    }
 }
