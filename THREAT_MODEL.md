@@ -112,6 +112,9 @@ gateway configuration, Docker Desktop, kernel, or operator. Local TLS
 verification bypass and unauthenticated local gateway access are explicit
 development settings only.
 
-The live cross-repository Lantern decision/outcome receipt run is still a hard
-acceptance gate; the local OpenShell/Tethers result alone does not establish
-that claim.
+The M4 live closeout run established the cross-repository ordering with the
+authenticated Lantern Warden authority service: decision receipt before the
+OpenShell effect, then Tethers Trail outcome, then outcome receipt. The proof
+uses a local development service and does not establish hosted Nebius
+deployment or protection against a compromised host, gateway, Docker Desktop,
+kernel, or operator.

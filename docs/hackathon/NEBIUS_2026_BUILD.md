@@ -13,8 +13,8 @@ This living checklist records only work actually implemented and verified.
   proof is still pending).
 - [ ] E — Tavily external-evidence lane and non-amplification tests.
 - [ ] F — adversarial benchmark and baseline comparison.
-- [~] G — bounded OpenShell effect boundary (local WSL/Docker and Tethers
-  opt-in E2E proven; cross-repository Lantern receipt run remains pending).
+- [x] G — bounded OpenShell effect boundary (local WSL/Docker, authenticated
+  Lantern Warden authority, Tethers Trail, and receipt ordering proven).
 - [ ] H — POWER / STILL TRUE / WHY trust console.
 - [ ] I — resettable public synthetic demo.
 - [ ] J — submission hardening, clean clone, CI, and release evidence.
@@ -97,9 +97,8 @@ egress through the default-deny proxy with HTTP 403, and exposed no Lantern
 control credential or audit token. The Tethers opt-in test also passed through
 the real durable replay and shared result-anchor boundary.
 
-This is local effect-boundary evidence, not a claim of a live Nebius
-deployment or a completed Lantern-authority-to-OpenShell cross-repository run.
-The exact commands and environment requirements are recorded in
+This is local cross-repository evidence, not a claim of a live Nebius
+deployment. The exact commands and environment requirements are recorded in
 [`NEBIUS_2026_OPENSHELL.md`](NEBIUS_2026_OPENSHELL.md).
 
 ## PR #4 security closeout

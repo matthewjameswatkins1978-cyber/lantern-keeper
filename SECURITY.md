@@ -63,10 +63,11 @@ returned denial. `gateway-insecure` and local unauthenticated-user mode are
 development-only settings for the self-signed local gateway and are not a
 production deployment posture.
 
-The remaining gate is a single cross-repository run showing a live Lantern
-authority decision receipt and outcome receipt surrounding the OpenShell
-effect. The current local evidence must not be presented as Nebius deployment
-or as proof that a compromised host cannot bypass its own operating system.
+The M4 closeout run showed a live Lantern Warden authority decision receipt
+before the OpenShell effect and a Lantern outcome receipt after the Tethers
+Trail outcome. The run used an authenticated local development service with
+embedded persistence. It must not be presented as Nebius deployment or as
+proof that a compromised host cannot bypass its own operating system.
 
 Known limitations and the remaining Tethers, Tavily, OpenShell, persistence,
 and deployment work are tracked in [`CURRENT.md`](CURRENT.md) and
