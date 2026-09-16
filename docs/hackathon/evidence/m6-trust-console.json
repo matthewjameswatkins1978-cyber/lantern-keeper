@@ -1,0 +1,113 @@
+{
+  "schema": "lantern.warden.m6.trust-console/1",
+  "status": "implemented_local_replay_console",
+  "captured_at": "2026-09-16",
+  "product": "Lantern Warden",
+  "product_version": "m6-trust-console-v1",
+  "implementation_base_commit": "a31309b17cad7efc06ef9e396216ed411b4a4a3b",
+  "branch": "codex/lantern-warden-m6-trust-console",
+  "secrets_included": false,
+  "demo_reset_id": "m6-demo-reset-1",
+  "persona": {
+    "name": "Alex Morgan",
+    "principal_id": "demo-agent",
+    "preference": "Keep weekly summaries local."
+  },
+  "scenario": "external_fake_permission_claim",
+  "modes": {
+    "replay": {
+      "implemented": true,
+      "label": "REPLAY",
+      "source": "accepted M4/M5 machine-readable evidence"
+    },
+    "live": {
+      "implemented": true,
+      "label": "LIVE",
+      "scope": "existing cognitive endpoint only; execution display remains accepted replay"
+    }
+  },
+  "controlled_hostile_page": {
+    "implemented": true,
+    "route": "/console/controlled-hostile-page",
+    "public_hosting": "not_claimed",
+    "tavily_indexing": "not_claimed",
+    "content_class": "synthetic_untrusted_evidence"
+  },
+  "provenance": {
+    "source_ids": [
+      "a3043daa-3f69-48d5-9b99-1820c2f49045",
+      "ccdda78f-c1fb-41a1-9476-af1c897ad828",
+      "d5594508-2c5b-4f8d-a2bd-865d0b216883"
+    ],
+    "episode_ids": [
+      "7d493d76-0bc0-46a4-aada-14a71fafdd53",
+      "926a56ec-d61e-4c09-8905-957a16da70a9",
+      "3fb4066e-458c-4cb8-b5b9-b3849655e78b"
+    ],
+    "candidate_hash": "sha256:03f0800a2e7ab36bd511d9b6ca73c67c175642b3b1213562ae2edeaf0d51899d",
+    "candidate_only": true,
+    "canonical_mutation": false,
+    "authority_changed": false
+  },
+  "initial_action": {
+    "capability": "demo.export_summary@1",
+    "tethers_policy": "ALLOW",
+    "warden": "DENY",
+    "reason": "NO_AUTHENTICATED_GRANT",
+    "openshell": "NOT INVOKED",
+    "effect": "NONE"
+  },
+  "grant_action": {
+    "control_path": "existing AuthorityService::issue_from_control_plane",
+    "principal_id": "demo-agent",
+    "scope": "sandbox/Lantern Warden M6 demo",
+    "ttl": "10 minutes",
+    "browser_receives_control_session_secret": false
+  },
+  "approved_action": {
+    "mode": "REPLAY",
+    "tethers_policy": "ALLOW",
+    "warden": "ALLOW",
+    "openshell": "EXECUTED",
+    "trail": "SUCCESS",
+    "trail_id": null,
+    "receipt": "VERIFIED",
+    "execution_reference": "exec_00000000-0000-4000-8000-000000000001",
+    "decision_receipt_id": "receipt_7bdeb192b92f41e094cb5bdfc82d5402",
+    "outcome_receipt_id": "receipt_b078f4546653422f9ca20d69dbd6f1a1",
+    "replay_reference": "docs/hackathon/evidence/m5-full-trust-chain.json"
+  },
+  "wrong_scope": {
+    "warden": "DENY",
+    "reason": "SCOPE_MISMATCH",
+    "openshell": "NOT INVOKED",
+    "effect_count": 0
+  },
+  "revocation": {
+    "control_path": "existing AuthorityService::revoke_from_control_plane",
+    "warden": "DENY",
+    "reason": "GRANT_REVOKED",
+    "openshell": "NOT INVOKED",
+    "effect_count": 0
+  },
+  "provider_unavailable": {
+    "live_cognitive": "explicit unavailable error; no invented evidence",
+    "execution": "explicit unavailable state; no native fallback"
+  },
+  "tests": [
+    "frontend_page_and_replay_artifact_do_not_contain_credentials",
+    "wrong_scope_is_named_without_collapsing_into_generic_confidence",
+    "reset_revokes_only_synthetic_demo_grants",
+    "hostile_page_is_a_local_untrusted_fixture",
+    "replay_console_is_explicitly_labelled",
+    "retry_without_grant_is_denied_without_effect",
+    "grant_and_revoke_use_real_control_plane_mutations"
+  ],
+  "limitations": [
+    "The controlled hostile page is local and public hosting is not claimed.",
+    "Live mode exercises the existing cognitive endpoint; accepted M4/M5 execution evidence is displayed as REPLAY.",
+    "The M6 console does not invoke OpenShell itself; it does not weaken or duplicate executor semantics.",
+    "Trail ID was not separately retained by the accepted M5 artifact; the accepted Trail reference remains visible.",
+    "Hosted CI and a final screen recording remain unverified until the branch is published and CI completes."
+  ]
+}
