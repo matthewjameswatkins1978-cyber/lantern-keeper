@@ -1,0 +1,13 @@
+.git
+.github
+.codex
+.agents
+.lighting-data
+.lighting-runtime
+.private-migration
+target
+.env
+.env.*
+!.env.example
+*.log
+docker-compose*.yml

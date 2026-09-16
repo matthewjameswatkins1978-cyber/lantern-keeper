@@ -24,9 +24,46 @@ pub struct ReadinessResponse {
     pub reason: String,
 }
 
+/// Small public-demo health response. It deliberately contains no endpoint,
+/// storage, environment, or credential details.
+#[derive(Serialize)]
+pub struct PublicHealthResponse {
+    pub product: &'static str,
+    pub status: &'static str,
+    pub mode: &'static str,
+    pub version: &'static str,
+    pub live_cognition: bool,
+}
+
 /// Liveness probe. Always returns 200 — reports that the process is alive.
 pub async fn live() -> Json<LivenessResponse> {
     Json(LivenessResponse { alive: true })
+}
+
+/// Public-demo health. Provider availability is intentionally not inferred
+/// from credentials here; the public build is replay-only.
+pub async fn public_health(
+    State(state): State<AppState>,
+) -> (StatusCode, Json<PublicHealthResponse>) {
+    let status = if state.is_ready() {
+        "ready"
+    } else {
+        "starting"
+    };
+    (
+        if state.is_ready() {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        },
+        Json(PublicHealthResponse {
+            product: "Lantern Warden",
+            status,
+            mode: "public-demo",
+            version: env!("CARGO_PKG_VERSION"),
+            live_cognition: false,
+        }),
+    )
 }
 
 /// Service version information.
