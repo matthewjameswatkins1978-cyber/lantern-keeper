@@ -1,44 +1,83 @@
 # Lantern Keeper Roadmap
 
-Lantern Keeper is a local-first epistemic memory. The canonical architecture and safety boundaries are described in the current guides linked from the [README](../README.md).
+Lantern Keeper's central architecture is now proven well enough for external developers to clone and use from source. The next phase is less about proving the basic idea and more about packaging, generalisation, retrieval quality and broader integration.
 
-## Canonical foundation now on master
+## Landed on `master`
 
-- Rust workspace and layered core, store, service, CLI, and app boundaries.
-- Exact Source storage, duplicate detection, UTF-8-safe Episode ranges, and Project/Marker links.
-- Source / Episode / Claim / Belief separation plus soft Memory Items.
-- Perspective, provenance, predicate, and scope handling.
-- Durable reconciliation, corrections, immutable revisions, lineage, stale invalidation, and echo suppression.
+### Epistemic memory
+
+- Source / Episode / Claim / Belief separation.
+- Soft Memory Items for useful non-factual material.
+- Perspective, provenance, predicate and scope handling.
+- Durable reconciliation, corrections, immutable revisions and lineage.
+- Stale invalidation and current-versus-historical retrieval.
 - Bounded deterministic Context Packs and retrieval traces.
 - Candidate-only Proposal/Trace governance and bounded Foreman review.
-- Logical export/restore, Basic Memory accounting, and LanternBench.
+- Logical export/restore and migration accounting.
+- LanternBench behavioural acceptance coverage.
 - Provenance-complete live factual capture.
 - Local stdio MCP with eight bounded tools.
-- Real Codex Desktop connected-client proof with restart persistence and provenance.
+- Real connected-client MCP proof with restart persistence and provenance.
+
+### Authority and effects
+
+- Durable principals, authority grants and revocations.
+- Exact capability checks, expiry and fail-closed behaviour.
+- Server-owned authority IDs, timestamps and provenance.
+- Canonical hash-linked execution receipts.
+- Tethers authority integration.
+- Verified OpenShell sandbox effect boundary.
+- Live Tavily evidence -> Source/Episode -> candidate-only Nemotron path.
+- M6 Trust Console showing HEARD -> THOUGHT -> AUTHORISED -> DONE.
 
 ## Next
 
-1. Run the Basic Memory shadow comparison against representative real memories.
-2. Fix mechanism-level discrepancies rather than query-specific cheats.
-3. Run final Basic Memory delta/idempotency/accounting and exception review.
-4. Produce the final private export and prove representative retrieval after a fresh restore.
-5. Record the cutover/rollback decision.
+1. **Publish a formal developer release**
+   - choose the public version number;
+   - create release notes;
+   - produce versioned source/binary artifacts where practical;
+   - document install and upgrade expectations.
 
-Normal ChatGPT/Lucy full read/write custom MCP remains a separate product-access gate rather than a Lantern-engine defect.
+2. **Finish cross-platform productisation**
+   - ensure ordinary validation is shell-neutral;
+   - remove remaining accidental Windows/PowerShell assumptions;
+   - expand CI across supported platforms;
+   - keep platform-specific tests behind explicit boundaries.
+
+3. **Generalise remaining user-facing identity defaults**
+   - make actor/holder labels deployment-configurable where they are still legacy defaults;
+   - preserve historical fixtures when they are useful evidence;
+   - ensure public docs and examples use generic roles.
+
+4. **Improve retrieval**
+   - exact typed/fused retrieval;
+   - richer full-text and graph-backed project association;
+   - bounded graph expansion;
+   - optional semantic candidate retrieval without creating a second truth path.
+
+5. **Broaden adapters and imports**
+   - generic conversation/event importers;
+   - additional MCP/client packaging;
+   - clearer migration recipes from common memory stores.
 
 ## Later
 
-- exact typed/fused retrieval and richer graph-backed project associations;
-- bounded graph expansion and optional semantic candidates;
-- Dreamer operations after candidate, review, and replay behaviour are independently qualified;
-- hosted/cloud sync, GUI workflows, universal importers, recommendations, automatic conversation observation, and multi-user collaboration;
-- public ChatGPT/plugin packaging once the product-access path can be exercised properly.
+- hosted or synchronised deployments that preserve the local-first trust model;
+- multi-user/team administration;
+- richer GUI and Trust Console workflows;
+- recommendations and automatic observation after governance is independently qualified;
+- additional sandbox/executor adapters;
+- signed or externally anchored receipt options where cryptographic identity is required.
 
-## Principles
+## Principles that should not change
 
 - Evidence is append-oriented and inspectable.
 - Corrections preserve history rather than rewriting it.
-- No inferred consensus, self-citation laundering, or silent attribution.
-- Soft memory remains soft until explicit governed promotion.
-- AI proposes; bounded Foreman governance decides; Matthew remains the final human authority.
-- Retrieval is bounded, deterministic, explainable, and local-first.
+- Repetition, quotation or assistant echo does not create consensus.
+- Soft memory remains soft until governed promotion.
+- AI proposes; the configured governance boundary decides.
+- The human/operator remains the final authority for their deployment.
+- Retrieval is bounded and explainable.
+- Knowledge does not create permission.
+- Authority failure fails closed.
+- Cross-platform is the default unless a target is explicitly platform-specific.

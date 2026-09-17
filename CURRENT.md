@@ -1,112 +1,140 @@
-# Lantern Warden — Current
+# Lantern Keeper — Current State
 
-## Repository
+Status as of **17 September 2026**.
 
-- Canonical branch: `master`
-- Canonical engineering/documentation tip: `79da8f83c1f41b8ba7ad7e92cb89fdfc9f14c4bf`
-- `feature/lantern-full-move` has been merged into `master` through PR #3.
-- The hackathon authority/evidence work was merged through PR #4 at
-  `79da8f83c1f41b8ba7ad7e92cb89fdfc9f14c4bf`; its verified pre-merge head was
-  `194c7c1d1c014d9dbf574569101642746fe7d142`.
-- Active development branch: `master`
-- This checkout contains the canonical epistemic foundation plus the hackathon
-  authority, Dreamer, evidence, receipt, and CI slices.
-- This is an engineering checkpoint, not a public release.
+## Status
 
-## Phase
+Lantern Keeper is now a **source-ready developer preview** on the canonical `master` branch.
 
-The epistemic memory foundation is now canonical on `master`. Foundation modernisation, spring cleaning, Basic Memory import accounting, durable Claim-to-Belief reconciliation, correction, stale invalidation, deterministic Context Packs, bounded Foreman review, logical export/restore foundations, LanternBench, and the bounded MCP bridge are merged.
+The core memory architecture, bounded MCP surface, authority model, execution receipts, Tethers bridge, OpenShell boundary proof, live external-evidence candidate path, and M6 Trust Console have all been merged into `master`.
 
-## Works today
+The project is ready for other developers to **clone, build, inspect, run locally and integrate from source**. It is not yet a packaged binary release or polished one-click end-user application.
 
-- Rust 1.98.1 / Edition 2024 and SurrealDB 3.3.0-beta.4 are pinned.
-- Embedded, versioned SurrealKV is the normal local store.
-- Sources, Episodes, Projects, Claims, Beliefs, soft Memory Items, relations, registries, traces, proposals, export, import accounting, recall, context, and the optional Tethers preview are present.
-- Direct Claims can be durably reconciled into current Beliefs. Supersession preserves the old projection, records immutable revisions, and retains Claim-to-Belief lineage.
-- Direct Matthew corrections are preserved as Source/Episode evidence and can be linked to the Context Pack that influenced the correction.
-- Deterministic Context Packs provide typed Matthew/Lucy/shared/legacy sections, current/historical separation, bounded selection, stale exclusions, provenance, candidate reasons, budgets, persistence, and compiler traces.
-- The stdio MCP bridge exposes exactly eight bounded tools: context, remember, search, why, correct, status, Foreman queue, and Foreman review.
-- Factual `kind: "claim"` capture requires exact `evidence_text`; Lantern creates or reuses the Source and whole-text Episode, links the UTF-8 byte span, and reconciles the normalized value.
-- Codex Desktop is connected with all eight tools. Remember/search/context/why/correct, current/history separation, initial provenance, correction provenance, and restart persistence are proven.
-- Context matching has been hardened against holder-only and lexical false positives.
-- Predicate/dimension normalization, explicit unmapped Claims, echo suppression, direct-holder gates, and transitive stale propagation are implemented.
-- The repaired Basic Memory snapshot accounts for 61 notes, 496 observations, and 275 relations with zero unexplained items.
+## What Lantern Keeper is now
+
+Lantern is no longer just a persistent conversation-memory experiment. It has become a general trust layer with two deliberately separate responsibilities:
+
+1. **Epistemic memory** — evidence, events, claims, beliefs, corrections, soft memory, context selection and provenance.
+2. **Authority and effects** — principals, grants, revocations, capability checks, sandboxed execution and receipts.
+
+Knowledge can influence reasoning, but it cannot create permission. AI-generated material can become a candidate, but it cannot silently become canonical truth or authority.
+
+## Verified memory capabilities
+
+- Rust 1.98.1 / Edition 2024 workspace.
+- Embedded, versioned SurrealKV normal local store.
+- Optional SurrealDB 3.3.0-beta.4 remote lane.
+- Durable Source, Episode, Project, Claim, Belief, soft Memory Item, relation, Trace, Proposal, Predicate and Dimension foundations.
+- Exact evidence-linked factual capture before reconciliation.
+- Claim-to-Belief reconciliation with immutable revisions and lineage.
+- Corrections preserve prior evidence and history rather than rewriting it.
+- Transitive stale invalidation and current-versus-historical retrieval.
+- Predicate and scope normalisation, explicit unmapped Claims, echo suppression and direct-holder gates.
+- Deterministic bounded Context Packs with selection reasons, budgets, provenance and persisted retrieval traces.
+- Logical export/restore and recovery foundations.
+- LanternBench behavioural acceptance coverage.
+- Basic Memory migration accounting, including a repaired snapshot with no unexplained imported items.
 - A real 1,479-record logical export/restore parity drill has passed.
-- `PrincipalId`, `AuthorityGrant`, `AuthorityRevocation`, exact authority
-  checks, expiry/revocation handling, and a deterministic authority matrix are
-  present. Authority writes are restricted to a trusted bootstrap-created,
-  principal-bound control session and CSRF token. Public mutation routes accept
-  only intent DTOs; issuer, session ID, timestamps, IDs, and provenance are
-  server-owned, and cross-principal revocation is rejected.
-- The optional Nebius Dreamer adapter returns strictly validated candidates and
-  cannot mutate canonical memory or authority. Invalid model output fails
-  closed.
-- Execution receipts have canonical JSON, SHA-256 hashes, previous-receipt
-  links, and tamper/continuity tests. Hash chaining proves content continuity
-  and order, not signer identity.
-- Authority grants, revocations, and execution receipts are persisted in
-  SurrealKV and reconstructed after restart. Logical export/restore preserves
-  active and revoked authority plus receipts and their Source/Episode audit
-  provenance. Control sessions and CSRF tokens remain deliberately ephemeral
-  and are not exported or persisted as reusable authentication material.
-- Authority mutation provenance is established by a service-created canonical
-  PlainText Source and full-range Episode before the durable grant or
-  revocation is written. Source evidence remains explanatory only; it cannot
-  semantically create or revoke authority. Persistent read failures return an
-  explicit unavailable state and fail closed.
 
-## Milestone 4 closeout checkpoint
+## Verified client boundary
 
-The companion Tethers M4 branch now contains a capability-specific OpenShell
-executor and a real opt-in boundary test. On the verified Windows WSL2/Docker
-workstation, OpenShell 0.0.116 created a hard-Landlock sandbox: the approved
-synthetic summary write/read succeeded, the forbidden path was denied, HTTPS
-egress returned the sandbox proxy's 403, and no Lantern control credential or
-audit token was present in the sandbox environment. The executor uses the
-existing Tethers supervised-child owner and has no unsandboxed fallback or
-retry.
+The local stdio MCP bridge exposes exactly eight bounded tools:
 
-The local effect boundary is verified, and the cross-repository run connecting
-a live Lantern authority decision receipt and outcome receipt to the OpenShell
-effect has now passed locally. The run used a local authenticated development
-service. This working checkpoint does not claim Nebius deployment, a controlled
-hostile website, or a public demo.
+- context
+- remember
+- search
+- why
+- correct
+- status
+- Foreman queue
+- Foreman review
 
-## Milestone 5 working checkpoint
+A real Codex Desktop client has completed the connected lifecycle, including factual capture, soft memory, context retrieval, provenance explanation, correction and restart persistence.
 
-The live cognitive plane is now verified on the M5 branch. Tavily basic search
-results are retained as explicitly external evidence with query, URL, domain,
-title, retrieval time, rank, provider metadata, and a normalized hash. The
-bounded orchestration path persists each result as a Source and Episode before
-passing it to the candidate-only Nemotron Dreamer. A live Nebius Token Factory
-call using `nvidia/nemotron-3-super-120b-a12b` produced a validated candidate;
-the combined live test confirmed that evidence provenance survived persistence
-and that neither canonical memory nor authority changed.
+The bridge rejects unknown arguments and does not expose raw database mutation.
 
-Provider keys remain environment-only. Provider failure is typed and fail
-closed, model metadata is server-owned, and model confidence is not proof.
+## Verified authority and execution capabilities
 
-## Still missing or partial
+- Durable `PrincipalId`, `AuthorityGrant` and `AuthorityRevocation` records.
+- Exact capability checks with expiry and revocation handling.
+- Trusted, principal-bound control sessions for authority mutation.
+- Server-owned IDs, timestamps, issuer identity and provenance.
+- Cross-principal revocation rejection.
+- Fail-closed behaviour when persistent authority state cannot be read.
+- Canonical execution receipts with SHA-256 hashes and previous-receipt continuity links.
+- Export/restore preservation for active and revoked authority plus receipts.
+- Control sessions and CSRF material remain ephemeral and are not exported as reusable authentication.
 
-- Basic Memory shadow comparison against representative real memories.
-- Final Basic Memory delta, idempotency/accounting check, private export, and cutover decision.
-- Service-level representative retrieval after a fresh restore remains to be accepted.
-- Exact typed/fused retrieval, richer graph-backed project associations, bounded graph expansion, and Dreamer operations remain later work.
-- Normal ChatGPT/Lucy full read/write custom MCP access is a separate OpenAI product-access limitation. Codex Desktop integration is already proven and must not be confused with that product gate.
-- The trust console, hosted demo, and Nebius/Tavily public presentation remain
-  incomplete. The OpenShell effect boundary and live cross-repository Lantern
-  receipt run are locally verified on the M4/M5 working branches. The offline CI
-  lane is green on this branch; the local full workspace test command remains
-  subject to intermittent Windows linker resource exhaustion.
+## Lantern Warden demonstration profile
 
-## Environment
+The hackathon authority/execution work is referred to as **Lantern Warden**. It demonstrates how the general Lantern Keeper model can govern external evidence, AI candidate reasoning and a real effect boundary.
 
-The Rust MSVC target uses the installed Microsoft C++ Build Tools and Windows SDK libraries. The validated user-level library paths exclude the unusable ATL/MFC-only entry. Lantern does not require the Visual Studio IDE or a particular editor.
+### M4 — OpenShell effect boundary
 
-## Recovery and private state
+Verified locally with OpenShell 0.0.116 under WSL2/Docker:
 
-Private migration material remains in `.private-migration/` and must not be committed or deleted. Recovery/archive refs remain available for historical safety. Basic Memory remains the migration source and rollback/history archive until cutover is accepted.
+- approved synthetic write/read succeeded;
+- forbidden path access was denied;
+- network egress was denied by the sandbox proxy;
+- Lantern control credentials and audit tokens were not exposed to the sandbox;
+- there is no unsandboxed fallback path.
 
-## Next verified step
+### M5 — live cognitive plane
 
-Run the Basic Memory shadow comparison, fix mechanism-level discrepancies only, then perform the final Basic Memory delta and export/restore acceptance. If those gates are green, record the cutover decision. Do not tag or publish a release merely because the engineering foundation is now on `master`.
+Verified path:
+
+```text
+Tavily result -> Source -> Episode -> candidate-only Nemotron interpretation
+```
+
+External evidence retains query, URL, domain, title, retrieval time, rank, provider metadata and a normalised hash before model interpretation. A live Nebius Nemotron call produced a validated candidate without mutating canonical memory or authority.
+
+Provider failure is typed and fail closed. Model confidence is not treated as proof.
+
+### M6 — Trust Console
+
+The local Trust Console makes the chain visible as four distinct states:
+
+1. **HEARD** — external evidence and provenance.
+2. **THOUGHT** — candidate interpretation only.
+3. **AUTHORISED** — Tethers policy plus authenticated authority decision.
+4. **DONE** — sandbox/effect outcome and receipt evidence.
+
+The console demonstrates denial without authority, grant, authorised replay, wrong-scope denial and revocation denial. Live cognitive lookup is optional; candidate output never becomes authority.
+
+## Ready for external use
+
+The repository is public and can be used now by developers willing to build from source.
+
+The supported starting point is:
+
+```bash
+git clone https://github.com/matthewjameswatkins1978-cyber/lantern-keeper.git
+cd lantern-keeper
+cargo build --workspace
+cargo test --workspace
+cargo run -p lighting -- serve
+```
+
+The normal service address is `127.0.0.1:4317`.
+
+There is currently **no formal GitHub Release or packaged installer**. That is packaging work, not a blocker to cloning and using the current source tree.
+
+## Remaining engineering and product work
+
+The largest remaining items are polish and expansion rather than proof that the central architecture works:
+
+- publish versioned release artifacts and install instructions;
+- broaden cross-platform packaging and CI coverage;
+- remove or configure remaining legacy actor-name defaults in user-facing surfaces while retaining historical fixtures where useful;
+- add richer typed/fused retrieval and graph-backed project associations;
+- expand bounded graph retrieval and optional semantic candidate lanes;
+- improve generic importers and client adapters;
+- explore hosted/cloud sync without weakening local-first trust boundaries;
+- package additional client integrations where the client product exposes the required local MCP/plugin surface.
+
+## Important boundary
+
+Some historical fixtures, scripts and migration evidence still contain the original human/assistant names used while the architecture was being built. They are retained where they provide useful test or historical evidence. They should not be interpreted as a requirement that Lantern is tied to those identities.
+
+The public model is generic: humans, assistants, agents, shared holders, legacy holders and principals are roles or identifiers supplied by a deployment.
