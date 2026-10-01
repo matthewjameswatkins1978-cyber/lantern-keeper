@@ -51,7 +51,10 @@ def get_json(url: str, method: str = "GET", body: dict[str, Any] | None = None) 
 def git_revision() -> str | None:
     try:
         return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL, text=True
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parents[1],
+            stderr=subprocess.DEVNULL,
+            text=True,
         ).strip()
     except (OSError, subprocess.CalledProcessError):
         return None

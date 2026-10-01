@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,6 +22,15 @@ class LanternGitExportTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             lantern_git_export.uuid_path("memory-item", False, "not-a-uuid")
+
+    def test_source_revision_is_resolved_from_exporter_checkout(self):
+        original = Path.cwd()
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                os.chdir(temp)
+                self.assertIsNotNone(lantern_git_export.git_revision())
+            finally:
+                os.chdir(original)
 
     def test_credential_shaped_text_fails_closed(self):
         with self.assertRaisesRegex(RuntimeError, "resembles a credential"):
