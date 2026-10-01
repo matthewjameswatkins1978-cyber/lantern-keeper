@@ -20,6 +20,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 mod mcp;
+mod mcp_http;
 mod trust_console;
 
 const DEFAULT_HOST: &str = "127.0.0.1";
@@ -52,6 +53,15 @@ fn main() -> anyhow::Result<()> {
         Command::Mcp => {
             let url = cli.service_url.unwrap_or_else(default_service_url);
             mcp::run(&url)
+        }
+        Command::McpHttp { host, port } => {
+            init_tracing();
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("failed to create tokio runtime")?;
+            rt.block_on(mcp_http::run(&url, &host, port))
         }
         Command::Doctor { json } => {
             init_tracing();
@@ -316,6 +326,15 @@ enum Command {
     Version,
     /// Run the local stdio MCP bridge over the Lighting HTTP service.
     Mcp,
+    /// Run the read-only Streamable HTTP MCP adapter over the Lighting HTTP service.
+    McpHttp {
+        /// Loopback interface for the MCP endpoint.
+        #[arg(long, env = "LIGHTING_MCP_HTTP_HOST", default_value = DEFAULT_HOST)]
+        host: String,
+        /// Port for the MCP endpoint.
+        #[arg(long, env = "LIGHTING_MCP_HTTP_PORT", default_value_t = 4318)]
+        port: u16,
+    },
     /// Inspect the local Lantern and SurrealDB development baseline.
     Doctor {
         /// Output JSON only.
