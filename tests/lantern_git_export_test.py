@@ -36,6 +36,21 @@ class LanternGitExportTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "resembles a credential"):
             lantern_git_export.assert_safe_record({"id": "r1", "content": "api_key=sk-proj-12345678901234567890"})
 
+    def test_index_is_split_into_bounded_deterministic_shards(self):
+        original_limit = lantern_git_export.MAX_INDEX_SHARD_BYTES
+        try:
+            lantern_git_export.MAX_INDEX_SHARD_BYTES = 220
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                rows = [{"id": f"id-{number}", "preview": "x" * 35} for number in range(5)]
+                first = lantern_git_export.write_index_shards(root, "active", rows)
+                self.assertGreater(len(first), 1)
+                self.assertEqual(first, [f"index/active-{n:05d}.jsonl" for n in range(len(first))])
+                for path in first:
+                    self.assertLessEqual((root / path).stat().st_size, 220)
+        finally:
+            lantern_git_export.MAX_INDEX_SHARD_BYTES = original_limit
+
     def test_marker_round_trip_checks_provenance_and_hash(self):
         record_id = "ed7e2de6-2d4d-464a-903d-f41df1b990f3"
         record = {
@@ -50,8 +65,16 @@ class LanternGitExportTests(unittest.TestCase):
             target = root / path
             target.parent.mkdir(parents=True)
             target.write_bytes(data)
-            manifest = {"records": [{"path": path, "bytes": len(data), "sha256": lantern_git_export.hashlib.sha256(data).hexdigest()}]}
-            lantern_git_export.validate_staged(root, manifest, "pi-crossclient-20261001-094804", record_id)
+            entry = {
+                "path": path,
+                "bytes": len(data),
+                "sha256": lantern_git_export.hashlib.sha256(data).hexdigest(),
+                "git_blob_sha": lantern_git_export.hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest(),
+            }
+            target.with_suffix(".integrity.json").write_text(
+                json.dumps({"record_id": record_id, **entry}), encoding="utf-8"
+            )
+            lantern_git_export.validate_staged(root, [entry], "pi-crossclient-20261001-094804", record_id)
             stored = json.loads(target.read_text().split("```json\n", 1)[1].rsplit("\n```", 1)[0])
             self.assertEqual(stored["id"], record_id)
             self.assertEqual(stored["originator_actor_id"], "matthew")

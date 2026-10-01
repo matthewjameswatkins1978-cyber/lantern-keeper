@@ -23,6 +23,7 @@ from typing import Any
 
 EXPORT_SCHEMA_VERSION = 1
 MAX_RECORD_BYTES = 32 * 1024
+MAX_INDEX_SHARD_BYTES = 160 * 1024
 SECRET_PATTERNS = (
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----", re.I),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
@@ -122,6 +123,42 @@ def atomic_replace_directory(staged: Path, destination: Path) -> None:
         shutil.rmtree(backup)
 
 
+def write_index_shards(root: Path, state: str, rows: list[dict[str, Any]]) -> list[str]:
+    (root / "index").mkdir(exist_ok=True)
+    serialized_rows = [json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows]
+    chunks: list[list[str]] = []
+    chunk: list[str] = []
+    chunk_bytes = 0
+
+    def header_size(record_count: int) -> int:
+        header = json.dumps({"_index": {"format": "lantern-git-jsonl-v1", "state": state, "record_count": record_count}}, sort_keys=True) + "\n"
+        return len(header.encode("utf-8"))
+
+    for row in serialized_rows:
+        row_bytes = len(row.encode("utf-8"))
+        if header_size(1) + row_bytes > MAX_INDEX_SHARD_BYTES:
+            raise RuntimeError("one search-index entry exceeds the bounded shard size")
+        if chunk and header_size(len(chunk) + 1) + chunk_bytes + row_bytes > MAX_INDEX_SHARD_BYTES:
+            chunks.append(chunk)
+            chunk = []
+            chunk_bytes = 0
+        chunk.append(row)
+        chunk_bytes += row_bytes
+    if chunk or not chunks:
+        chunks.append(chunk)
+
+    paths: list[str] = []
+    for number, chunk_rows in enumerate(chunks):
+        path = f"index/{state}-{number:05d}.jsonl"
+        header = json.dumps({"_index": {"format": "lantern-git-jsonl-v1", "state": state, "record_count": len(chunk_rows)}}, sort_keys=True) + "\n"
+        contents = header + "".join(chunk_rows)
+        if len(contents.encode("utf-8")) > MAX_INDEX_SHARD_BYTES:
+            raise RuntimeError("search-index shard exceeds the bounded file size")
+        (root / path).write_text(contents, encoding="utf-8", newline="\n")
+        paths.append(path)
+    return paths
+
+
 def export(args: argparse.Namespace) -> dict[str, Any]:
     base = args.service_url.rstrip("/")
     # Never turn the exporter into a remote collection client by accident.
@@ -194,7 +231,7 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
         (staged / "records").mkdir()
         index_rows: dict[str, list[dict[str, Any]]] = {"active": [], "archived": []}
         seen_paths: set[str] = set()
-        record_manifest: list[dict[str, Any]] = []
+        record_integrity: list[dict[str, Any]] = []
         for record_type, archived, record in sorted(records, key=lambda item: (item[0], item[2]["id"])):
             path = uuid_path(record_type, archived, record["id"])
             if path in seen_paths:
@@ -204,35 +241,33 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
             target.parent.mkdir(parents=True, exist_ok=True)
             data = json_markdown(record)
             target.write_bytes(data)
+            git_blob_sha = hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
+            entry = {
+                "path": path,
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "git_blob_sha": git_blob_sha,
+                "bytes": len(data),
+            }
+            integrity_path = target.with_suffix(".integrity.json")
+            integrity_path.write_text(json.dumps({"record_id": record["id"], **entry}, sort_keys=True, indent=2) + "\n", encoding="utf-8", newline="\n")
+            record_integrity.append(entry)
             row = {
                 "id": record["id"], "record_type": record_type, "archived": archived,
                 "path": path, "created_at": record.get("created_at"),
                 "kind": record.get("kind"), "subject_key": record.get("subject_key"),
                 "predicate_key": record.get("predicate_key"),
                 "preview": str(record.get("content", record.get("value", record.get("current_value", ""))))[:240],
+                "sha256": entry["sha256"],
+                "git_blob_sha": entry["git_blob_sha"],
+                "bytes": entry["bytes"],
             }
             index_rows["archived" if archived else "active"].append(row)
-            git_blob_sha = hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
-            record_manifest.append({
-                "path": path,
-                "sha256": hashlib.sha256(data).hexdigest(),
-                "git_blob_sha": git_blob_sha,
-                "bytes": len(data),
-            })
 
         index_dir = staged / "index"
         index_dir.mkdir()
-        index_paths: dict[str, str] = {}
+        index_paths: dict[str, list[str]] = {}
         for state, rows in index_rows.items():
-            index_path = f"index/{state}.jsonl"
-            (staged / index_path).write_text(
-                json.dumps({"_index": {"format": "lantern-git-jsonl-v1", "state": state, "record_count": len(rows)}}, sort_keys=True)
-                + "\n"
-                + "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows),
-                encoding="utf-8",
-                newline="\n",
-            )
-            index_paths[state] = index_path
+            index_paths[state] = write_index_shards(staged, state, rows)
 
         manifest = {
             "format": "lantern-git-mirror",
@@ -254,7 +289,8 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
             "projects_exported": False,
             "index_paths": index_paths,
             "record_path_rule": "UUID lower-case hex split 2/2; records/{type}/{active|archived}/{hex[0:2]}/{hex[2:4]}/{uuid}.md",
-            "records": record_manifest,
+            "integrity_path_rule": "replace each record .md suffix with .integrity.json; sidecar contains SHA-256 and Git blob SHA",
+            "index_shard_max_bytes": MAX_INDEX_SHARD_BYTES,
             "exclusions": ["raw Source and Episode content", "authority grants and local runtime state", "unknown fields outside the record allowlist"],
             "secret_scan": "fail-closed patterns for common credential formats and credential assignments",
         }
@@ -263,7 +299,7 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
             encoding="utf-8",
             newline="\n",
         )
-        validate_staged(staged, manifest, args.require_marker, args.require_uuid)
+        validate_staged(staged, record_integrity, args.require_marker, args.require_uuid)
         atomic_replace_directory(staged, parent / "mirror")
         return manifest
     finally:
@@ -271,16 +307,23 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
             shutil.rmtree(staged)
 
 
-def validate_staged(root: Path, manifest: dict[str, Any], marker: str | None, record_id: str | None) -> None:
+def validate_staged(root: Path, record_integrity: list[dict[str, Any]], marker: str | None, record_id: str | None) -> None:
     if marker and not record_id:
         raise RuntimeError("--require-marker requires --require-uuid")
-    for entry in manifest["records"]:
+    for entry in record_integrity:
         path = root / entry["path"]
         data = path.read_bytes()
         if len(data) != entry["bytes"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
             raise RuntimeError(f"record hash verification failed: {entry['path']}")
+        git_blob_sha = hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
+        if git_blob_sha != entry["git_blob_sha"]:
+            raise RuntimeError(f"Git blob hash verification failed: {entry['path']}")
+        sidecar_path = path.with_suffix(".integrity.json")
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        if any(sidecar.get(key) != entry[key] for key in ("path", "sha256", "git_blob_sha", "bytes")):
+            raise RuntimeError(f"integrity sidecar verification failed: {sidecar_path}")
     if marker:
-        matched = [entry for entry in manifest["records"] if entry["path"].endswith(f"/{record_id}.md")]
+        matched = [entry for entry in record_integrity if entry["path"].endswith(f"/{record_id}.md")]
         if len(matched) != 1:
             raise RuntimeError(f"required record {record_id} was not uniquely exported")
         text = (root / matched[0]["path"]).read_text(encoding="utf-8")

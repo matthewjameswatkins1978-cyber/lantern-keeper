@@ -6,9 +6,9 @@
 
 The exporter reads the existing local Lighting HTTP read endpoints and creates a complete staged generation under `mirror/`:
 
-- `manifest.json` records export format/version, UTC generation time, Lantern service version and source software revision, optional operator-supplied source-store identity, per-type counts, per-record SHA-256 and Git blob hashes, the UUID-to-path rule, and exclusions.
-- `index/active.jsonl` and `index/archived.jsonl` are compact catalogs for connector search.
-- `records/{memory-item|claim|belief}/{active|archived}/{uuid-prefix}/{uuid-prefix}/{uuid}.md` contains one deterministic, searchable Markdown record with its allowlisted JSON representation.
+- `manifest.json` records export format/version, UTC generation time, Lantern service version and source software revision, optional operator-supplied source-store identity, per-type counts, bounded index shard paths, the UUID-to-path rule, and exclusions.
+- `index/active-00000.jsonl` and `index/archived-00000.jsonl` are examples of compact catalogs for connector search. Shards stay under 160 KiB; their complete paths are listed in `manifest.json`.
+- `records/{memory-item|claim|belief}/{active|archived}/{hex[0:2]}/{hex[2:4]}/{uuid}.md` contains one deterministic, searchable Markdown record with its allowlisted JSON representation. Its sibling `{uuid}.integrity.json` carries SHA-256 and Git blob hashes without growing the manifest for every record.
 
 Soft memories, claims and beliefs remain distinct record types. UUIDs and source, episode, originator, transmitter, holder and lineage identifiers are preserved when the canonical endpoint supplies them. The exporter does not fetch or export raw Source/Episode content, authority grants, credentials, local database files or unknown response fields. Credential-shaped values and oversized records fail the generation closed. Secret scanning is a guardrail, not a guarantee that arbitrary text contains no sensitive information; use a private repository and review the diff before a first export.
 
@@ -34,4 +34,4 @@ The manifest omits machine paths and service URLs. `LANTERN_GIT_SOURCE_ID` may b
 
 The Lantern Keeper V2 skill uses native read tools first. If they are missing, it fetches `mirror/manifest.json` from the private GitHub connector and searches only `matthewjameswatkins1978-cyber/lantern-git`. GitHub connector search uses the repository default branch and may lag while a new repository is indexed; fetch-by-path can read a known file/ref directly. The manifest timestamp is the snapshot time, not a claim of live freshness. Treat exports older than 24 hours as stale for current-state answers. Every fallback answer must identify GitHub as transport and retain record IDs and provenance.
 
-GitHub is not a second memory authority. A mirror record is evidence copied from Lantern at a stated time; a missing or stale record is not proof of absence in Lantern. The Git blob hash returned by connector fetch can be compared with the manifest's `git_blob_sha`; the exporter separately checks SHA-256 before replacing its local generation.
+GitHub is not a second memory authority. A mirror record is evidence copied from Lantern at a stated time; a missing or stale record is not proof of absence in Lantern. The Git blob hash returned by connector fetch can be compared with the record's integrity sidecar; the exporter separately checks SHA-256 and Git blob hashes before replacing its local generation.
