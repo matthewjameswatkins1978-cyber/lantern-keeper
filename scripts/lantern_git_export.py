@@ -213,7 +213,9 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
         for state, rows in index_rows.items():
             index_path = f"index/{state}.jsonl"
             (staged / index_path).write_text(
-                "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows),
+                json.dumps({"_index": {"format": "lantern-git-jsonl-v1", "state": state, "record_count": len(rows)}}, sort_keys=True)
+                + "\n"
+                + "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows),
                 encoding="utf-8",
                 newline="\n",
             )

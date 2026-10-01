@@ -12,6 +12,8 @@ The exporter reads the existing local Lighting HTTP read endpoints and creates a
 
 Soft memories, claims and beliefs remain distinct record types. UUIDs and source, episode, originator, transmitter, holder and lineage identifiers are preserved when the canonical endpoint supplies them. The exporter does not fetch or export raw Source/Episode content, authority grants, credentials, local database files or unknown response fields. Credential-shaped values and oversized records fail the generation closed. Secret scanning is a guardrail, not a guarantee that arbitrary text contains no sensitive information; use a private repository and review the diff before a first export.
 
+The first design intentionally omits generated project context packs: the current project-retrieval endpoint includes excerpts from raw Sources, which the mirror is explicitly designed to exclude. A future pack needs a curated Lantern endpoint that preserves semantic links while filtering source blobs.
+
 ## Export and publish
 
 Use a local clone of the private repository `matthewjameswatkins1978-cyber/lantern-git` as `--output`. The default service address is loopback-only (`127.0.0.1:4317`). No credentials are embedded or read by the exporter.
