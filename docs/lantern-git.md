@@ -6,7 +6,7 @@
 
 The exporter reads the existing local Lighting HTTP read endpoints and creates a complete staged generation under `mirror/`:
 
-- `manifest.json` records export format/version, UTC generation time, source Lantern software revision, optional operator-supplied source-store identity, per-type counts, per-record SHA-256 and Git blob hashes, the UUID-to-path rule, and exclusions.
+- `manifest.json` records export format/version, UTC generation time, Lantern service version and source software revision, optional operator-supplied source-store identity, per-type counts, per-record SHA-256 and Git blob hashes, the UUID-to-path rule, and exclusions.
 - `index/active.jsonl` and `index/archived.jsonl` are compact catalogs for connector search.
 - `records/{memory-item|claim|belief}/{active|archived}/{uuid-prefix}/{uuid-prefix}/{uuid}.md` contains one deterministic, searchable Markdown record with its allowlisted JSON representation.
 

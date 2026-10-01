@@ -136,6 +136,10 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
         loopback = False
     if parsed_url.scheme != "http" or not loopback or parsed_url.username or parsed_url.password:
         raise RuntimeError("service URL must be unauthenticated HTTP on localhost/loopback")
+    service_info = get_json(f"{base}/api/v1/version")
+    for required in ("service", "project", "version"):
+        if not isinstance(service_info.get(required), str) or not service_info[required]:
+            raise RuntimeError("Lantern returned an invalid service-version response")
     read_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     # Complete bounded record sets from the existing read-only service APIs.
     payloads = [
@@ -238,6 +242,8 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
             "snapshot_consistency": "best-effort sequential reads; Lantern API does not expose a transaction snapshot token",
             "source_store_identity": os.environ.get("LANTERN_GIT_SOURCE_ID"),
             "source_store_identity_note": None if os.environ.get("LANTERN_GIT_SOURCE_ID") else "not configured",
+            "source_service_name": service_info["service"],
+            "source_service_version": service_info["version"],
             "source_software_revision": git_revision(),
             "source_service_url": "local Lantern service; address intentionally omitted",
             "record_count": len(records),
