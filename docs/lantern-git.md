@@ -16,17 +16,15 @@ The first design intentionally omits generated project context packs: the curren
 
 ## Export and publish
 
-Use a local clone of the private repository `matthewjameswatkins1978-cyber/lantern-git` as `--output`. The default service address is loopback-only (`127.0.0.1:4317`). No credentials are embedded or read by the exporter.
+Use a local clone of the private repository `matthewjameswatkins1978-cyber/lantern-git` as the mirror checkout. The default service address is loopback-only (`127.0.0.1:4317`). No credentials are embedded or read by either command; GitHub publishing uses the existing Git credential helper.
 
 ```powershell
-python scripts/lantern_git_export.py --output D:\Projects\lantern-git --require-marker pi-crossclient-20261001-094804 --require-uuid ed7e2de6-2d4d-464a-903d-f41df1b990f3
+pwsh scripts/lantern_git_sync.ps1 -RepoPath D:\Projects\lantern-git
 git -C D:\Projects\lantern-git diff -- mirror
-git -C D:\Projects\lantern-git add mirror
-git -C D:\Projects\lantern-git commit -m "Refresh Lantern read-only mirror"
-git -C D:\Projects\lantern-git push origin main
+pwsh scripts/lantern_git_sync.ps1 -RepoPath D:\Projects\lantern-git -Push
 ```
 
-Review the staged diff before pushing, especially on the first export. Export failure leaves the previous mirror intact. A push failure cannot affect Lantern writes. Schedule the same reviewed command through a user-managed task only if recurring publication is wanted; automation is deliberately not installed or enabled by this feature.
+The first command exports locally and does not stage or publish. Review the diff. The explicit `-Push` switch then verifies the expected private remote and `main` branch, stages only `mirror/`, skips an unchanged mirror, and pushes through Git's configured credential helper. Export failure leaves the previous mirror intact. A push failure cannot affect Lantern writes. A user may schedule that explicit `-Push` command in Task Scheduler; this feature does not create or enable a scheduled task.
 
 The manifest omits machine paths and service URLs. `LANTERN_GIT_SOURCE_ID` may be set to a non-secret stable label to distinguish source stores; without it the manifest states that identity is unknown. The software revision is the Git commit of the exporter checkout, not a database revision.
 
