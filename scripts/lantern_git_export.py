@@ -208,7 +208,13 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
                 "preview": str(record.get("content", record.get("value", record.get("current_value", ""))))[:240],
             }
             index_rows["archived" if archived else "active"].append(row)
-            record_manifest.append({"path": path, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)})
+            git_blob_sha = hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
+            record_manifest.append({
+                "path": path,
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "git_blob_sha": git_blob_sha,
+                "bytes": len(data),
+            })
 
         index_dir = staged / "index"
         index_dir.mkdir()

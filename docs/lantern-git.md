@@ -6,7 +6,7 @@
 
 The exporter reads the existing local Lighting HTTP read endpoints and creates a complete staged generation under `mirror/`:
 
-- `manifest.json` records export format/version, UTC generation time, source Lantern software revision, optional operator-supplied source-store identity, per-type counts, per-record hashes, the UUID-to-path rule, and exclusions.
+- `manifest.json` records export format/version, UTC generation time, source Lantern software revision, optional operator-supplied source-store identity, per-type counts, per-record SHA-256 and Git blob hashes, the UUID-to-path rule, and exclusions.
 - `index/active.jsonl` and `index/archived.jsonl` are compact catalogs for connector search.
 - `records/{memory-item|claim|belief}/{active|archived}/{uuid-prefix}/{uuid-prefix}/{uuid}.md` contains one deterministic, searchable Markdown record with its allowlisted JSON representation.
 
@@ -34,4 +34,4 @@ The manifest omits machine paths and service URLs. `LANTERN_GIT_SOURCE_ID` may b
 
 The Lantern Keeper V2 skill uses native read tools first. If they are missing, it fetches `mirror/manifest.json` from the private GitHub connector and searches only `matthewjameswatkins1978-cyber/lantern-git`. GitHub connector search uses the repository default branch and may lag while a new repository is indexed; fetch-by-path can read a known file/ref directly. The manifest timestamp is the snapshot time, not a claim of live freshness. Treat exports older than 24 hours as stale for current-state answers. Every fallback answer must identify GitHub as transport and retain record IDs and provenance.
 
-GitHub is not a second memory authority. A mirror record is evidence copied from Lantern at a stated time; a missing or stale record is not proof of absence in Lantern.
+GitHub is not a second memory authority. A mirror record is evidence copied from Lantern at a stated time; a missing or stale record is not proof of absence in Lantern. The Git blob hash returned by connector fetch can be compared with the manifest's `git_blob_sha`; the exporter separately checks SHA-256 before replacing its local generation.
