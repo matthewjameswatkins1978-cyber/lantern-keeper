@@ -89,9 +89,13 @@
 
 - **Windows Scheduled Task Execution**:
   - Scheduled tasks `LanternKeeper-Service` and `LanternKeeper-Bridge` now execute via Windows Script Host (`wscript.exe //B //Nologo run-*.vbs`).
-  - VBS launchers use `WshShell.Run ..., 0, True` (`SW_HIDE` window style 0).
+  - VBS launchers use `WshShell.Run ..., 0, True` (`SW_HIDE` window style 0) with `Chr(34)` string quoting and exit code propagation.
   - Eliminates all flashing console, cmd.exe, PowerShell, and terminal windows during background 2-minute bridge polling cycles.
   - Environment variables (`LANTERN_BRIDGE_ALLOW_AGENTS=chatgpt-lucy,pi`, datastore paths) and log redirection (`service.log`, `bridge.log`) are strictly preserved.
+- **Live Headless Proof**:
+  - Runtime installed and registered with `wscript.exe //B //Nologo run-*.vbs`.
+  - Observed for over two complete scheduled intervals (13:40:13Z and 13:42:13Z).
+  - Confirmed: Zero interactive console windows appeared; `bridge.log` lines 522-527 recorded clean completion; `lantern-runtime.ps1 status` reported `Mutation Ready: YES (healthy)` with `Bridge Last Result: 0`.
 
 ## Controlled Transport Mutation-Readiness Tests
 
