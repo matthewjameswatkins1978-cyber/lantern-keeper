@@ -540,6 +540,8 @@ function Update-Runtime {
     try {
         Copy-Item -Path $newBinary -Destination $InstalledBinary -Force
         Install-Runtime-Files # Regenerate scripts with current parameters
+        Register-Service-Task
+        Register-Bridge-Task
         Start-Runtime
         Write-Host "==> Update successful and runtime restarted." -ForegroundColor Green
     } catch {
