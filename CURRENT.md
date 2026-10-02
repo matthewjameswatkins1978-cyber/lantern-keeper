@@ -23,7 +23,7 @@ Knowledge can influence reasoning, but it cannot create permission. AI-generated
 
 - Rust 1.98.1 / Edition 2024 workspace.
 - Embedded, versioned SurrealKV normal local store.
-- Optional SurrealDB 3.3.0-beta.4 remote lane.
+- Optional SurrealDB 3.3.0 remote lane.
 - Durable Source, Episode, Project, Claim, Belief, soft Memory Item, relation, Trace, Proposal, Predicate and Dimension foundations.
 - Exact evidence-linked factual capture before reconciliation.
 - Claim-to-Belief reconciliation with immutable revisions and lineage.

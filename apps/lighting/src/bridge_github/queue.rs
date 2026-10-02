@@ -52,6 +52,26 @@ pub struct BridgeStatusFile {
     pub last_terminal_error: Option<String>,
     pub lantern_reachable: bool,
     pub tethers_reachable: bool,
+    #[serde(default)]
+    pub authority_path_reachable: bool,
+    #[serde(default)]
+    pub tethers_engine_present: bool,
+    #[serde(default)]
+    pub mutation_ready: bool,
+    #[serde(default)]
+    pub last_receipt_outcome: Option<String>,
+    #[serde(default)]
+    pub lantern_version: Option<String>,
+    #[serde(default)]
+    pub datastore_mode: Option<String>,
+    #[serde(default)]
+    pub datastore_mode_observed: Option<String>,
+    #[serde(default)]
+    pub surrealdb_expected_version: Option<String>,
+    #[serde(default)]
+    pub surrealdb_observed_version: Option<String>,
+    #[serde(default)]
+    pub post_repo_valid: bool,
     pub mirror_last_generated_at: Option<String>,
 }
 
@@ -241,6 +261,42 @@ impl GitQueue {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn write_status_file(&self, status_file: &BridgeStatusFile) -> Result<(), QueueError> {
+        let status_dir = self.repo_path.join("status");
+        std::fs::create_dir_all(&status_dir)?;
+        let status_json = serde_json::to_string_pretty(status_file)?;
+        std::fs::write(status_dir.join("bridge.json"), status_json + "\n")?;
+        Ok(())
+    }
+
+    pub fn get_receipt(&self, intent_id: &str) -> Result<Option<Receipt>, QueueError> {
+        let path = format!("receipts/{intent_id}.json");
+        let content = self
+            .run_git(&["show", &format!("{RECEIPTS_BRANCH}:{path}")])
+            .or_else(|_| self.run_git(&["show", &format!("origin/{RECEIPTS_BRANCH}:{path}")]));
+
+        match content {
+            Ok(json_str) => {
+                let receipt: Receipt = serde_json::from_str(&json_str)?;
+                Ok(Some(receipt))
+            }
+            Err(_) => {
+                let file_path = self
+                    .repo_path
+                    .join("receipts")
+                    .join(format!("{intent_id}.json"));
+                if file_path.exists() {
+                    let s = std::fs::read_to_string(&file_path)?;
+                    let receipt: Receipt = serde_json::from_str(&s)?;
+                    Ok(Some(receipt))
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+    }
+
     pub fn write_receipts_and_status(
         &self,
         receipts: &[Receipt],
@@ -251,8 +307,8 @@ impl GitQueue {
             return Ok(None);
         }
 
-        // Checkout local receipts branch
-        self.run_git(&["checkout", RECEIPTS_BRANCH])?;
+        // Checkout local receipts branch with -f to avoid conflict with transient working files
+        self.run_git(&["checkout", "-f", RECEIPTS_BRANCH])?;
         // If tracking remote receipts, try fast-forward pull
         let _ = self.run_git(&["pull", "--ff-only", "origin", RECEIPTS_BRANCH]);
 
@@ -263,7 +319,23 @@ impl GitQueue {
 
         for receipt in receipts {
             let file_name = format!("{}.json", receipt.intent_id);
-            let target = receipts_dir.join(file_name);
+            let target = receipts_dir.join(&file_name);
+            if target.exists() {
+                let existing_str = std::fs::read_to_string(&target)?;
+                if let Ok(existing_receipt) = serde_json::from_str::<Receipt>(&existing_str) {
+                    if existing_receipt.status != receipt.status
+                        || existing_receipt.intent_commit != receipt.intent_commit
+                        || existing_receipt.lantern.as_ref().map(|l| &l.record_id)
+                            != receipt.lantern.as_ref().map(|l| &l.record_id)
+                    {
+                        return Err(QueueError::ForbiddenModification {
+                            commit: receipt.intent_commit.clone(),
+                            path: format!("receipts/{}", file_name),
+                        });
+                    }
+                    continue;
+                }
+            }
             let json = serde_json::to_string_pretty(receipt)?;
             std::fs::write(target, json + "\n")?;
         }

@@ -50,6 +50,7 @@ fn ca(repo: Arc<SurrealSourceRepository>) -> Router {
         epistemic_service: None,
         authority_service: None,
         dreamer_service: None,
+        ..AppState::default()
     };
     build_router(st)
 }

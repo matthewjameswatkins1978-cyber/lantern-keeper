@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod authority;
+pub mod bridge_intent;
 pub mod dreamer;
 pub mod epistemic;
 pub mod ledger;
@@ -24,6 +25,9 @@ pub use authority::{
     AuthenticationClass, AuthorityCheck, AuthorityDecision, AuthorityError, AuthorityGrant,
     AuthorityLedger, AuthorityRequest, AuthorityRevocation, AuthorityScope, DenyReason, Principal,
     PrincipalKind,
+};
+pub use bridge_intent::{
+    BridgeClaimResult, BridgeIntentRecord, BridgeIntentRepository, BridgeIntentRepositoryError,
 };
 pub use dreamer::{CandidateKind, DreamerCandidate, DreamerCandidateError, EvidenceReference};
 pub use epistemic::{

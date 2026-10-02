@@ -263,10 +263,67 @@ for _ in range(12):
 
 ---
 
-## 8. Windows Task Scheduler Automation
+## 8. Unified Windows Runtime Management (`lantern-runtime.ps1`)
 
-Three helper scripts are provided under `scripts/`:
+The production runtime lifecycle is managed by a single unified operator entrypoint: `scripts/lantern-runtime.ps1`.
 
-1. `scripts/install-bridge-task.ps1`: Registers a scheduled task `LanternGitHubBridge` running every 2 minutes.
-2. `scripts/status-bridge-task.ps1`: Checks current task state, last run time, and last exit code.
-3. `scripts/uninstall-bridge-task.ps1`: Safely stops and unregisters the scheduled task.
+### Commands
+
+```powershell
+# 1. Install release binary to runtime directory and register scheduled tasks
+.\scripts\lantern-runtime.ps1 install
+
+# 2. Start Lighting service and enable/trigger GitHub bridge task
+.\scripts\lantern-runtime.ps1 start
+
+# 3. Truthful measured status check (reports service, authority, bridge, mirror, and datastore)
+.\scripts\lantern-runtime.ps1 status
+.\scripts\lantern-runtime.ps1 status -Json
+
+# 4. Actionable doctor diagnostics
+.\scripts\lantern-runtime.ps1 doctor
+.\scripts\lantern-runtime.ps1 doctor -Json
+
+# 5. Clean restart (service ready check + bridge cycle)
+.\scripts\lantern-runtime.ps1 restart
+
+# 6. Controlled live update (builds in release, stops, swaps binary, restarts)
+.\scripts\lantern-runtime.ps1 update
+
+# 7. Stop running tasks and processes
+.\scripts\lantern-runtime.ps1 stop
+
+# 8. Safely uninstall scheduled tasks and runtime scripts (preserves datastore and logs)
+.\scripts\lantern-runtime.ps1 uninstall
+```
+
+### Runtime Layout (`.lighting-runtime/`)
+
+To decouple running production services from Cargo build artifacts (avoiding Windows file-lock errors during development and updates), the runtime lives under `.lighting-runtime/`:
+
+```text
+.lighting-runtime/
+    bin/
+        lighting.exe         # Installed release binary executed by tasks
+        run-service.cmd      # Service launcher with explicit env vars
+        run-bridge.cmd       # Bridge launcher with explicit authority and correct CLI syntax
+    state/
+        bridge-state.json    # Durable bridge poll/checkpoint state
+    logs/
+        service.log          # Lighting service stdout log
+        service.err.log      # Lighting service stderr log
+        bridge.log           # GitHub bridge cycle stdout log
+        bridge.err.log       # GitHub bridge cycle stderr log
+```
+
+### Scheduled Tasks
+
+- `LanternKeeper-Service`: Runs `run-service.cmd` at logon/startup, keeping `http://127.0.0.1:4317` continuously available without requiring an open terminal.
+- `LanternKeeper-Bridge`: Runs `run-bridge.cmd` every 2 minutes, passing `--service-url http://127.0.0.1:4317`, `--state-path`, and explicit authority (`LANTERN_BRIDGE_ALLOW_AGENTS=chatgpt-lucy,pi`).
+
+### Compatibility Wrappers
+
+For backward compatibility, the following scripts forward directly to `lantern-runtime.ps1`:
+- `scripts/install-bridge-task.ps1` -> `.\scripts\lantern-runtime.ps1 install`
+- `scripts/status-bridge-task.ps1`  -> `.\scripts\lantern-runtime.ps1 status`
+- `scripts/uninstall-bridge-task.ps1` -> `.\scripts\lantern-runtime.ps1 uninstall`

@@ -48,7 +48,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 Platform-specific helper scripts may exist under `scripts/`, but they are helpers, not the semantic authority for ordinary cross-platform validation.
 
-Embedded SurrealKV is the normal local path. The optional remote lane uses SurrealDB client/server 3.3.0-beta.4.
+Embedded SurrealKV is the normal local path. The optional remote lane uses SurrealDB client/server 3.3.0.
 
 ## Engineering rules
 

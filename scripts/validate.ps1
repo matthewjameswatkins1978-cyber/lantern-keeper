@@ -21,6 +21,10 @@ function Invoke-Step {
 
 Push-Location $ProjectRoot
 
+# Default credentials for local SurrealDB test lane if running
+if (-not $env:LIGHTING_SURREAL_USERNAME) { $env:LIGHTING_SURREAL_USERNAME = "root" }
+if (-not $env:LIGHTING_SURREAL_PASSWORD) { $env:LIGHTING_SURREAL_PASSWORD = "root" }
+
 try {
     Invoke-Step -Name "cargo fmt --check" -Action { cargo fmt --all -- --check }
     Invoke-Step -Name "cargo check" -Action { cargo check --locked --workspace --all-targets --all-features }

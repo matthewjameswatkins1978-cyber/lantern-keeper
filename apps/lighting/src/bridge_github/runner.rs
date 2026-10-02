@@ -75,6 +75,9 @@ impl BridgeRunner {
         let mut state = BridgeStateStore::load_or_create(&self.config.state_path)
             .context("failed to load durable bridge state")?;
 
+        // Reconcile with canonical datastore and durable receipts
+        self.reconcile_state(&mut state).await;
+
         // 4. Inspect inbox HEAD
         let inbox_head = match self.queue.get_inbox_head() {
             Ok(h) => h,
@@ -117,7 +120,50 @@ impl BridgeRunner {
         };
 
         if commits_to_process.is_empty() {
-            info!("No new inbox commits to process. Bridge is up to date.");
+            let (
+                lantern_reachable,
+                lantern_version,
+                datastore_mode_observed,
+                surrealdb_observed_version,
+            ) = self.probe_lantern().await;
+            let authority_path_reachable = self.tethers.probe_authority_path().await;
+            let tethers_engine_present = self.tethers.is_engine_available();
+            let mirror_gen_at = self.get_mirror_generated_at();
+            let post_repo_valid = self.config.post_repo_path.join(".git").exists();
+
+            let mutation_ready = lantern_reachable
+                && authority_path_reachable
+                && post_repo_valid
+                && state.data.last_terminal_error.is_none();
+
+            let status_file = BridgeStatusFile {
+                bridge_version: super::executor::BRIDGE_VERSION.to_string(),
+                last_cycle_at: Some(Utc::now().to_rfc3339()),
+                last_success_at: Some(Utc::now().to_rfc3339()),
+                last_processed_inbox_commit: state.data.last_processed_inbox_commit.clone(),
+                inbox_head: Some(inbox_head.clone()),
+                pending_count: 0,
+                last_terminal_error: None,
+                lantern_reachable,
+                tethers_reachable: authority_path_reachable,
+                authority_path_reachable,
+                tethers_engine_present,
+                mutation_ready,
+                last_receipt_outcome: state.get_last_receipt_outcome(),
+                lantern_version,
+                datastore_mode: Some("embedded-surrealkv".to_string()),
+                datastore_mode_observed,
+                surrealdb_expected_version: Some(crate::EXPECTED_SURREALDB_VERSION.to_string()),
+                surrealdb_observed_version,
+                post_repo_valid,
+                mirror_last_generated_at: mirror_gen_at,
+            };
+
+            let _ = self
+                .queue
+                .write_receipts_and_status(&[], &status_file, self.config.push);
+
+            info!("No new inbox commits to process. Bridge is up to date (status refreshed).");
             let _ = state.record_cycle(true, None);
             return Ok(());
         }
@@ -156,7 +202,7 @@ impl BridgeRunner {
 
             let receipt = self
                 .executor
-                .process_discovered_intent(&discovered, &mut state)
+                .process_discovered_intent(&discovered, &mut state, Some(&self.queue))
                 .await;
 
             info!(
@@ -176,21 +222,21 @@ impl BridgeRunner {
         }
 
         // 6. Write receipts and bridge status file
-        let mirror_gen_at = self.config.git_repo_path.as_ref().and_then(|p| {
-            let sf = p.join("mirror").join("status.json");
-            if sf.exists() {
-                std::fs::read_to_string(sf)
-                    .ok()
-                    .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
-                    .and_then(|j| {
-                        j.get("generated_at")
-                            .and_then(|s| s.as_str())
-                            .map(str::to_string)
-                    })
-            } else {
-                None
-            }
-        });
+        let (
+            lantern_reachable,
+            lantern_version,
+            datastore_mode_observed,
+            surrealdb_observed_version,
+        ) = self.probe_lantern().await;
+        let authority_path_reachable = self.tethers.probe_authority_path().await;
+        let tethers_engine_present = self.tethers.is_engine_available();
+        let mirror_gen_at = self.get_mirror_generated_at();
+        let post_repo_valid = self.config.post_repo_path.join(".git").exists();
+
+        let mutation_ready = lantern_reachable
+            && authority_path_reachable
+            && post_repo_valid
+            && state.data.last_terminal_error.is_none();
 
         let status_file = BridgeStatusFile {
             bridge_version: super::executor::BRIDGE_VERSION.to_string(),
@@ -200,8 +246,18 @@ impl BridgeRunner {
             inbox_head: Some(inbox_head.clone()),
             pending_count: 0,
             last_terminal_error: None,
-            lantern_reachable: true,
-            tethers_reachable: self.tethers.is_engine_available(),
+            lantern_reachable,
+            tethers_reachable: authority_path_reachable,
+            authority_path_reachable,
+            tethers_engine_present,
+            mutation_ready,
+            last_receipt_outcome: state.get_last_receipt_outcome(),
+            lantern_version,
+            datastore_mode: Some("embedded-surrealkv".to_string()),
+            datastore_mode_observed,
+            surrealdb_expected_version: Some(crate::EXPECTED_SURREALDB_VERSION.to_string()),
+            surrealdb_observed_version,
+            post_repo_valid,
             mirror_last_generated_at: mirror_gen_at,
         };
 
@@ -276,6 +332,67 @@ impl BridgeRunner {
         Ok(())
     }
 
+    async fn probe_lantern(&self) -> (bool, Option<String>, Option<String>, Option<String>) {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
+        let version_url = format!(
+            "{}/api/v1/version",
+            self.config.service_url.trim_end_matches('/')
+        );
+        match client.get(&version_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let j = resp.json::<serde_json::Value>().await.ok();
+                let v = j.as_ref().and_then(|j| {
+                    j.get("version")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string)
+                });
+                let ds = j.as_ref().and_then(|j| {
+                    j.get("datastore_mode")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string)
+                });
+                let sov = j.as_ref().and_then(|j| {
+                    j.get("surrealdb_observed_version")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string)
+                });
+                (true, v, ds, sov)
+            }
+            _ => (false, None, None, None),
+        }
+    }
+
+    fn get_mirror_generated_at(&self) -> Option<String> {
+        self.config.git_repo_path.as_ref().and_then(|p| {
+            let sf = p.join("mirror").join("status.json");
+            let mf = p.join("mirror").join("manifest.json");
+            if sf.exists() {
+                std::fs::read_to_string(sf)
+                    .ok()
+                    .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                    .and_then(|j| {
+                        j.get("generated_at")
+                            .and_then(|s| s.as_str())
+                            .map(str::to_string)
+                    })
+            } else if mf.exists() {
+                std::fs::read_to_string(mf)
+                    .ok()
+                    .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                    .and_then(|j| {
+                        j.get("generated_at")
+                            .and_then(|s| s.as_str())
+                            .map(str::to_string)
+                    })
+            } else {
+                None
+            }
+        })
+    }
+
     pub async fn refresh_mirror(mirror_repo: &Path, push: bool) -> Result<()> {
         let sync_script = Path::new("scripts").join("lantern_git_sync.ps1");
         let export_script = Path::new("scripts").join("lantern_git_export.py");
@@ -307,5 +424,106 @@ impl BridgeRunner {
         }
 
         Ok(())
+    }
+
+    pub async fn reconcile_state(&self, state: &mut BridgeStateStore) {
+        let url = format!(
+            "{}/api/v1/bridge/intents",
+            self.config.service_url.trim_end_matches('/')
+        );
+        let Ok(resp) = self.executor.client().get(&url).send().await else {
+            return;
+        };
+        if !resp.status().is_success() {
+            return;
+        }
+        let Ok(body) = resp.json::<serde_json::Value>().await else {
+            return;
+        };
+        let Some(intents) = body.get("intents").and_then(|v| v.as_array()) else {
+            return;
+        };
+
+        for item in intents {
+            let intent_id = item.get("intent_id").and_then(|v| v.as_str()).unwrap_or("");
+            let intent_commit = item
+                .get("intent_commit")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let canonical_digest = item
+                .get("canonical_digest")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let status_str = item.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            let lantern_record_id = item
+                .get("lantern_record_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let result_digest = item
+                .get("result_digest")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let processed_at_str = item
+                .get("processed_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let processed_at = chrono::DateTime::parse_from_rfc3339(processed_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            if intent_id.is_empty() {
+                continue;
+            }
+
+            let status = ReceiptStatus::parse(status_str);
+            let receipt = self.queue.get_receipt(intent_id).ok().flatten();
+
+            state.reconcile_record(
+                intent_id,
+                intent_commit,
+                canonical_digest,
+                status,
+                lantern_record_id,
+                result_digest,
+                receipt,
+                processed_at,
+            );
+        }
+
+        // If checkpoint is missing, advance to the highest ancestor commit among known processed intents
+        if state.data.last_processed_inbox_commit.is_none() {
+            let mut highest_commit: Option<String> = None;
+            for rec in state.data.idempotency.values() {
+                if !rec.intent_commit.is_empty()
+                    && (self
+                        .queue
+                        .is_ancestor(&rec.intent_commit, "inbox")
+                        .unwrap_or(false)
+                        || self
+                            .queue
+                            .is_ancestor(&rec.intent_commit, "origin/inbox")
+                            .unwrap_or(false))
+                {
+                    match &highest_commit {
+                        None => highest_commit = Some(rec.intent_commit.clone()),
+                        Some(current) => {
+                            if self
+                                .queue
+                                .is_ancestor(current, &rec.intent_commit)
+                                .unwrap_or(false)
+                            {
+                                highest_commit = Some(rec.intent_commit.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(h) = highest_commit {
+                info!(commit = %h, "Reconciled checkpoint from canonical intents history");
+                let _ = state.advance_checkpoint(&h);
+            }
+        }
+
+        let _ = state.save();
     }
 }
