@@ -678,6 +678,12 @@ async fn serve() -> anyhow::Result<()> {
         .migrate()
         .await
         .context("failed to apply durable receipt schema migration")?;
+    let bridge_intent_repo =
+        lighting_store_surreal::SurrealBridgeIntentRepository::new(store.clone());
+    bridge_intent_repo
+        .migrate()
+        .await
+        .context("failed to apply durable bridge intent schema migration")?;
 
     let trust_console = if env::var("LANTERN_TRUST_CONSOLE").ok().as_deref() == Some("1") {
         Some(
@@ -702,6 +708,8 @@ async fn serve() -> anyhow::Result<()> {
     let project_retrieval_service =
         ProjectRetrievalService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
     let memory_service = MemoryService::new(Arc::clone(&memory_repo));
+    let bridge_intent_service =
+        lighting_service::BridgeIntentService::new(Arc::new(bridge_intent_repo));
     let ledger_repo = SurrealLedgerRepository::new(store.clone());
     let ledger_service = LedgerService::new(Arc::new(ledger_repo));
     let epistemic_service = lighting_service::EpistemicService::new_with_evidence(
@@ -728,6 +736,7 @@ async fn serve() -> anyhow::Result<()> {
         project_retrieval_service: Some(project_retrieval_service),
         tethers_client,
         memory_service: Some(memory_service),
+        bridge_intent_service: Some(bridge_intent_service),
         ledger_service: Some(ledger_service),
         epistemic_service: Some(epistemic_service),
         authority_service: Some(authority_service),

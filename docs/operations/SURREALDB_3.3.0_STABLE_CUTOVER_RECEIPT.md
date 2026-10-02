@@ -23,7 +23,7 @@
 - **Pre-migration SurrealDB Version**: `3.3.0-beta.4` (workspace dependency `=3.3.0-beta.4`, engine `surrealdb 3.3.0-beta.4`)
 - **Post-migration Expected SurrealDB Version**: `3.3.0`
 - **Post-migration Observed SurrealDB Version**: `3.3.0` (authoritatively queried via database diagnostic and exposed via `GET /api/v1/version`)
-- **SurrealKV Version**: `0.7.2` (resolved in `Cargo.lock` from `surrealdb 3.3.0`)
+- **SurrealKV Version**: `0.21.4` (resolved in `Cargo.lock` from `surrealdb 3.3.0`)
 
 ## Pre-Cutover Backup & Verification
 
@@ -47,18 +47,20 @@
 - **Known Smoke-Test Record IDs**:
   - Prior Lucy Smoke Test Record: `6cc6947b-5d8a-4c14-a01c-327afd1ebdbf` (from intent `lucy-bridge-smoke-20261002-b`)
   - Post-Consolidation Smoke Test Record: `1d1eae88-b2e5-485d-af59-33f93db0fb9a` (from intent `lucy-bridge-smoke-20261002-consolidated`)
+  - Replay Duplicate Record (Superseded): `663e02d3-d650-419d-a5ca-4417598ed91d` (superseded at `2026-10-02T13:18:26.189432Z`; active recall confirmed 4 useful memories + 1 canonical consolidated smoke memory)
 
 ## Bridge Transport & Verification Evidence
 
 - **Authorized Mutation Cycle**:
   - **Intent**: `lucy-bridge-smoke-20261002-consolidated`
   - **Agent**: `chatgpt-lucy`
-  - **Inbox Commit**: `9dae9545084931a7c49045b3310cb2ee092ea205`
-  - **Receipt Commit**: `a3770e0ddaa0ae9666014ba73bca5860feea1b0d`
-  - **Mirror Commit**: `19d19a08254482262815366ecd140c4b442d241a`
+  - **Inbox Commit**: `b2675b1928a8ad42c3f6a3889d0f1285ab49df9a`
+  - **First Durable Receipt Commit**: `08dc4a0af1dd21d1166b158b9717f8057e9c65bf`
+  - **Restored Canonical Receipt Commit**: `9d505bd86498ff0c313264c91a03975ba69a5316`
+  - **Private Mirror Commit**: `4f6e977c0c16922a96a4b13a774ea088718a7b1d`
   - **Authority Decision**: `ALLOW`
   - **Receipt Status**: `APPLIED`
-  - **Lantern Memory Record**: `1d1eae88-b2e5-485d-af59-33f93db0fb9a`
+  - **Canonical Lantern Memory Record**: `1d1eae88-b2e5-485d-af59-33f93db0fb9a`
 - **Unauthorized Fail-Closed Cycle**:
   - **Intent**: `unauthorized-smoke-20261002-failclosed`
   - **Agent**: `malicious-actor`
@@ -67,6 +69,29 @@
   - **Authority Decision**: `DENY` (`UnauthorizedAgent: agent 'malicious-actor' not in allowlist`)
   - **Receipt Status**: `Skipped`
   - **Result**: Fail-closed enforced; zero records written to canonical memory; zero mirror pollution.
+
+## Discovered Replay Defect & Durable Idempotency Repair
+
+- **Discovered Defect**:
+  - Intent `lucy-bridge-smoke-20261002-consolidated` was executed once at `08dc4a0`, creating memory record `1d1eae88-b2e5-485d-af59-33f93db0fb9a`.
+  - When local `bridge-state.json` was absent/lost during subsequent test runs, execution relied only on local state and re-executed `POST /api/v1/memories`, creating duplicate active memory `663e02d3-d650-419d-a5ca-4417598ed91d` and overwriting the git receipt in `c9294ed`.
+- **Architectural Seam Repair (4-Layer Defense)**:
+  1. **Layer 1 (Git Receipts Immutability)**: `GitQueue::get_receipt` inspects `refs/heads/receipts:receipts/{intent_id}.json` directly from git object storage before any network or mutation call. `GitQueue::write_receipts_and_status` rejects conflicting modifications with `ForbiddenModification`.
+  2. **Layer 1.5 (Local State Cache)**: `BridgeStateStore` provides high-speed cache and detects tampering (canonical digest mismatch -> `SUSPECT`).
+  3. **Layer 2 (Canonical Datastore Idempotency Claim)**: Moved ultimate replay authority into SurrealDB (`bridge_intent` table, schema migration v11) with deterministic record ID `bridge_intent:<intent_id>`, unique constraints, and atomic check-and-claim API (`/api/v1/bridge/intents/claim`, `/complete`). An intent can be claimed at most once; replays return `Existing` with original record ID and zero mutation.
+  4. **Layer 3 (Startup State Reconciliation)**: `BridgeRunner::reconcile_state` reconciles local `bridge-state.json` from SurrealDB and git receipts, advancing the checkpoint commit to the highest ancestor among known processed intents.
+- **Historical Remediation**:
+  - Memory `663e02d3-d650-419d-a5ca-4417598ed91d` was superseded via `POST /api/v1/memories/663e02d3/supersede`.
+  - Canonical receipt in `lantern-post` was restored to point to `1d1eae88-b2e5-485d-af59-33f93db0fb9a` (commit `9d505bd`).
+  - Read-only mirror in `lantern-git` was refreshed and pushed (commit `4f6e977`).
+
+## Headless Windows Runtime Packaging
+
+- **Windows Scheduled Task Execution**:
+  - Scheduled tasks `LanternKeeper-Service` and `LanternKeeper-Bridge` now execute via Windows Script Host (`wscript.exe //B //Nologo run-*.vbs`).
+  - VBS launchers use `WshShell.Run ..., 0, True` (`SW_HIDE` window style 0).
+  - Eliminates all flashing console, cmd.exe, PowerShell, and terminal windows during background 2-minute bridge polling cycles.
+  - Environment variables (`LANTERN_BRIDGE_ALLOW_AGENTS=chatgpt-lucy,pi`, datastore paths) and log redirection (`service.log`, `bridge.log`) are strictly preserved.
 
 ## Controlled Transport Mutation-Readiness Tests
 

@@ -150,6 +150,38 @@ impl BridgeStateStore {
         self.save()
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn reconcile_record(
+        &mut self,
+        intent_id: &str,
+        intent_commit: &str,
+        canonical_digest: &str,
+        status: ReceiptStatus,
+        lantern_record_id: Option<String>,
+        lantern_result_sha256: Option<String>,
+        receipt: Option<Receipt>,
+        recorded_at: DateTime<Utc>,
+    ) {
+        self.data
+            .idempotency
+            .entry(intent_id.to_string())
+            .or_insert_with(|| IdempotencyRecord {
+                intent_id: intent_id.to_string(),
+                intent_commit: intent_commit.to_string(),
+                canonical_digest: canonical_digest.to_string(),
+                status,
+                phase: if status == ReceiptStatus::Applied {
+                    ProcessingPhase::Applied
+                } else {
+                    ProcessingPhase::TerminalReceiptRecorded
+                },
+                receipt,
+                lantern_record_id,
+                lantern_result_sha256,
+                recorded_at,
+            });
+    }
+
     pub fn advance_checkpoint(&mut self, commit: &str) -> Result<(), StateError> {
         self.data.last_processed_inbox_commit = Some(commit.to_string());
         self.data.last_success_at = Some(Utc::now());

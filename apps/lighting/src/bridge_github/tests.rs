@@ -222,6 +222,24 @@ async fn test_executor_tethers_allow_ask_deny_unavailable() {
                     "hash": "sha256:mem123"
                 }))
             }),
+        )
+        .route(
+            "/api/v1/bridge/intents/claim",
+            post(|Json(req): Json<serde_json::Value>| async move {
+                Json(json!({
+                    "outcome": "claimed",
+                    "record": {
+                        "intent_id": req.get("intent_id").unwrap_or(&json!("")),
+                        "status": "CLAIMED",
+                    }
+                }))
+            }),
+        )
+        .route(
+            "/api/v1/bridge/intents/complete",
+            post(
+                |Json(req): Json<serde_json::Value>| async move { Json(json!({ "intent": req })) },
+            ),
         );
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -249,7 +267,7 @@ async fn test_executor_tethers_allow_ask_deny_unavailable() {
         intent_raw_json: serde_json::to_string(&intent_allow).unwrap(),
     };
     let receipt_allow = executor
-        .process_discovered_intent(&discovered_allow, &mut state)
+        .process_discovered_intent(&discovered_allow, &mut state, None)
         .await;
     assert_eq!(receipt_allow.status, ReceiptStatus::Applied);
     assert_eq!(receipt_allow.authority.decision, "ALLOW");
@@ -269,7 +287,7 @@ async fn test_executor_tethers_allow_ask_deny_unavailable() {
         intent_raw_json: serde_json::to_string(&intent_ask).unwrap(),
     };
     let receipt_ask = executor
-        .process_discovered_intent(&discovered_ask, &mut state)
+        .process_discovered_intent(&discovered_ask, &mut state, None)
         .await;
     assert_eq!(receipt_ask.status, ReceiptStatus::RequiresApproval);
     assert_eq!(receipt_ask.authority.decision, "ASK");
@@ -296,7 +314,7 @@ async fn test_executor_tethers_allow_ask_deny_unavailable() {
         intent_raw_json: serde_json::to_string(&intent_deny).unwrap(),
     };
     let receipt_deny = executor
-        .process_discovered_intent(&discovered_deny, &mut state)
+        .process_discovered_intent(&discovered_deny, &mut state, None)
         .await;
     assert_eq!(receipt_deny.status, ReceiptStatus::Denied);
     assert_eq!(receipt_deny.authority.decision, "DENY");
@@ -319,7 +337,7 @@ async fn test_executor_tethers_allow_ask_deny_unavailable() {
         intent_raw_json: serde_json::to_string(&intent_unavail).unwrap(),
     };
     let receipt_unavail = dead_executor
-        .process_discovered_intent(&discovered_unavail, &mut state)
+        .process_discovered_intent(&discovered_unavail, &mut state, None)
         .await;
     assert_eq!(receipt_unavail.status, ReceiptStatus::Denied);
     assert_eq!(receipt_unavail.authority.decision, "DENY");
@@ -360,6 +378,24 @@ async fn test_executor_observed_hash_precondition_conflict() {
                     }]
                 }))
             }),
+        )
+        .route(
+            "/api/v1/bridge/intents/claim",
+            post(|Json(req): Json<serde_json::Value>| async move {
+                Json(json!({
+                    "outcome": "claimed",
+                    "record": {
+                        "intent_id": req.get("intent_id").unwrap_or(&json!("")),
+                        "status": "CLAIMED",
+                    }
+                }))
+            }),
+        )
+        .route(
+            "/api/v1/bridge/intents/complete",
+            post(
+                |Json(req): Json<serde_json::Value>| async move { Json(json!({ "intent": req })) },
+            ),
         );
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -397,7 +433,7 @@ async fn test_executor_observed_hash_precondition_conflict() {
     };
 
     let receipt = executor
-        .process_discovered_intent(&discovered, &mut state)
+        .process_discovered_intent(&discovered, &mut state, None)
         .await;
     assert_eq!(receipt.status, ReceiptStatus::Conflict);
     let err_str = receipt.error.unwrap();
@@ -412,6 +448,12 @@ async fn test_executor_idempotency_crash_seam_and_tamper() {
 
     let server_called = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let server_called_clone = Arc::clone(&server_called);
+
+    let canonical_intents: Arc<
+        tokio::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>,
+    > = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+    let canonical_claim = Arc::clone(&canonical_intents);
+    let canonical_complete = Arc::clone(&canonical_intents);
 
     let app = Router::new()
         .route(
@@ -434,6 +476,48 @@ async fn test_executor_idempotency_crash_seam_and_tamper() {
                         "content": "Original idempotent memory",
                         "status": "active"
                     }))
+                }
+            }),
+        )
+        .route(
+            "/api/v1/bridge/intents/claim",
+            post(move |Json(req): Json<serde_json::Value>| {
+                let store = Arc::clone(&canonical_claim);
+                async move {
+                    let intent_id = req["intent_id"].as_str().unwrap().to_string();
+                    let canonical_digest = req["canonical_digest"].as_str().unwrap().to_string();
+                    let mut map = store.lock().await;
+                    if let Some(existing) = map.get(&intent_id) {
+                        let existing_digest = existing["canonical_digest"].as_str().unwrap();
+                        if existing_digest != canonical_digest {
+                            // Digest mismatch on replay -> tamper detected
+                            return Json(json!({
+                                "outcome": "conflict",
+                                "existing_digest": existing_digest,
+                                "incoming_digest": canonical_digest
+                            }));
+                        }
+                        Json(json!({ "outcome": "existing", "record": existing }))
+                    } else {
+                        map.insert(intent_id, req.clone());
+                        Json(json!({ "outcome": "claimed", "record": req }))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/api/v1/bridge/intents/complete",
+            post(move |Json(req): Json<serde_json::Value>| {
+                let store = Arc::clone(&canonical_complete);
+                async move {
+                    let intent_id = req["intent_id"].as_str().unwrap().to_string();
+                    let mut map = store.lock().await;
+                    if let Some(rec) = map.get_mut(&intent_id) {
+                        rec["status"] = json!(req["status"].as_str().unwrap());
+                        rec["lantern_record_id"] = req["lantern_record_id"].clone();
+                        rec["result_digest"] = req["result_digest"].clone();
+                    }
+                    Json(json!({ "intent": req }))
                 }
             }),
         );
@@ -463,9 +547,9 @@ async fn test_executor_idempotency_crash_seam_and_tamper() {
         intent_raw_json: serde_json::to_string(&intent_orig).unwrap(),
     };
 
-    // First execution: mutates Lantern
+    // First execution: mutates Lantern and stores in canonical datastore
     let receipt1 = executor
-        .process_discovered_intent(&discovered, &mut state)
+        .process_discovered_intent(&discovered, &mut state, None)
         .await;
     assert_eq!(receipt1.status, ReceiptStatus::Applied);
     assert_eq!(
@@ -475,15 +559,36 @@ async fn test_executor_idempotency_crash_seam_and_tamper() {
     );
 
     // Simulate crash after mutation before receipt was pushed.
-    // On reboot/replay of the same intent:
+    // On reboot/replay of the same intent with surviving local state:
     let receipt2 = executor
-        .process_discovered_intent(&discovered, &mut state)
+        .process_discovered_intent(&discovered, &mut state, None)
         .await;
     assert_eq!(receipt2.status, ReceiptStatus::Applied);
     assert_eq!(
         server_called.load(std::sync::atomic::Ordering::SeqCst),
         1,
-        "Lantern mutation endpoint MUST NOT be called again (crash seam idempotency)"
+        "Lantern mutation endpoint MUST NOT be called again (surviving local state)"
+    );
+
+    // CRASH SEAM REPLAY: Simulate complete loss of local state (state deleted, new machine, state path changed)
+    let state_path_wiped = temp.path().join("state_wiped.json");
+    let mut state_wiped = BridgeStateStore::load_or_create(&state_path_wiped).unwrap();
+    let receipt3 = executor
+        .process_discovered_intent(&discovered, &mut state_wiped, None)
+        .await;
+    assert_eq!(receipt3.status, ReceiptStatus::Applied);
+    assert_eq!(
+        receipt3
+            .lantern
+            .as_ref()
+            .and_then(|l| l.record_id.as_deref()),
+        Some("019323ef-6258-75b2-a42e-13c2f0fcf6d6"),
+        "Original Lantern record ID must be preserved even when local state was lost"
+    );
+    assert_eq!(
+        server_called.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "Lantern mutation endpoint MUST NOT be called again when local state was lost (canonical idempotency)"
     );
 
     // Now test tampering: same intent_id, but payload modified!
@@ -502,7 +607,7 @@ async fn test_executor_idempotency_crash_seam_and_tamper() {
     };
 
     let receipt_tampered = executor
-        .process_discovered_intent(&discovered_tampered, &mut state)
+        .process_discovered_intent(&discovered_tampered, &mut state, None)
         .await;
     assert_eq!(receipt_tampered.status, ReceiptStatus::Suspect);
     assert!(
@@ -515,6 +620,19 @@ async fn test_executor_idempotency_crash_seam_and_tamper() {
         server_called.load(std::sync::atomic::Ordering::SeqCst),
         1,
         "Lantern mutation endpoint MUST NOT be called for tampered replay"
+    );
+
+    // Tampered replay when local state is lost (canonical datastore catches digest mismatch)
+    let state_path_wiped2 = temp.path().join("state_wiped2.json");
+    let mut state_wiped2 = BridgeStateStore::load_or_create(&state_path_wiped2).unwrap();
+    let receipt_tampered2 = executor
+        .process_discovered_intent(&discovered_tampered, &mut state_wiped2, None)
+        .await;
+    assert_eq!(receipt_tampered2.status, ReceiptStatus::Suspect);
+    assert_eq!(
+        server_called.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "Lantern mutation endpoint MUST NOT be called for tampered replay even when local state is lost"
     );
 }
 
@@ -549,7 +667,7 @@ async fn test_memory_reinforce_is_explicitly_disabled() {
     };
 
     let receipt = executor
-        .process_discovered_intent(&discovered, &mut state)
+        .process_discovered_intent(&discovered, &mut state, None)
         .await;
     assert_eq!(receipt.status, ReceiptStatus::Denied);
     assert!(

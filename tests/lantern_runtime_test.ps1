@@ -55,6 +55,8 @@ try {
     $installedBin = Join-Path $TestRuntimeDir "bin\lighting.exe"
     $bridgeCmd = Join-Path $TestRuntimeDir "bin\run-bridge.cmd"
     $serviceCmd = Join-Path $TestRuntimeDir "bin\run-service.cmd"
+    $bridgeVbs = Join-Path $TestRuntimeDir "bin\run-bridge.vbs"
+    $serviceVbs = Join-Path $TestRuntimeDir "bin\run-service.vbs"
 
     if (-not (Test-Path $installedBin)) {
         throw "ASSERTION FAILED: Installed binary does not exist at $installedBin"
@@ -63,6 +65,20 @@ try {
         throw "ASSERTION FAILED: Installed binary is pointing to target\debug!"
     }
     Write-Host "  -> Verified binary installed to runtime location separate from Cargo build output." -ForegroundColor Green
+
+    # Inspect VBS wrapper generation for headless execution
+    if (-not (Test-Path $bridgeVbs) -or -not (Test-Path $serviceVbs)) {
+        throw "ASSERTION FAILED: Headless VBS wrappers ($bridgeVbs, $serviceVbs) were not created!"
+    }
+    $bridgeVbsContent = Get-Content $bridgeVbs -Raw
+    if ($bridgeVbsContent -notmatch 'WshShell\.Run.*0,\s*True') {
+        throw "ASSERTION FAILED: Bridge VBS does not run cmd hidden with window style 0!"
+    }
+    $serviceVbsContent = Get-Content $serviceVbs -Raw
+    if ($serviceVbsContent -notmatch 'WshShell\.Run.*0,\s*True') {
+        throw "ASSERTION FAILED: Service VBS does not run cmd hidden with window style 0!"
+    }
+    Write-Host "  -> Verified headless VBS wrappers generated with window style 0 (SW_HIDE)." -ForegroundColor Green
 
     # Inspect bridge script content
     $bridgeContent = Get-Content $bridgeCmd -Raw
@@ -89,7 +105,7 @@ try {
     Write-Host "  -> Verified service script sets storage and datastore path." -ForegroundColor Green
 
     # Test 2: Idempotency (running install again should update cleanly without duplicate tasks)
-    Write-Host "[Test 2] Testing installer idempotency..." -ForegroundColor Yellow
+    Write-Host "[Test 2] Testing installer idempotency and headless task registration..." -ForegroundColor Yellow
     & $RuntimeScript install `
         -ServiceTaskName $testServiceTask `
         -BridgeTaskName $testBridgeTask `
@@ -104,11 +120,18 @@ try {
     if (@($svcTasks).Count -ne 1) {
         throw "ASSERTION FAILED: Expected exactly 1 service task, found $(@($svcTasks).Count)"
     }
+    if ($svcTasks.Actions[0].Execute -notmatch "wscript\.exe" -or $svcTasks.Actions[0].Arguments -notmatch "run-service\.vbs") {
+        throw "ASSERTION FAILED: Service task action is not headless wscript.exe run-service.vbs! Action: $($svcTasks.Actions[0].Execute) $($svcTasks.Actions[0].Arguments)"
+    }
+
     $brTasks = Get-ScheduledTask -TaskName $testBridgeTask -ErrorAction SilentlyContinue
     if (@($brTasks).Count -ne 1) {
         throw "ASSERTION FAILED: Expected exactly 1 bridge task, found $(@($brTasks).Count)"
     }
-    Write-Host "  -> Verified install is idempotent and does not create duplicate tasks." -ForegroundColor Green
+    if ($brTasks.Actions[0].Execute -notmatch "wscript\.exe" -or $brTasks.Actions[0].Arguments -notmatch "run-bridge\.vbs") {
+        throw "ASSERTION FAILED: Bridge task action is not headless wscript.exe run-bridge.vbs! Action: $($brTasks.Actions[0].Execute) $($brTasks.Actions[0].Arguments)"
+    }
+    Write-Host "  -> Verified install is idempotent and tasks are registered headlessly via wscript.exe." -ForegroundColor Green
 
     # Test 3: Status command produces valid JSON
     Write-Host "[Test 3] Testing status reporting..." -ForegroundColor Yellow

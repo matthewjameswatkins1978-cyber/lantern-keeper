@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::authority_ops::AuthorityService;
+use crate::bridge_intent_ops::BridgeIntentService;
 use crate::dreamer_ops::DreamerService;
 use crate::episode_association_ops::EpisodeAssociationService;
 use crate::episode_ops::EpisodeService;
@@ -26,6 +27,7 @@ pub struct AppState {
     pub project_retrieval_service: Option<ProjectRetrievalService>,
     pub tethers_client: Option<TethersEngineClient>,
     pub memory_service: Option<MemoryService>,
+    pub bridge_intent_service: Option<BridgeIntentService>,
     pub ledger_service: Option<LedgerService>,
     pub epistemic_service: Option<EpistemicService>,
     pub authority_service: Option<AuthorityService>,
@@ -48,6 +50,7 @@ impl AppState {
             project_retrieval_service: None,
             tethers_client: None,
             memory_service: None,
+            bridge_intent_service: None,
             ledger_service: None,
             epistemic_service: None,
             authority_service: None,

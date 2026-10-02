@@ -75,6 +75,9 @@ impl BridgeRunner {
         let mut state = BridgeStateStore::load_or_create(&self.config.state_path)
             .context("failed to load durable bridge state")?;
 
+        // Reconcile with canonical datastore and durable receipts
+        self.reconcile_state(&mut state).await;
+
         // 4. Inspect inbox HEAD
         let inbox_head = match self.queue.get_inbox_head() {
             Ok(h) => h,
@@ -199,7 +202,7 @@ impl BridgeRunner {
 
             let receipt = self
                 .executor
-                .process_discovered_intent(&discovered, &mut state)
+                .process_discovered_intent(&discovered, &mut state, Some(&self.queue))
                 .await;
 
             info!(
@@ -421,5 +424,106 @@ impl BridgeRunner {
         }
 
         Ok(())
+    }
+
+    pub async fn reconcile_state(&self, state: &mut BridgeStateStore) {
+        let url = format!(
+            "{}/api/v1/bridge/intents",
+            self.config.service_url.trim_end_matches('/')
+        );
+        let Ok(resp) = self.executor.client().get(&url).send().await else {
+            return;
+        };
+        if !resp.status().is_success() {
+            return;
+        }
+        let Ok(body) = resp.json::<serde_json::Value>().await else {
+            return;
+        };
+        let Some(intents) = body.get("intents").and_then(|v| v.as_array()) else {
+            return;
+        };
+
+        for item in intents {
+            let intent_id = item.get("intent_id").and_then(|v| v.as_str()).unwrap_or("");
+            let intent_commit = item
+                .get("intent_commit")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let canonical_digest = item
+                .get("canonical_digest")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let status_str = item.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            let lantern_record_id = item
+                .get("lantern_record_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let result_digest = item
+                .get("result_digest")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let processed_at_str = item
+                .get("processed_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let processed_at = chrono::DateTime::parse_from_rfc3339(processed_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            if intent_id.is_empty() {
+                continue;
+            }
+
+            let status = ReceiptStatus::parse(status_str);
+            let receipt = self.queue.get_receipt(intent_id).ok().flatten();
+
+            state.reconcile_record(
+                intent_id,
+                intent_commit,
+                canonical_digest,
+                status,
+                lantern_record_id,
+                result_digest,
+                receipt,
+                processed_at,
+            );
+        }
+
+        // If checkpoint is missing, advance to the highest ancestor commit among known processed intents
+        if state.data.last_processed_inbox_commit.is_none() {
+            let mut highest_commit: Option<String> = None;
+            for rec in state.data.idempotency.values() {
+                if !rec.intent_commit.is_empty()
+                    && (self
+                        .queue
+                        .is_ancestor(&rec.intent_commit, "inbox")
+                        .unwrap_or(false)
+                        || self
+                            .queue
+                            .is_ancestor(&rec.intent_commit, "origin/inbox")
+                            .unwrap_or(false))
+                {
+                    match &highest_commit {
+                        None => highest_commit = Some(rec.intent_commit.clone()),
+                        Some(current) => {
+                            if self
+                                .queue
+                                .is_ancestor(current, &rec.intent_commit)
+                                .unwrap_or(false)
+                            {
+                                highest_commit = Some(rec.intent_commit.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(h) = highest_commit {
+                info!(commit = %h, "Reconciled checkpoint from canonical intents history");
+                let _ = state.advance_checkpoint(&h);
+            }
+        }
+
+        let _ = state.save();
     }
 }

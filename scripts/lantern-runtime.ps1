@@ -58,6 +58,8 @@ $ConfigDir = Join-Path $RuntimeDir "config"
 $InstalledBinary = Join-Path $BinDir "lighting.exe"
 $ServiceScript = Join-Path $BinDir "run-service.cmd"
 $BridgeScript = Join-Path $BinDir "run-bridge.cmd"
+$ServiceVbs = Join-Path $BinDir "run-service.vbs"
+$BridgeVbs = Join-Path $BinDir "run-bridge.vbs"
 $ServiceLog = Join-Path $LogsDir "service.log"
 $ServiceErrLog = Join-Path $LogsDir "service.err.log"
 $BridgeLog = Join-Path $LogsDir "bridge.log"
@@ -144,16 +146,30 @@ set LANTERN_BRIDGE_STATE_PATH=$RuntimeDir\bridge-state.json
 "$InstalledBinary" --service-url $ServiceUrl bridge github once --post-repo "$PostRepo" --git-repo "$GitRepo" --state-path "$RuntimeDir\bridge-state.json"$pushFlag >> "$BridgeLog" 2>> "$BridgeErrLog"
 "@
     Set-Content -Path $BridgeScript -Value $bridgeContent -Encoding ASCII -Force
+
+    # Generate run-service.vbs (Headless Windows Script Host runner, zero console popup)
+    $serviceVbsContent = @"
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run "cmd.exe /c `"$ServiceScript`"", 0, True
+"@
+    Set-Content -Path $ServiceVbs -Value $serviceVbsContent -Encoding ASCII -Force
+
+    # Generate run-bridge.vbs (Headless Windows Script Host runner, zero console popup)
+    $bridgeVbsContent = @"
+Set WshShell = CreateObject("WScript.Shell")
+WScript.Quit WshShell.Run("cmd.exe /c `"$BridgeScript`"", 0, True)
+"@
+    Set-Content -Path $BridgeVbs -Value $bridgeVbsContent -Encoding ASCII -Force
 }
 
 function Register-Service-Task {
-    Write-Host "==> Registering Windows Scheduled Task: $ServiceTaskName..." -ForegroundColor Cyan
+    Write-Host "==> Registering Windows Scheduled Task: $ServiceTaskName (Headless)..." -ForegroundColor Cyan
     
     # Clean up legacy task names if present
     Get-ScheduledTask -TaskName "LightingService" -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false
 
     $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$ServiceScript`"" -WorkingDirectory $ProjectRoot
+    $action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "//B //Nologo `"$ServiceVbs`"" -WorkingDirectory $BinDir
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 
@@ -162,12 +178,12 @@ function Register-Service-Task {
 }
 
 function Register-Bridge-Task {
-    Write-Host "==> Registering Windows Scheduled Task: $BridgeTaskName..." -ForegroundColor Cyan
+    Write-Host "==> Registering Windows Scheduled Task: $BridgeTaskName (Headless)..." -ForegroundColor Cyan
 
     # Clean up legacy task name if present
     Get-ScheduledTask -TaskName "LanternGitHubBridge" -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false
 
-    $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$BridgeScript`"" -WorkingDirectory $ProjectRoot
+    $action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "//B //Nologo `"$BridgeVbs`"" -WorkingDirectory $BinDir
     $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $BridgeIntervalMinutes)
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 
@@ -204,7 +220,7 @@ function Start-Runtime {
         Start-ScheduledTask -TaskName $ServiceTaskName
     } else {
         Write-Warning "Task $ServiceTaskName is not registered. Starting via background process..."
-        Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$ServiceScript`"" -WindowStyle Hidden
+        Start-Process -FilePath "wscript.exe" -ArgumentList "//B //Nologo `"$ServiceVbs`"" -WorkingDirectory $BinDir -WindowStyle Hidden
     }
 
     $healthy = Wait-For-Service-Healthy -TimeoutSeconds 15
