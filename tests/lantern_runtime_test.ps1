@@ -80,6 +80,13 @@ try {
     }
     Write-Host "  -> Verified headless VBS wrappers generated with window style 0 (SW_HIDE)." -ForegroundColor Green
 
+    # Validate VBScript compilation syntax
+    $bridgeSyntaxCheck = & cscript.exe //NoLogo $bridgeVbs 2>&1
+    if ($bridgeSyntaxCheck -match "compilation error" -or $bridgeSyntaxCheck -match "syntax error") {
+        throw "ASSERTION FAILED: Bridge VBScript compilation error: $bridgeSyntaxCheck"
+    }
+    Write-Host "  -> Verified headless VBS wrappers pass VBScript syntax and compilation validation." -ForegroundColor Green
+
     # Inspect bridge script content
     $bridgeContent = Get-Content $bridgeCmd -Raw
     if ($bridgeContent -notmatch "set LANTERN_BRIDGE_ALLOW_AGENTS=chatgpt-lucy,pi") {

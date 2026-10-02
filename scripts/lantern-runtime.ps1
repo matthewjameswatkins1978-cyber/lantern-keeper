@@ -150,14 +150,14 @@ set LANTERN_BRIDGE_STATE_PATH=$RuntimeDir\bridge-state.json
     # Generate run-service.vbs (Headless Windows Script Host runner, zero console popup)
     $serviceVbsContent = @"
 Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "cmd.exe /c `"$ServiceScript`"", 0, True
+WshShell.Run "cmd.exe /c " & Chr(34) & "$ServiceScript" & Chr(34), 0, True
 "@
     Set-Content -Path $ServiceVbs -Value $serviceVbsContent -Encoding ASCII -Force
 
     # Generate run-bridge.vbs (Headless Windows Script Host runner, zero console popup)
     $bridgeVbsContent = @"
 Set WshShell = CreateObject("WScript.Shell")
-WScript.Quit WshShell.Run("cmd.exe /c `"$BridgeScript`"", 0, True)
+WScript.Quit WshShell.Run("cmd.exe /c " & Chr(34) & "$BridgeScript" & Chr(34), 0, True)
 "@
     Set-Content -Path $BridgeVbs -Value $bridgeVbsContent -Encoding ASCII -Force
 }
