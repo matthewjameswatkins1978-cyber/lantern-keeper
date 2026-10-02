@@ -1,0 +1,16 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "lantern": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["__PLUGIN_DIR__/server/lantern-readonly.mjs"],
+      "cwd": "__LANTERN_KEEPER_ROOT__",
+      "env": {
+        "LIGHTING_BINARY": "__LANTERN_KEEPER_ROOT__/target/debug/lighting.exe",
+        "LIGHTING_CWD": "__LANTERN_KEEPER_ROOT__",
+        "LIGHTING_SERVICE_URL": "http://127.0.0.1:4317"
+      }
+    }
+  }
+}

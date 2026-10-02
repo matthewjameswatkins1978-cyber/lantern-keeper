@@ -1,0 +1,18 @@
+[
+  {"id":"project-current-state","prompt":"Where are we with Terror Bats?","route":"consult","reason":"Asks for Matthew-specific project state."},
+  {"id":"prior-decision","prompt":"What did we decide about Sartorial presets?","route":"consult","reason":"Requires a prior project decision."},
+  {"id":"continue-work","prompt":"Continue Lantern Keeper from where we left it.","route":"consult","reason":"Continuation depends on earlier work."},
+  {"id":"prior-agent-investigation","prompt":"Didn't Luna already investigate this?","route":"consult","reason":"Asks about work in another agent session."},
+  {"id":"accepted-baseline","prompt":"What's the current accepted baseline for Pi To Rule Them All?","route":"consult","reason":"Asks for an established project baseline."},
+  {"id":"explicit-lantern-nudge","prompt":"🏮 what did we decide about GitHub receipts?","route":"consult","reason":"The explicit signal requests Lantern retrieval."},
+  {"id":"general-high-pass-filter","prompt":"Explain a high-pass filter.","route":"skip","reason":"General knowledge has no Matthew-specific historical dependency."},
+  {"id":"rewrite","prompt":"Rewrite this paragraph.","route":"skip","reason":"An ordinary rewrite does not require project history."},
+  {"id":"arithmetic","prompt":"What's 15 × 17?","route":"skip","reason":"Arithmetic does not depend on project history."},
+  {"id":"music-trivia","prompt":"Who played guitar on Station to Station?","route":"skip","reason":"Unrelated general knowledge."},
+  {"id":"generic-concurrency","prompt":"Explain optimistic concurrency control.","route":"skip","reason":"Generic explanation is not applied to Matthew's project."},
+  {"id":"project-concurrency","prompt":"How should we implement optimistic concurrency in Lantern?","route":"consult","reason":"Applies a general topic to established Lantern work."},
+  {"id":"explicit-create","prompt":"Put this decision in Lantern.","route":"write","reason":"Explicit persistent mutation request; identify content from conversation."},
+  {"id":"casual-no-write","prompt":"That's interesting.","route":"no-write","reason":"No persistence intent."},
+  {"id":"save-contextual","prompt":"Save that.","route":"write-if-clear","context":"The immediately preceding assistant message contains one specific decision.","reason":"Resolve the referent from conversation; ask only if genuinely ambiguous."},
+  {"id":"save-ambiguous","prompt":"Save that.","route":"clarify-if-ambiguous","context":"Several unrelated decisions were just discussed and no target is clear.","reason":"Do not invent which content the user meant."}
+]
