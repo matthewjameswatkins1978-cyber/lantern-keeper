@@ -19,6 +19,10 @@ async fn connects_initialises_schema_and_runs_health_check() {
     let mut config = StoreConfig::from_env();
     config.storage = "remote-surreal".to_owned();
     config.database = format!("lighting_test_{}", Uuid::new_v4().simple());
+    if config.username.is_empty() {
+        config.username = "root".to_owned();
+        config.password = "root".to_owned();
+    }
 
     let store = SurrealStore::connect(&config)
         .await

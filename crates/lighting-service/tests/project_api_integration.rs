@@ -50,6 +50,7 @@ async fn app_with_source() -> Router {
         epistemic_service: None,
         authority_service: None,
         dreamer_service: None,
+        ..AppState::default()
     };
     build_router(st)
 }
@@ -81,6 +82,7 @@ async fn app() -> Router {
         epistemic_service: None,
         authority_service: None,
         dreamer_service: None,
+        ..AppState::default()
     };
     build_router(st)
 }
@@ -196,6 +198,7 @@ async fn project_survives_fresh_connection() {
         epistemic_service: None,
         authority_service: None,
         dreamer_service: None,
+        ..AppState::default()
     });
     let pr = a1
         .oneshot(
@@ -238,6 +241,7 @@ async fn project_survives_fresh_connection() {
         epistemic_service: None,
         authority_service: None,
         dreamer_service: None,
+        ..AppState::default()
     });
     let gr = a2
         .oneshot(

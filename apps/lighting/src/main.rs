@@ -716,6 +716,7 @@ async fn serve() -> anyhow::Result<()> {
             return Err(error).context("failed to configure Tethers engine client");
         }
     };
+    let server_version = store.server_version().await.ok().flatten();
     let app_state = AppState {
         ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         source_service: Some(source_service),
@@ -734,6 +735,9 @@ async fn serve() -> anyhow::Result<()> {
             .ok()
             .and_then(|_| lighting_service::NebiusDreamer::from_env().ok())
             .map(|provider| lighting_service::DreamerService::new(std::sync::Arc::new(provider))),
+        datastore_mode: Some(store_config.storage.clone()),
+        surrealdb_expected_version: EXPECTED_SURREALDB_VERSION,
+        surrealdb_observed_version: server_version,
     };
     app_state.mark_ready();
 

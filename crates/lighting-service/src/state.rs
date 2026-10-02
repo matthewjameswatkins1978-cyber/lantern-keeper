@@ -30,6 +30,9 @@ pub struct AppState {
     pub epistemic_service: Option<EpistemicService>,
     pub authority_service: Option<AuthorityService>,
     pub dreamer_service: Option<DreamerService>,
+    pub datastore_mode: Option<String>,
+    pub surrealdb_expected_version: &'static str,
+    pub surrealdb_observed_version: Option<String>,
 }
 
 impl AppState {
@@ -49,6 +52,9 @@ impl AppState {
             epistemic_service: None,
             authority_service: None,
             dreamer_service: None,
+            datastore_mode: None,
+            surrealdb_expected_version: "3.3.0",
+            surrealdb_observed_version: None,
         }
     }
 

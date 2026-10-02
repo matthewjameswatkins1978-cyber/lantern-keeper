@@ -65,7 +65,13 @@ pub struct BridgeStatusFile {
     #[serde(default)]
     pub datastore_mode: Option<String>,
     #[serde(default)]
+    pub datastore_mode_observed: Option<String>,
+    #[serde(default)]
     pub surrealdb_expected_version: Option<String>,
+    #[serde(default)]
+    pub surrealdb_observed_version: Option<String>,
+    #[serde(default)]
+    pub post_repo_valid: bool,
     pub mirror_last_generated_at: Option<String>,
 }
 

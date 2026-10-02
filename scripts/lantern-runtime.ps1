@@ -263,10 +263,16 @@ function Get-Runtime-Status {
         $serviceReason = $_.Exception.Message
     }
 
+    $datastoreModeObserved = $null
+    $surrealdbExpectedVersion = $null
+    $surrealdbObservedVersion = $null
     if ($serviceReachable) {
         try {
             $verResp = Invoke-RestMethod -Uri $versionUrl -Method Get -TimeoutSec 2 -ErrorAction Stop
             $serviceVersion = $verResp.version
+            $datastoreModeObserved = $verResp.datastore_mode
+            $surrealdbExpectedVersion = $verResp.surrealdb_expected_version
+            $surrealdbObservedVersion = $verResp.surrealdb_observed_version
         } catch { }
     }
 
@@ -308,6 +314,9 @@ function Get-Runtime-Status {
 
     $brTask = Get-ScheduledTask -TaskName $BridgeTaskName -ErrorAction SilentlyContinue
     $brTaskInfo = if ($brTask) { Get-ScheduledTaskInfo -TaskName $BridgeTaskName } else { $null }
+    $bridgeTaskInstalled = ($null -ne $brTask)
+    $bridgeTaskState = if ($brTask) { $brTask.State.ToString() } else { "NotInstalled" }
+    $bridgeTaskHealthy = ($bridgeTaskInstalled -and ($bridgeTaskState -ne "Disabled"))
 
     # Bridge state
     $bridgeStateFile = Join-Path $RuntimeDir "bridge-state.json"
@@ -319,13 +328,23 @@ function Get-Runtime-Status {
     } else { $null }
 
     # Git queue info from lantern-post
+    $postRepoValid = $false
     $inboxHead = $null
     $checkpoint = if ($bridgeState) { $bridgeState.last_processed_inbox_commit } else { $null }
     $pendingCount = 0
     if (Test-Path (Join-Path $PostRepo ".git")) {
         try {
-            $inboxHead = (git -C $PostRepo rev-parse refs/heads/inbox 2>$null).Trim()
+            $originUrl = (git -C $PostRepo remote get-url origin 2>$null)
+            if ($originUrl) { $originUrl = $originUrl.Trim() }
+            $branches = (git -C $PostRepo branch -a 2>$null)
+            $hasInbox = ($branches -match "inbox")
+            $hasReceipts = ($branches -match "receipts")
+            if ($originUrl -like "*matthewjameswatkins1978-cyber/lantern-post*" -and $hasInbox -and $hasReceipts) {
+                $postRepoValid = $true
+            }
+            $inboxHead = (git -C $PostRepo rev-parse refs/heads/inbox 2>$null)
             if ($inboxHead) {
+                $inboxHead = $inboxHead.Trim()
                 if ($checkpoint) {
                     $commits = git -C $PostRepo rev-list "$checkpoint..$inboxHead" 2>$null
                     $pendingCount = if ($commits) { ($commits -split "`n").Count } else { 0 }
@@ -347,6 +366,13 @@ function Get-Runtime-Status {
     $runningProcs = Get-CimInstance Win32_Process -Filter "Name = 'lighting.exe'" -ErrorAction SilentlyContinue |
         Select-Object ProcessId, ExecutablePath, CommandLine
 
+    $mutationReady = ($serviceReachable -and `
+                      $authorityReachable -and `
+                      $bridgeTaskHealthy -and `
+                      $postRepoValid -and `
+                      ($null -eq $bridgeState.last_terminal_error) -and `
+                      ($null -ne $inboxHead))
+
     $statusObj = [PSCustomObject]@{
         timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
         service = [PSCustomObject]@{
@@ -357,8 +383,11 @@ function Get-Runtime-Status {
             reachable = $serviceReachable
             version = $serviceVersion
             url = $ServiceUrl
-            datastore_mode = "embedded-surrealkv"
-            datastore_path = $DataDir
+            datastore_mode_observed = $datastoreModeObserved
+            datastore_mode_configured = "embedded-surrealkv"
+            datastore_path_configured = $DataDir
+            surrealdb_expected_version = if ($surrealdbExpectedVersion) { $surrealdbExpectedVersion } else { "3.3.0" }
+            surrealdb_observed_version = $surrealdbObservedVersion
         }
         authority = [PSCustomObject]@{
             authority_path_reachable = $authorityReachable
@@ -368,11 +397,14 @@ function Get-Runtime-Status {
         }
         bridge = [PSCustomObject]@{
             task_name = $BridgeTaskName
-            task_state = if ($brTask) { $brTask.State.ToString() } else { "NotInstalled" }
+            task_installed = $bridgeTaskInstalled
+            task_state = $bridgeTaskState
+            task_healthy = $bridgeTaskHealthy
             last_run = if ($brTaskInfo) { $brTaskInfo.LastRunTime } else { $null }
             last_result = if ($brTaskInfo) { $brTaskInfo.LastTaskResult } else { $null }
             next_run = if ($brTaskInfo) { $brTaskInfo.NextRunTime } else { $null }
             post_repo = $PostRepo
+            post_repo_valid = $postRepoValid
             git_repo = $GitRepo
             inbox_head = $inboxHead
             checkpoint = $checkpoint
@@ -390,7 +422,7 @@ function Get-Runtime-Status {
             exists = (Test-Path $InstalledBinary)
             running_processes = $runningProcs
         }
-        mutation_ready = ($serviceReachable -and $authorityReachable -and ($null -eq $bridgeState.last_terminal_error))
+        mutation_ready = $mutationReady
     }
 
     if ($Json) {
@@ -401,42 +433,49 @@ function Get-Runtime-Status {
     Write-Host "==========================================================" -ForegroundColor Cyan
     Write-Host "            LANTERN KEEPER RUNTIME STATUS                 " -ForegroundColor Cyan
     Write-Host "==========================================================" -ForegroundColor Cyan
-    Write-Host "Timestamp:            $($statusObj.timestamp)"
+    Write-Host "Timestamp:                   $($statusObj.timestamp)"
 
     Write-Host "`n--- Lighting Service ---" -ForegroundColor Yellow
-    Write-Host "Task Status:          $($statusObj.service.task_name) [$($statusObj.service.task_state)]"
-    Write-Host "Service Reachable:    $(if ($statusObj.service.reachable) { 'YES' } else { 'NO (' + $serviceReason + ')' })"
-    Write-Host "Service URL:          $($statusObj.service.url)"
-    Write-Host "Service Version:      $($statusObj.service.version)"
-    Write-Host "Datastore Mode:       $($statusObj.service.datastore_mode)"
-    Write-Host "Datastore Path:       $($statusObj.service.datastore_path)"
+    Write-Host "Task Status:                 $($statusObj.service.task_name) [$($statusObj.service.task_state)]"
+    Write-Host "Service Reachable:           $(if ($statusObj.service.reachable) { 'YES' } else { 'NO (' + $serviceReason + ')' })"
+    Write-Host "Service URL:                 $($statusObj.service.url)"
+    Write-Host "Service Version:             $($statusObj.service.version)"
+    Write-Host "Datastore Mode (observed):   $(if ($statusObj.service.datastore_mode_observed) { $statusObj.service.datastore_mode_observed } else { '<unreachable or unknown>' })"
+    Write-Host "Datastore Mode (configured): $($statusObj.service.datastore_mode_configured)"
+    Write-Host "Datastore Path (configured): $($statusObj.service.datastore_path_configured)"
+    Write-Host "SurrealDB Expected Version:  $($statusObj.service.surrealdb_expected_version)"
+    Write-Host "SurrealDB Observed Version:  $(if ($statusObj.service.surrealdb_observed_version) { $statusObj.service.surrealdb_observed_version } else { '<unreachable or unknown>' })"
 
     Write-Host "`n--- Authority Subsystem ---" -ForegroundColor Yellow
-    Write-Host "Authority Path:       $(if ($statusObj.authority.authority_path_reachable) { 'YES (reachable & responding)' } else { 'NO (unreachable)' })"
-    Write-Host "Tethers Engine:       $(if ($statusObj.authority.tethers_engine_present) { 'YES (binary present)' } else { 'NO' })"
-    Write-Host "Tethers Path:         $($statusObj.authority.tethers_engine_path)"
-    Write-Host "Allowed Agents:       $($statusObj.authority.allowed_agents)"
+    Write-Host "Authority Reachable:         $(if ($statusObj.authority.authority_path_reachable) { 'YES (reachable & responding)' } else { 'NO (unreachable)' })"
+    Write-Host "Tethers Engine:              $(if ($statusObj.authority.tethers_engine_present) { 'YES (binary present)' } else { 'NO' })"
+    Write-Host "Tethers Path:                $($statusObj.authority.tethers_engine_path)"
+    Write-Host "Allowed Agents:              $($statusObj.authority.allowed_agents)"
 
-    Write-Host "`n--- GitHub Bridge ---" -ForegroundColor Yellow
-    Write-Host "Task Status:          $($statusObj.bridge.task_name) [$($statusObj.bridge.task_state)]"
-    Write-Host "Last Run:             $($statusObj.bridge.last_run)"
-    Write-Host "Next Run:             $($statusObj.bridge.next_run)"
-    Write-Host "Durable Checkpoint:   $($statusObj.bridge.checkpoint)"
-    Write-Host "Inbox HEAD:           $($statusObj.bridge.inbox_head)"
-    Write-Host "Pending Intents:      $($statusObj.bridge.pending_count)"
-    Write-Host "Last Cycle:           $($statusObj.bridge.last_cycle_at)"
-    Write-Host "Last Success:         $($statusObj.bridge.last_success_at)"
+    Write-Host "`n--- GitHub Bridge Transport ---" -ForegroundColor Yellow
+    Write-Host "Bridge Task Installed:       $(if ($statusObj.bridge.task_installed) { 'YES' } else { 'NO' })"
+    Write-Host "Bridge Task State:           $($statusObj.bridge.task_state)"
+    Write-Host "Bridge Last Result:          $($statusObj.bridge.last_result)"
+    Write-Host "Bridge Last Successful Cycle:$($statusObj.bridge.last_success_at)"
+    Write-Host "Post Repository Valid:       $(if ($statusObj.bridge.post_repo_valid) { 'YES' } else { 'NO' })"
+    Write-Host "Post Repository Path:        $($statusObj.bridge.post_repo)"
+    Write-Host "Inbox Head:                  $($statusObj.bridge.inbox_head)"
+    Write-Host "Durable Checkpoint:          $($statusObj.bridge.checkpoint)"
+    Write-Host "Pending Count:               $($statusObj.bridge.pending_count)"
+    Write-Host "Last Run:                    $($statusObj.bridge.last_run)"
+    Write-Host "Next Run:                    $($statusObj.bridge.next_run)"
+    Write-Host "Last Cycle:                  $($statusObj.bridge.last_cycle_at)"
     if ($statusObj.bridge.last_terminal_error) {
-        Write-Host "Last Terminal Error:  $($statusObj.bridge.last_terminal_error)" -ForegroundColor Red
+        Write-Host "Last Terminal Error:         $($statusObj.bridge.last_terminal_error)" -ForegroundColor Red
     }
 
     Write-Host "`n--- Mirror (lantern-git) ---" -ForegroundColor Yellow
-    Write-Host "Mirror Last Gen:      $($statusObj.mirror.generated_at)"
-    Write-Host "Mirror Records:       $($statusObj.mirror.records_count)"
+    Write-Host "Mirror Last Gen:             $($statusObj.mirror.generated_at)"
+    Write-Host "Mirror Records:              $($statusObj.mirror.records_count)"
 
     Write-Host "`n--- Overall Health ---" -ForegroundColor Yellow
-    Write-Host "Mutation Ready:       $(if ($statusObj.mutation_ready) { 'YES (healthy)' } else { 'NO (blocked or unready)' })" -ForegroundColor $(if ($statusObj.mutation_ready) { "Green" } else { "Red" })
-    Write-Host "Installed Binary:     $($statusObj.runtime_binary.installed_path)"
+    Write-Host "Mutation Ready:              $(if ($statusObj.mutation_ready) { 'YES (healthy)' } else { 'NO (blocked or unready)' })" -ForegroundColor $(if ($statusObj.mutation_ready) { "Green" } else { "Red" })
+    Write-Host "Installed Binary:            $($statusObj.runtime_binary.installed_path)"
     Write-Host "==========================================================" -ForegroundColor Cyan
 }
 

@@ -18,6 +18,7 @@ pub struct DoctorReport {
     pub post_repo_remote_url: Option<String>,
     pub post_repo_expected: String,
     pub post_repo_private: Option<bool>,
+    pub post_repo_valid: bool,
     pub inbox_branch_exists: bool,
     pub receipts_branch_exists: bool,
     pub authority_path_reachable: bool,
@@ -30,8 +31,10 @@ pub struct DoctorReport {
     pub last_successful_cycle: Option<DateTime<Utc>>,
     pub last_terminal_error: Option<String>,
     pub last_receipt_outcome: Option<String>,
-    pub datastore_mode: String,
+    pub datastore_mode_observed: Option<String>,
+    pub datastore_mode_configured: String,
     pub surrealdb_expected_version: String,
+    pub surrealdb_observed_version: Option<String>,
     pub runtime_binary_version: String,
     pub mirror_repo_path: Option<String>,
     pub mirror_generated_at: Option<String>,
@@ -54,16 +57,32 @@ impl DoctorReport {
             .unwrap_or_default();
 
         let version_url = format!("{clean_service_url}/api/v1/version");
-        let (lantern_reachable, lantern_version) = match client.get(&version_url).send().await {
+        let (
+            lantern_reachable,
+            lantern_version,
+            datastore_mode_observed,
+            surrealdb_observed_version,
+        ) = match client.get(&version_url).send().await {
             Ok(resp) if resp.status().is_success() => {
-                let v = resp.json::<serde_json::Value>().await.ok().and_then(|j| {
+                let j = resp.json::<serde_json::Value>().await.ok();
+                let v = j.as_ref().and_then(|j| {
                     j.get("version")
                         .and_then(|s| s.as_str())
                         .map(str::to_string)
                 });
-                (true, v)
+                let dm = j.as_ref().and_then(|j| {
+                    j.get("datastore_mode")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string)
+                });
+                let sov = j.as_ref().and_then(|j| {
+                    j.get("surrealdb_observed_version")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string)
+                });
+                (true, v, dm, sov)
             }
-            _ => (false, None),
+            _ => (false, None, None, None),
         };
 
         // 2. Canonical repository identity
@@ -115,6 +134,14 @@ impl DoctorReport {
 
         let inbox_branch_exists = branch_list.contains(INBOX_BRANCH);
         let receipts_branch_exists = branch_list.contains(RECEIPTS_BRANCH);
+
+        let post_repo_valid = post_repo_path.join(".git").exists()
+            && post_repo_remote_url
+                .as_ref()
+                .map(|u| u.contains(EXPECTED_POST_REPO))
+                .unwrap_or(false)
+            && inbox_branch_exists
+            && receipts_branch_exists;
 
         // 4. Tethers / Authority check
         let tethers = TethersGate::new(clean_service_url.to_string(), None, None);
@@ -175,19 +202,15 @@ impl DoctorReport {
         // Safe to enable mutation when:
         // - Lantern reachable
         // - Authority path reachable
-        // - post repo remote matches expected
-        // - post repo is verified private
-        // - inbox & receipts branches exist
-        // - no unhandled terminal error
+        // - Post repo is valid (git, branches, remote)
+        // - Post repo is verified private
+        // - Inbox head is known
+        // - No unhandled terminal error
         let mutation_safe_to_enable = lantern_reachable
             && authority_path_reachable
-            && post_repo_remote_url
-                .as_ref()
-                .map(|u| u.contains(EXPECTED_POST_REPO))
-                .unwrap_or(false)
+            && post_repo_valid
             && post_repo_private == Some(true)
-            && inbox_branch_exists
-            && receipts_branch_exists
+            && inbox_head.is_some()
             && last_terminal_error.is_none();
 
         Self {
@@ -199,6 +222,7 @@ impl DoctorReport {
             post_repo_remote_url,
             post_repo_expected: EXPECTED_POST_REPO.to_string(),
             post_repo_private,
+            post_repo_valid,
             inbox_branch_exists,
             receipts_branch_exists,
             authority_path_reachable,
@@ -211,8 +235,10 @@ impl DoctorReport {
             last_successful_cycle,
             last_terminal_error,
             last_receipt_outcome,
-            datastore_mode: "embedded-surrealkv".to_string(),
+            datastore_mode_observed,
+            datastore_mode_configured: "embedded-surrealkv".to_string(),
             surrealdb_expected_version: crate::EXPECTED_SURREALDB_VERSION.to_string(),
+            surrealdb_observed_version,
             runtime_binary_version: env!("CARGO_PKG_VERSION").to_string(),
             mirror_repo_path: mirror_repo_path.map(|p| p.display().to_string()),
             mirror_generated_at,
@@ -230,18 +256,46 @@ impl DoctorReport {
 
         println!("=== Lantern GitHub Bridge Doctor ===");
         println!(
-            "Lantern Service:     {} (reachable: {}, version: {})",
+            "Lantern Service:            {} (reachable: {}, version: {})",
             self.lantern_service_url,
             if self.lantern_reachable { "YES" } else { "NO" },
             self.lantern_version.as_deref().unwrap_or("unknown")
         );
-        println!("Datastore Mode:      {}", self.datastore_mode);
-        println!("SurrealDB Version:   {}", self.surrealdb_expected_version);
-        println!("Runtime Version:     {}", self.runtime_binary_version);
-        println!("Canonical Repo:      {}", self.canonical_repo_identity);
-        println!("Post Repo Path:      {}", self.post_repo_path);
         println!(
-            "Post Remote URL:     {} (expected: {})",
+            "Datastore Mode (observed):  {}",
+            self.datastore_mode_observed
+                .as_deref()
+                .unwrap_or("<unreachable or unknown>")
+        );
+        println!(
+            "Datastore Mode (configured):{}",
+            self.datastore_mode_configured
+        );
+        println!(
+            "SurrealDB Expected Version: {}",
+            self.surrealdb_expected_version
+        );
+        println!(
+            "SurrealDB Observed Version: {}",
+            self.surrealdb_observed_version
+                .as_deref()
+                .unwrap_or("<unreachable or unknown>")
+        );
+        println!(
+            "Runtime Version:            {}",
+            self.runtime_binary_version
+        );
+        println!(
+            "Canonical Repo:             {}",
+            self.canonical_repo_identity
+        );
+        println!(
+            "Post Repo Valid:            {}",
+            if self.post_repo_valid { "YES" } else { "NO" }
+        );
+        println!("Post Repo Path:             {}", self.post_repo_path);
+        println!(
+            "Post Remote URL:            {} (expected: {})",
             self.post_repo_remote_url.as_deref().unwrap_or("<none>"),
             self.post_repo_expected
         );

@@ -117,13 +117,20 @@ impl BridgeRunner {
         };
 
         if commits_to_process.is_empty() {
-            let (lantern_reachable, lantern_version) = self.probe_lantern().await;
+            let (
+                lantern_reachable,
+                lantern_version,
+                datastore_mode_observed,
+                surrealdb_observed_version,
+            ) = self.probe_lantern().await;
             let authority_path_reachable = self.tethers.probe_authority_path().await;
             let tethers_engine_present = self.tethers.is_engine_available();
             let mirror_gen_at = self.get_mirror_generated_at();
+            let post_repo_valid = self.config.post_repo_path.join(".git").exists();
 
             let mutation_ready = lantern_reachable
                 && authority_path_reachable
+                && post_repo_valid
                 && state.data.last_terminal_error.is_none();
 
             let status_file = BridgeStatusFile {
@@ -142,7 +149,10 @@ impl BridgeRunner {
                 last_receipt_outcome: state.get_last_receipt_outcome(),
                 lantern_version,
                 datastore_mode: Some("embedded-surrealkv".to_string()),
+                datastore_mode_observed,
                 surrealdb_expected_version: Some(crate::EXPECTED_SURREALDB_VERSION.to_string()),
+                surrealdb_observed_version,
+                post_repo_valid,
                 mirror_last_generated_at: mirror_gen_at,
             };
 
@@ -209,13 +219,20 @@ impl BridgeRunner {
         }
 
         // 6. Write receipts and bridge status file
-        let (lantern_reachable, lantern_version) = self.probe_lantern().await;
+        let (
+            lantern_reachable,
+            lantern_version,
+            datastore_mode_observed,
+            surrealdb_observed_version,
+        ) = self.probe_lantern().await;
         let authority_path_reachable = self.tethers.probe_authority_path().await;
         let tethers_engine_present = self.tethers.is_engine_available();
         let mirror_gen_at = self.get_mirror_generated_at();
+        let post_repo_valid = self.config.post_repo_path.join(".git").exists();
 
         let mutation_ready = lantern_reachable
             && authority_path_reachable
+            && post_repo_valid
             && state.data.last_terminal_error.is_none();
 
         let status_file = BridgeStatusFile {
@@ -234,7 +251,10 @@ impl BridgeRunner {
             last_receipt_outcome: state.get_last_receipt_outcome(),
             lantern_version,
             datastore_mode: Some("embedded-surrealkv".to_string()),
+            datastore_mode_observed,
             surrealdb_expected_version: Some(crate::EXPECTED_SURREALDB_VERSION.to_string()),
+            surrealdb_observed_version,
+            post_repo_valid,
             mirror_last_generated_at: mirror_gen_at,
         };
 
@@ -309,7 +329,7 @@ impl BridgeRunner {
         Ok(())
     }
 
-    async fn probe_lantern(&self) -> (bool, Option<String>) {
+    async fn probe_lantern(&self) -> (bool, Option<String>, Option<String>, Option<String>) {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()
@@ -320,14 +340,25 @@ impl BridgeRunner {
         );
         match client.get(&version_url).send().await {
             Ok(resp) if resp.status().is_success() => {
-                let v = resp.json::<serde_json::Value>().await.ok().and_then(|j| {
+                let j = resp.json::<serde_json::Value>().await.ok();
+                let v = j.as_ref().and_then(|j| {
                     j.get("version")
                         .and_then(|s| s.as_str())
                         .map(str::to_string)
                 });
-                (true, v)
+                let ds = j.as_ref().and_then(|j| {
+                    j.get("datastore_mode")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string)
+                });
+                let sov = j.as_ref().and_then(|j| {
+                    j.get("surrealdb_observed_version")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string)
+                });
+                (true, v, ds, sov)
             }
-            _ => (false, None),
+            _ => (false, None, None, None),
         }
     }
 
