@@ -183,6 +183,7 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
         ("memory-item", get_json(f"{base}/api/v1/memory-items/search", "POST", {"include_archived": True, "limit": 0}).get("memory_items", [])),
         ("claim", get_json(f"{base}/api/v1/claims?unmapped=false").get("claims", [])),
         ("belief", get_json(f"{base}/api/v1/beliefs?include_stale=true").get("beliefs", [])),
+        ("memory", get_json(f"{base}/api/v1/memories/recall", "POST", {"include_inactive": True}).get("memories", [])),
     ]
     projects = get_json(f"{base}/api/v1/projects").get("projects", [])
 
@@ -200,6 +201,14 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 record = {"record_type": record_type, **{key: raw.get(key) for key in fields}}
                 archived = bool(raw.get("archived", False))
+            elif record_type == "memory":
+                fields = (
+                    "id", "kind", "content", "agent", "status", "confidence", "importance",
+                    "project_id", "recorded_at", "known_at", "valid_from", "valid_until",
+                    "superseded_at",
+                )
+                record = {"record_type": record_type, **{key: raw.get(key) for key in fields}}
+                archived = raw.get("status") != "active"
             elif record_type == "claim":
                 fields = (
                     "id", "episode_id", "source_id", "evidence_span", "subject_key", "predicate_key",
@@ -282,7 +291,7 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
             "source_software_revision": git_revision(),
             "source_service_url": "local Lantern service; address intentionally omitted",
             "record_count": len(records),
-            "counts_by_type": {kind: sum(1 for item in records if item[0] == kind) for kind in ("memory-item", "claim", "belief")},
+            "counts_by_type": {kind: sum(1 for item in records if item[0] == kind) for kind in ("memory-item", "claim", "belief", "memory")},
             "active_count": len(index_rows["active"]),
             "archived_count": len(index_rows["archived"]),
             "project_count": len(projects),
@@ -291,11 +300,33 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
             "record_path_rule": "UUID lower-case hex split 2/2; records/{type}/{active|archived}/{hex[0:2]}/{hex[2:4]}/{uuid}.md",
             "integrity_path_rule": "replace each record .md suffix with .integrity.json; sidecar contains SHA-256 and Git blob SHA",
             "index_shard_max_bytes": MAX_INDEX_SHARD_BYTES,
+            "status_path": "status.json",
             "exclusions": ["raw Source and Episode content", "authority grants and local runtime state", "unknown fields outside the record allowlist"],
             "secret_scan": "fail-closed patterns for common credential formats and credential assignments",
         }
+        manifest_text = json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        manifest_digest = f"sha256:{hashlib.sha256(manifest_text.encode('utf-8')).hexdigest()}"
         (staged / "manifest.json").write_text(
-            json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            manifest_text,
+            encoding="utf-8",
+            newline="\n",
+        )
+        status = {
+            "format": "lantern-git-mirror-status",
+            "status_schema_version": 1,
+            "generated_at": generated_at,
+            "read_started_at": read_started_at,
+            "source_software_revision": git_revision(),
+            "export_schema_version": EXPORT_SCHEMA_VERSION,
+            "record_count": len(records),
+            "counts_by_type": manifest["counts_by_type"],
+            "active_count": len(index_rows["active"]),
+            "archived_count": len(index_rows["archived"]),
+            "manifest_digest": manifest_digest,
+            "snapshot_consistency": manifest["snapshot_consistency"],
+        }
+        (staged / "status.json").write_text(
+            json.dumps(status, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
             encoding="utf-8",
             newline="\n",
         )

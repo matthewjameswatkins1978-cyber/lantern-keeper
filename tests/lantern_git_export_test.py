@@ -80,6 +80,41 @@ class LanternGitExportTests(unittest.TestCase):
             self.assertEqual(stored["originator_actor_id"], "matthew")
             self.assertEqual(stored["holder_actor_id"], "matthew")
 
+    def test_status_json_metadata_and_manifest_digest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = {
+                "format": "lantern-git-mirror",
+                "export_schema_version": 1,
+                "record_count": 42,
+                "counts_by_type": {"memory-item": 42, "claim": 0, "belief": 0},
+                "snapshot_consistency": "test-consistency",
+            }
+            manifest_text = json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+            manifest_digest = f"sha256:{lantern_git_export.hashlib.sha256(manifest_text.encode('utf-8')).hexdigest()}"
+            status = {
+                "format": "lantern-git-mirror-status",
+                "status_schema_version": 1,
+                "generated_at": "2026-10-02T05:00:00Z",
+                "read_started_at": "2026-10-02T04:59:50Z",
+                "source_software_revision": "abcdef123456",
+                "export_schema_version": 1,
+                "record_count": 42,
+                "counts_by_type": manifest["counts_by_type"],
+                "active_count": 30,
+                "archived_count": 12,
+                "manifest_digest": manifest_digest,
+                "snapshot_consistency": manifest["snapshot_consistency"],
+            }
+            status_path = root / "status.json"
+            status_path.write_text(json.dumps(status, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+            loaded = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(loaded["format"], "lantern-git-mirror-status")
+            self.assertEqual(loaded["record_count"], 42)
+            self.assertTrue(loaded["manifest_digest"].startswith("sha256:"))
+            self.assertEqual(loaded["source_software_revision"], "abcdef123456")
+
 
 if __name__ == "__main__":
     unittest.main()
+

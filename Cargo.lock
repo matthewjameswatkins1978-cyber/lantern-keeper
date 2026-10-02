@@ -2031,10 +2031,13 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
+ "sha2",
+ "thiserror",
  "tokio",
  "tower",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
