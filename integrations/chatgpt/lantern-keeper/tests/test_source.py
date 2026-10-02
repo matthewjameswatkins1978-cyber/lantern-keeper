@@ -36,6 +36,14 @@ class PluginSourceTests(unittest.TestCase):
             "GitHub fallback is never a write path",
             "Report “saved”",
             "authority grant",
+            "`APPLIED`",
+            "`DENIED`",
+            "`REQUIRES_APPROVAL`",
+            "`CONFLICT`",
+            "`EXPIRED`",
+            "`FAILED`",
+            "`INDETERMINATE`",
+            "`SUSPECT`",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill)
