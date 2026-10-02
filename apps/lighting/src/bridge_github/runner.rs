@@ -117,7 +117,40 @@ impl BridgeRunner {
         };
 
         if commits_to_process.is_empty() {
-            info!("No new inbox commits to process. Bridge is up to date.");
+            let (lantern_reachable, lantern_version) = self.probe_lantern().await;
+            let authority_path_reachable = self.tethers.probe_authority_path().await;
+            let tethers_engine_present = self.tethers.is_engine_available();
+            let mirror_gen_at = self.get_mirror_generated_at();
+
+            let mutation_ready = lantern_reachable
+                && authority_path_reachable
+                && state.data.last_terminal_error.is_none();
+
+            let status_file = BridgeStatusFile {
+                bridge_version: super::executor::BRIDGE_VERSION.to_string(),
+                last_cycle_at: Some(Utc::now().to_rfc3339()),
+                last_success_at: Some(Utc::now().to_rfc3339()),
+                last_processed_inbox_commit: state.data.last_processed_inbox_commit.clone(),
+                inbox_head: Some(inbox_head.clone()),
+                pending_count: 0,
+                last_terminal_error: None,
+                lantern_reachable,
+                tethers_reachable: authority_path_reachable,
+                authority_path_reachable,
+                tethers_engine_present,
+                mutation_ready,
+                last_receipt_outcome: state.get_last_receipt_outcome(),
+                lantern_version,
+                datastore_mode: Some("embedded-surrealkv".to_string()),
+                surrealdb_expected_version: Some(crate::EXPECTED_SURREALDB_VERSION.to_string()),
+                mirror_last_generated_at: mirror_gen_at,
+            };
+
+            let _ = self
+                .queue
+                .write_receipts_and_status(&[], &status_file, self.config.push);
+
+            info!("No new inbox commits to process. Bridge is up to date (status refreshed).");
             let _ = state.record_cycle(true, None);
             return Ok(());
         }
@@ -176,21 +209,14 @@ impl BridgeRunner {
         }
 
         // 6. Write receipts and bridge status file
-        let mirror_gen_at = self.config.git_repo_path.as_ref().and_then(|p| {
-            let sf = p.join("mirror").join("status.json");
-            if sf.exists() {
-                std::fs::read_to_string(sf)
-                    .ok()
-                    .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
-                    .and_then(|j| {
-                        j.get("generated_at")
-                            .and_then(|s| s.as_str())
-                            .map(str::to_string)
-                    })
-            } else {
-                None
-            }
-        });
+        let (lantern_reachable, lantern_version) = self.probe_lantern().await;
+        let authority_path_reachable = self.tethers.probe_authority_path().await;
+        let tethers_engine_present = self.tethers.is_engine_available();
+        let mirror_gen_at = self.get_mirror_generated_at();
+
+        let mutation_ready = lantern_reachable
+            && authority_path_reachable
+            && state.data.last_terminal_error.is_none();
 
         let status_file = BridgeStatusFile {
             bridge_version: super::executor::BRIDGE_VERSION.to_string(),
@@ -200,8 +226,15 @@ impl BridgeRunner {
             inbox_head: Some(inbox_head.clone()),
             pending_count: 0,
             last_terminal_error: None,
-            lantern_reachable: true,
-            tethers_reachable: self.tethers.is_engine_available(),
+            lantern_reachable,
+            tethers_reachable: authority_path_reachable,
+            authority_path_reachable,
+            tethers_engine_present,
+            mutation_ready,
+            last_receipt_outcome: state.get_last_receipt_outcome(),
+            lantern_version,
+            datastore_mode: Some("embedded-surrealkv".to_string()),
+            surrealdb_expected_version: Some(crate::EXPECTED_SURREALDB_VERSION.to_string()),
             mirror_last_generated_at: mirror_gen_at,
         };
 
@@ -274,6 +307,56 @@ impl BridgeRunner {
         }
 
         Ok(())
+    }
+
+    async fn probe_lantern(&self) -> (bool, Option<String>) {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
+        let version_url = format!(
+            "{}/api/v1/version",
+            self.config.service_url.trim_end_matches('/')
+        );
+        match client.get(&version_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let v = resp.json::<serde_json::Value>().await.ok().and_then(|j| {
+                    j.get("version")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string)
+                });
+                (true, v)
+            }
+            _ => (false, None),
+        }
+    }
+
+    fn get_mirror_generated_at(&self) -> Option<String> {
+        self.config.git_repo_path.as_ref().and_then(|p| {
+            let sf = p.join("mirror").join("status.json");
+            let mf = p.join("mirror").join("manifest.json");
+            if sf.exists() {
+                std::fs::read_to_string(sf)
+                    .ok()
+                    .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                    .and_then(|j| {
+                        j.get("generated_at")
+                            .and_then(|s| s.as_str())
+                            .map(str::to_string)
+                    })
+            } else if mf.exists() {
+                std::fs::read_to_string(mf)
+                    .ok()
+                    .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                    .and_then(|j| {
+                        j.get("generated_at")
+                            .and_then(|s| s.as_str())
+                            .map(str::to_string)
+                    })
+            } else {
+                None
+            }
+        })
     }
 
     pub async fn refresh_mirror(mirror_repo: &Path, push: bool) -> Result<()> {

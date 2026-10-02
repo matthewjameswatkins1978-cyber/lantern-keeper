@@ -82,6 +82,32 @@ impl TethersGate {
             .unwrap_or_else(|| Self::find_default_engine_path().is_some())
     }
 
+    pub async fn probe_authority_path(&self) -> bool {
+        let check_url = format!("{}/api/v1/authority/check", self.service_url);
+        let payload = serde_json::json!({
+            "check": {
+                "request": {
+                    "action_id": "authority-health-probe",
+                    "principal_id": "agent:probe",
+                    "capability_id": "lantern.memory.create",
+                    "capability_version": "1",
+                    "scope": {},
+                    "constraints": {},
+                },
+                "at": chrono::Utc::now()
+            }
+        });
+
+        match self.client.post(&check_url).json(&payload).send().await {
+            Ok(resp) if resp.status().is_success() => resp
+                .json::<serde_json::Value>()
+                .await
+                .map(|v| v.get("decision").is_some())
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
     pub async fn check_authority(&self, intent: &Intent) -> TethersDecision {
         let principal_id = format!("agent:{}", intent.requested_by.actor);
         let capability_id = match intent.action {

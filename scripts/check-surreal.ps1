@@ -4,7 +4,7 @@ $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $RuntimeDir = Join-Path $ProjectRoot ".lighting-runtime"
 $PidFile = Join-Path $RuntimeDir "surrealdb.json"
 $Endpoint = "ws://127.0.0.1:8000"
-$ExpectedVersion = "3.3.0-beta.4"
+$ExpectedVersion = "3.3.0"
 
 function Find-Surreal {
     $Command = Get-Command surreal -ErrorAction SilentlyContinue

@@ -572,6 +572,13 @@ fn test_status_bridge_json_roundtrip() {
         last_terminal_error: None,
         lantern_reachable: true,
         tethers_reachable: true,
+        authority_path_reachable: true,
+        tethers_engine_present: true,
+        mutation_ready: true,
+        last_receipt_outcome: Some("APPLIED (intent: 123, record: rec_1)".to_string()),
+        lantern_version: Some("0.1.0".to_string()),
+        datastore_mode: Some("embedded-surrealkv".to_string()),
+        surrealdb_expected_version: Some("3.3.0".to_string()),
         mirror_last_generated_at: Some("2026-10-02T05:00:00Z".to_string()),
     };
 
@@ -586,8 +593,87 @@ fn test_status_bridge_json_roundtrip() {
     assert_eq!(loaded.pending_count, 0);
     assert!(loaded.lantern_reachable);
     assert!(loaded.tethers_reachable);
+    assert!(loaded.authority_path_reachable);
+    assert!(loaded.tethers_engine_present);
+    assert!(loaded.mutation_ready);
+    assert_eq!(loaded.datastore_mode.as_deref(), Some("embedded-surrealkv"));
+    assert_eq!(loaded.surrealdb_expected_version.as_deref(), Some("3.3.0"));
     assert_eq!(
         loaded.mirror_last_generated_at.as_deref(),
         Some("2026-10-02T05:00:00Z")
     );
+}
+
+#[tokio::test]
+async fn test_doctor_unavailable_lighting_reports_unreachable() {
+    let temp = TestTempDir::new();
+    let post_repo = temp.path().join("lantern-post");
+    let state_file = temp.path().join("bridge-state.json");
+    std::fs::create_dir_all(&post_repo).unwrap();
+
+    let report =
+        super::doctor::DoctorReport::run("http://127.0.0.1:65530", &post_repo, None, &state_file)
+            .await;
+
+    assert!(!report.lantern_reachable);
+    assert!(!report.authority_path_reachable);
+    assert!(!report.tethers_available);
+    assert!(!report.mutation_safe_to_enable);
+}
+
+#[tokio::test]
+async fn test_tethers_executable_alone_does_not_imply_authority_reachable() {
+    let temp = TestTempDir::new();
+    let dummy_engine = temp.path().join("dummy_tethers.exe");
+    std::fs::write(&dummy_engine, b"mock binary").unwrap();
+
+    let gate = super::tethers::TethersGate::new(
+        "http://127.0.0.1:65530".to_string(),
+        None,
+        Some(dummy_engine),
+    );
+
+    // Engine executable is present on disk
+    assert!(gate.is_engine_available());
+    // BUT authority path is unreachable because service is not running
+    assert!(!gate.probe_authority_path().await);
+}
+
+#[test]
+fn test_idle_cycle_writes_status_file_to_disk() {
+    let temp = TestTempDir::new();
+    let post_repo = temp.path().join("lantern-post");
+    let queue = GitQueue::new(&post_repo);
+
+    let status = BridgeStatusFile {
+        bridge_version: "0.1.0".to_string(),
+        last_cycle_at: Some("2026-10-02T08:00:00Z".to_string()),
+        last_success_at: Some("2026-10-02T08:00:00Z".to_string()),
+        last_processed_inbox_commit: None,
+        inbox_head: None,
+        pending_count: 0,
+        last_terminal_error: None,
+        lantern_reachable: true,
+        tethers_reachable: true,
+        authority_path_reachable: true,
+        tethers_engine_present: false,
+        mutation_ready: true,
+        last_receipt_outcome: None,
+        lantern_version: Some("0.1.0".to_string()),
+        datastore_mode: Some("embedded-surrealkv".to_string()),
+        surrealdb_expected_version: Some("3.3.0".to_string()),
+        mirror_last_generated_at: None,
+    };
+
+    queue.write_status_file(&status).unwrap();
+
+    let written_file = post_repo.join("status").join("bridge.json");
+    assert!(written_file.exists());
+    let content = std::fs::read_to_string(written_file).unwrap();
+    let parsed: BridgeStatusFile = serde_json::from_str(&content).unwrap();
+    assert_eq!(
+        parsed.last_cycle_at.as_deref(),
+        Some("2026-10-02T08:00:00Z")
+    );
+    assert!(parsed.authority_path_reachable);
 }

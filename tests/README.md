@@ -5,7 +5,7 @@ The normal validation lane is:
     pwsh -NoProfile -File .\scripts\validate.ps1
 
 Most tests use isolated embedded SurrealKV stores. Remote integration tests
-are opt-in and use exact SurrealDB 3.3.0-beta.4:
+are opt-in and use exact SurrealDB 3.3.0:
 
     .\scripts\start-surreal.ps1
     $env:LIGHTING_STORAGE = "remote-surreal"

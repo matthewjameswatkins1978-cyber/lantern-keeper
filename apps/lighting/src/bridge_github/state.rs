@@ -171,6 +171,21 @@ impl BridgeStateStore {
         }
         self.save()
     }
+
+    pub fn get_last_receipt_outcome(&self) -> Option<String> {
+        self.data
+            .idempotency
+            .values()
+            .max_by_key(|r| r.recorded_at)
+            .map(|r| {
+                format!(
+                    "{} (intent: {}, record: {})",
+                    r.status.as_str(),
+                    r.intent_id,
+                    r.lantern_record_id.as_deref().unwrap_or("<none>")
+                )
+            })
+    }
 }
 
 #[cfg(test)]

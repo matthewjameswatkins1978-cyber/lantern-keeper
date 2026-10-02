@@ -20,6 +20,8 @@ pub struct DoctorReport {
     pub post_repo_private: Option<bool>,
     pub inbox_branch_exists: bool,
     pub receipts_branch_exists: bool,
+    pub authority_path_reachable: bool,
+    pub tethers_engine_present: bool,
     pub tethers_available: bool,
     pub tethers_engine_path: Option<String>,
     pub durable_checkpoint: Option<String>,
@@ -27,6 +29,10 @@ pub struct DoctorReport {
     pub pending_intents_count: usize,
     pub last_successful_cycle: Option<DateTime<Utc>>,
     pub last_terminal_error: Option<String>,
+    pub last_receipt_outcome: Option<String>,
+    pub datastore_mode: String,
+    pub surrealdb_expected_version: String,
+    pub runtime_binary_version: String,
     pub mirror_repo_path: Option<String>,
     pub mirror_generated_at: Option<String>,
     pub mutation_safe_to_enable: bool,
@@ -110,9 +116,12 @@ impl DoctorReport {
         let inbox_branch_exists = branch_list.contains(INBOX_BRANCH);
         let receipts_branch_exists = branch_list.contains(RECEIPTS_BRANCH);
 
-        // 4. Tethers check
+        // 4. Tethers / Authority check
+        let tethers = TethersGate::new(clean_service_url.to_string(), None, None);
+        let authority_path_reachable = tethers.probe_authority_path().await;
         let engine_path = TethersGate::find_default_engine_path();
-        let tethers_available = engine_path.is_some() || lantern_reachable;
+        let tethers_engine_present = engine_path.is_some();
+        let tethers_available = authority_path_reachable;
 
         // 5. State / Checkpoint check
         let state = BridgeStateStore::load_or_create(state_path).ok();
@@ -123,6 +132,7 @@ impl DoctorReport {
         let last_terminal_error = state
             .as_ref()
             .and_then(|s| s.data.last_terminal_error.clone());
+        let last_receipt_outcome = state.as_ref().and_then(|s| s.get_last_receipt_outcome());
 
         let inbox_head = queue.get_inbox_head().ok();
 
@@ -164,18 +174,21 @@ impl DoctorReport {
 
         // Safe to enable mutation when:
         // - Lantern reachable
+        // - Authority path reachable
         // - post repo remote matches expected
         // - post repo is verified private
         // - inbox & receipts branches exist
         // - no unhandled terminal error
         let mutation_safe_to_enable = lantern_reachable
+            && authority_path_reachable
             && post_repo_remote_url
                 .as_ref()
                 .map(|u| u.contains(EXPECTED_POST_REPO))
                 .unwrap_or(false)
             && post_repo_private == Some(true)
             && inbox_branch_exists
-            && receipts_branch_exists;
+            && receipts_branch_exists
+            && last_terminal_error.is_none();
 
         Self {
             lantern_service_url: clean_service_url.to_string(),
@@ -188,6 +201,8 @@ impl DoctorReport {
             post_repo_private,
             inbox_branch_exists,
             receipts_branch_exists,
+            authority_path_reachable,
+            tethers_engine_present,
             tethers_available,
             tethers_engine_path: engine_path.map(|p| p.display().to_string()),
             durable_checkpoint,
@@ -195,6 +210,10 @@ impl DoctorReport {
             pending_intents_count,
             last_successful_cycle,
             last_terminal_error,
+            last_receipt_outcome,
+            datastore_mode: "embedded-surrealkv".to_string(),
+            surrealdb_expected_version: crate::EXPECTED_SURREALDB_VERSION.to_string(),
+            runtime_binary_version: env!("CARGO_PKG_VERSION").to_string(),
             mirror_repo_path: mirror_repo_path.map(|p| p.display().to_string()),
             mirror_generated_at,
             mutation_safe_to_enable,
@@ -216,6 +235,9 @@ impl DoctorReport {
             if self.lantern_reachable { "YES" } else { "NO" },
             self.lantern_version.as_deref().unwrap_or("unknown")
         );
+        println!("Datastore Mode:      {}", self.datastore_mode);
+        println!("SurrealDB Version:   {}", self.surrealdb_expected_version);
+        println!("Runtime Version:     {}", self.runtime_binary_version);
         println!("Canonical Repo:      {}", self.canonical_repo_identity);
         println!("Post Repo Path:      {}", self.post_repo_path);
         println!(
@@ -245,11 +267,21 @@ impl DoctorReport {
             }
         );
         println!(
-            "Tethers Available:   {} (engine: {})",
-            if self.tethers_available { "YES" } else { "NO" },
-            self.tethers_engine_path
-                .as_deref()
-                .unwrap_or("integrated/service")
+            "Authority Path:      {}",
+            if self.authority_path_reachable {
+                "YES (reachable and responding)"
+            } else {
+                "NO (authority check unreachable or failing)"
+            }
+        );
+        println!(
+            "Tethers Engine:      {} (path: {})",
+            if self.tethers_engine_present {
+                "YES (binary present)"
+            } else {
+                "NO (binary not found)"
+            },
+            self.tethers_engine_path.as_deref().unwrap_or("<none>")
         );
         println!(
             "Durable Checkpoint:  {}",
@@ -266,6 +298,9 @@ impl DoctorReport {
                 .map(|t| t.to_rfc3339())
                 .unwrap_or_else(|| "<never>".to_string())
         );
+        if let Some(outcome) = &self.last_receipt_outcome {
+            println!("Last Receipt:        {outcome}");
+        }
         if let Some(err) = &self.last_terminal_error {
             println!("Last Terminal Error: {err}");
         }
