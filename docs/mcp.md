@@ -1,6 +1,8 @@
 # MCP Integration
 
-Lantern Keeper exposes a bounded local MCP surface through the `lighting mcp` stdio bridge. The bridge delegates to the same local HTTP service used by the CLI.
+Lantern Keeper has two MCP transports over the same local HTTP service. Trusted local clients use `lighting mcp` over stdio and retain the existing eight-tool surface. Remote clients use `lighting mcp-http`, which exposes only four read tools through MCP Streamable HTTP. Both adapters call the existing service API; neither opens a database connection or creates a second store.
+
+The remote transport uses the official [Rust MCP SDK](https://github.com/modelcontextprotocol/rust-sdk), crate `rmcp` **3.5.0**, with Cargo features `server` and `transport-streamable-http-server`. The SDK is Apache-2.0 licensed, maintained in `modelcontextprotocol/rust-sdk`, and provides the current Streamable HTTP implementation as a Tower service that mounts directly in Lantern's existing Axum router. No legacy HTTP+SSE transport or additional web framework is used.
 
 The design goal is deliberately narrow: an AI client gets useful memory operations without receiving raw database mutation authority.
 
@@ -18,9 +20,46 @@ cargo run -p lighting -- mcp
 
 The default service endpoint is `http://127.0.0.1:4317`.
 
+## Read-only remote MCP
+
+Start the normal service in one terminal:
+
+```bash
+cargo run -p lighting -- serve
+```
+
+Start the separate MCP adapter in another:
+
+```bash
+cargo run -p lighting -- mcp-http
+```
+
+It listens at `http://127.0.0.1:4318/mcp`. The bind host must be a loopback IP address. Configure the service URL with `LIGHTING_SERVICE_URL`; configure the adapter bind with `LIGHTING_MCP_HTTP_HOST` and `LIGHTING_MCP_HTTP_PORT` (defaults `127.0.0.1` and `4318`). Startup logs report the local bind address. The main REST service remains on its own loopback endpoint at port `4317`, and its routes are not mounted on the MCP listener.
+
+The remote catalogue contains exactly:
+
+- `lantern_status`
+- `lantern_search`
+- `lantern_context`
+- `lantern_why`
+
+Each advertises `readOnlyHint: true`, `destructiveHint: false`, and `openWorldHint: false`. Calls to `lantern_remember`, `lantern_correct`, `lantern_foreman_queue`, `lantern_foreman_review`, and all other unlisted tool names fail at the MCP routing boundary. Argument validation and service-call behavior use the existing stdio implementation.
+
+To make a temporary HTTPS development proof, first confirm a Secure MCP Tunnel is available in the actual account and product surface. If it is unavailable, an ephemeral free HTTPS tunnel such as Cloudflare Quick Tunnel can forward only the adapter:
+
+```bash
+cloudflared tunnel --no-autoupdate --url http://127.0.0.1:4318 --http-host-header 127.0.0.1:4318
+```
+
+Use the generated `https://…/mcp` URL only while that tunnel process is running. Do not forward port `4317`, open a firewall port, or treat the random HTTPS URL as durable configuration. Stop the tunnel after the proof. This is temporary evidence plumbing; durable production exposure needs a separately designed authenticated/private deployment.
+
+For protocol verification, connect an MCP client or MCP Inspector to `http://127.0.0.1:4318/mcp`, initialize, list tools, call all four reads, and attempt one unavailable tool name and one invalid argument. Repeat against the temporary HTTPS URL while the tunnel runs. A raw curl request alone is not protocol proof.
+
+For the shared-store check, search for the known marker through remote MCP, take the memory ID from the actual result, call `lantern_why` with that ID, then independently repeat search and provenance retrieval through `lighting mcp` or Pi's existing stdio connection. Match both ID and provenance. Restarting the adapters or Lantern service must not change the record; the durable Lantern service remains the only store.
+
 ## Exposed tools
 
-The bridge exposes exactly eight bounded tools:
+The local stdio bridge exposes exactly eight bounded tools:
 
 - `lantern_context`
 - `lantern_remember`
@@ -30,6 +69,8 @@ The bridge exposes exactly eight bounded tools:
 - `lantern_status`
 - `lantern_foreman_queue`
 - `lantern_foreman_review`
+
+Remote MCP intentionally exposes only the four read tools listed above.
 
 Unknown tool arguments are rejected. The MCP client does not receive a generic SQL/database tool.
 

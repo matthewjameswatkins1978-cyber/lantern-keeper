@@ -95,7 +95,7 @@ fn handle_request(
     }
 }
 
-fn call_tool(
+pub(crate) fn call_tool(
     client: &reqwest::blocking::Client,
     service_url: &str,
     params: &Value,
@@ -517,7 +517,7 @@ fn write_response(stdout: &mut impl Write, response: Value) -> io::Result<()> {
     stdout.flush()
 }
 
-fn tool_definitions() -> Vec<Value> {
+pub(crate) fn tool_definitions() -> Vec<Value> {
     vec![
         tool(
             "lantern_context",

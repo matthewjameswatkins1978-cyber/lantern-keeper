@@ -19,7 +19,9 @@ use tokio::net::TcpListener;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+mod bridge_github;
 mod mcp;
+mod mcp_http;
 mod trust_console;
 
 const DEFAULT_HOST: &str = "127.0.0.1";
@@ -52,6 +54,15 @@ fn main() -> anyhow::Result<()> {
         Command::Mcp => {
             let url = cli.service_url.unwrap_or_else(default_service_url);
             mcp::run(&url)
+        }
+        Command::McpHttp { host, port } => {
+            init_tracing();
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("failed to create tokio runtime")?;
+            rt.block_on(mcp_http::run(&url, &host, port))
         }
         Command::Doctor { json } => {
             init_tracing();
@@ -294,6 +305,75 @@ fn main() -> anyhow::Result<()> {
                 },
             )
         }
+        Command::Bridge(bridge_github::BridgeSubcommand::Github(subcmd)) => {
+            init_tracing();
+            let url = cli.service_url.unwrap_or_else(default_service_url);
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("failed to create tokio runtime")?;
+            rt.block_on(async {
+                match subcmd {
+                    bridge_github::BridgeGithubSubcommand::Once {
+                        post_repo,
+                        git_repo,
+                        state_path,
+                        push,
+                    } => {
+                        let config = bridge_github::runner::BridgeConfig {
+                            service_url: url,
+                            post_repo_path: post_repo,
+                            git_repo_path: git_repo,
+                            state_path,
+                            poll_interval_secs: 30,
+                            push,
+                            audit_token: std::env::var("LANTERN_TETHERS_AUDIT_TOKEN").ok(),
+                            tethers_engine_path:
+                                bridge_github::tethers::TethersGate::find_default_engine_path(),
+                        };
+                        let runner = bridge_github::runner::BridgeRunner::new(config);
+                        runner.run_once().await
+                    }
+                    bridge_github::BridgeGithubSubcommand::Run {
+                        post_repo,
+                        git_repo,
+                        state_path,
+                        poll_interval_secs,
+                        push,
+                    } => {
+                        let config = bridge_github::runner::BridgeConfig {
+                            service_url: url,
+                            post_repo_path: post_repo,
+                            git_repo_path: git_repo,
+                            state_path,
+                            poll_interval_secs,
+                            push,
+                            audit_token: std::env::var("LANTERN_TETHERS_AUDIT_TOKEN").ok(),
+                            tethers_engine_path:
+                                bridge_github::tethers::TethersGate::find_default_engine_path(),
+                        };
+                        let runner = bridge_github::runner::BridgeRunner::new(config);
+                        runner.run_daemon().await
+                    }
+                    bridge_github::BridgeGithubSubcommand::Doctor {
+                        post_repo,
+                        git_repo,
+                        state_path,
+                        json,
+                    } => {
+                        let report = bridge_github::doctor::DoctorReport::run(
+                            &url,
+                            &post_repo,
+                            git_repo.as_deref(),
+                            &state_path,
+                        )
+                        .await;
+                        report.print_diagnostics(json);
+                        Ok(())
+                    }
+                }
+            })
+        }
     }
 }
 
@@ -316,6 +396,15 @@ enum Command {
     Version,
     /// Run the local stdio MCP bridge over the Lighting HTTP service.
     Mcp,
+    /// Run the read-only Streamable HTTP MCP adapter over the Lighting HTTP service.
+    McpHttp {
+        /// Loopback interface for the MCP endpoint.
+        #[arg(long, env = "LIGHTING_MCP_HTTP_HOST", default_value = DEFAULT_HOST)]
+        host: String,
+        /// Port for the MCP endpoint.
+        #[arg(long, env = "LIGHTING_MCP_HTTP_PORT", default_value_t = 4318)]
+        port: u16,
+    },
     /// Inspect the local Lantern and SurrealDB development baseline.
     Doctor {
         /// Output JSON only.
@@ -516,6 +605,9 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Manage the Lantern transport bridge.
+    #[command(subcommand)]
+    Bridge(bridge_github::BridgeSubcommand),
 }
 
 async fn serve() -> anyhow::Result<()> {
