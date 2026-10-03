@@ -7,6 +7,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::sync::Barrier;
 use uuid::Uuid;
 
+#[ignore = "invoked by Terror Bat with explicit bounded scenario variables"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn emit_history() -> Result<(), Box<dyn std::error::Error>> {
     let mode = std::env::var("TB_LANTERN_SCENARIO")?;
