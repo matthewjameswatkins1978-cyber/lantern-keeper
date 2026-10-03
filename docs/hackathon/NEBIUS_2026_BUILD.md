@@ -16,9 +16,9 @@ This living checklist records only work actually implemented and verified.
 - [ ] F — adversarial benchmark and baseline comparison.
 - [x] G — bounded OpenShell effect boundary (local WSL/Docker, authenticated
   Lantern Warden authority, Tethers Trail, and receipt ordering proven).
-- [ ] H — POWER / STILL TRUE / WHY trust console.
-- [ ] I — resettable public synthetic demo.
-- [ ] J — submission hardening, clean clone, CI, and release evidence.
+- [x] H — POWER / STILL TRUE / WHY trust console (M6 local console; evidence: `evidence/m6-trust-console.json`).
+- [x] I — resettable public synthetic demo (M7 replay image, clean-room build, restart smoke; evidence: `evidence/m7-public-demo.json`).
+- [ ] J — submission hardening, clean clone, CI, and release evidence (local evidence and CI recorded; hosted Nebius endpoint remains blocked).
 
 ## Current checkpoint
 
