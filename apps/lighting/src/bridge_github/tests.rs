@@ -351,93 +351,128 @@ async fn test_executor_tethers_allow_ask_deny_unavailable() {
 
 #[tokio::test]
 async fn test_executor_observed_hash_precondition_conflict() {
+    use lighting_core::{MemoryRepository, MemorySearchQuery};
+    use lighting_service::{AppState, BridgeIntentService, MemoryService, build_router};
+    use lighting_store_surreal::{
+        StoreConfig, SurrealBridgeIntentRepository, SurrealMemoryRepository, SurrealStore,
+    };
+
     let temp = TestTempDir::new();
     let state_path = temp.path().join("state.json");
     let mut state = BridgeStateStore::load_or_create(&state_path).unwrap();
+    let mut config = StoreConfig::from_env();
+    config.storage = "embedded-surrealkv".to_string();
+    config.path = temp.path().join("store");
+    config.namespace = "bridge_observed_hash".to_string();
+    config.database = "durability".to_string();
+    config.username.clear();
+    config.password.clear();
 
-    // Start mock server returning recall with a memory that has a known content hash
-    let app = Router::new()
-        .route(
-            "/api/v1/tethers/authority/check",
-            post(|| async {
-                Json(json!({
-                    "decision": "ALLOW",
-                    "grant_id": "grant_ok"
-                }))
-            }),
+    // Use the real memory and bridge-intent HTTP routes backed by SurrealKV.
+    let store = SurrealStore::connect(&config).await.unwrap();
+    store.initialise_schema().await.unwrap();
+    let memory_repo = Arc::new(SurrealMemoryRepository::new(store.clone()));
+    memory_repo.migrate().await.unwrap();
+    let bridge_repo = Arc::new(SurrealBridgeIntentRepository::new(store.clone()));
+    bridge_repo.migrate().await.unwrap();
+    let memory_service = MemoryService::new(memory_repo.clone());
+    let original = memory_service
+        .remember(
+            serde_json::from_value(json!({
+                "content": "Original live content", "kind": "fact", "agent": "test"
+            }))
+            .unwrap(),
         )
-        .route(
-            "/api/v1/memories/recall",
-            post(|| async {
-                Json(json!({
-                    "memories": [{
-                        "id": "019323ef-6258-75b2-a42e-13c2f0fcf6d6",
-                        "content": "Original live content",
-                        "kind": "fact",
-                        "status": "active"
-                    }]
-                }))
-            }),
-        )
-        .route(
-            "/api/v1/bridge/intents/claim",
-            post(|Json(req): Json<serde_json::Value>| async move {
-                Json(json!({
-                    "outcome": "claimed",
-                    "record": {
-                        "intent_id": req.get("intent_id").unwrap_or(&json!("")),
-                        "status": "CLAIMED",
-                    }
-                }))
-            }),
-        )
-        .route(
-            "/api/v1/bridge/intents/complete",
-            post(
-                |Json(req): Json<serde_json::Value>| async move { Json(json!({ "intent": req })) },
-            ),
-        );
-
+        .await
+        .unwrap();
+    let mut app_state = AppState::new_unready();
+    app_state.memory_service = Some(memory_service);
+    app_state.bridge_intent_service = Some(BridgeIntentService::new(bridge_repo.clone()));
+    app_state.mark_ready();
+    let app = build_router(app_state);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let server_url = format!("http://{}", listener.local_addr().unwrap());
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+            .unwrap();
     });
 
-    let tethers = TethersGate::new(server_url.clone(), None, None);
+    // Only authority is mocked; all target reads and possible mutations use the store.
+    let authority = Router::new().route(
+        "/api/v1/tethers/authority/check",
+        post(|| async { Json(json!({ "decision": "ALLOW", "grant_id": "grant_ok" })) }),
+    );
+    let authority_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let authority_url = format!("http://{}", authority_listener.local_addr().unwrap());
+    let authority_server = tokio::spawn(async move {
+        axum::serve(authority_listener, authority).await.unwrap();
+    });
+    let tethers = TethersGate::new(authority_url, None, None);
     let executor = BridgeExecutor::new(server_url, tethers, None);
-
-    // Intent specifies an outdated observed hash (target has record_id only)
     let intent_conflict = json!({
         "schema": "lantern.intent.v1",
         "intent_id": "01K999CONFLICT1234567",
         "action": "memory.archive",
         "requested_by": { "actor": "client", "transport": "github" },
         "created_at": "2026-10-02T05:00:00Z",
-        "target": {
-            "record_id": "019323ef-6258-75b2-a42e-13c2f0fcf6d6"
-        },
+        "target": { "record_id": original.id.as_str() },
         "observed": {
             "record_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
         },
-        "payload": {
-            "reason": "Archiving outdated memory"
-        }
+        "payload": { "reason": "Archiving outdated memory" }
     });
-
     let discovered = DiscoveredIntentCommit {
         commit_sha: "commit_conflict_1".to_string(),
         intent_file_path: "intents/01K999CONFLICT1234567.json".to_string(),
         intent_raw_json: serde_json::to_string(&intent_conflict).unwrap(),
     };
-
     let receipt = executor
         .process_discovered_intent(&discovered, &mut state, None)
         .await;
     assert_eq!(receipt.status, ReceiptStatus::Conflict);
-    let err_str = receipt.error.unwrap();
-    assert!(err_str.contains("record hash mismatch"));
+    assert!(receipt.error.unwrap().contains("record hash mismatch"));
+
+    drop(executor);
+    shutdown_tx.send(()).unwrap();
+    server.await.unwrap();
+    authority_server.abort();
+    let _ = authority_server.await;
+    drop(memory_repo);
+    drop(bridge_repo);
+    drop(store);
+    // SurrealKV closes its file-backed worker asynchronously on Windows.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let reopened = SurrealStore::connect(&config).await.unwrap();
+    reopened.initialise_schema().await.unwrap();
+    let repo = SurrealMemoryRepository::new(reopened);
+    repo.migrate().await.unwrap();
+    let durable = repo.get(&original.id).await.unwrap().unwrap();
+    assert_eq!(
+        durable, original,
+        "stale observed hash must leave every target field unchanged"
+    );
+    let memories = repo
+        .search(&MemorySearchQuery {
+            project_id: None,
+            phrase: None,
+            include_inactive: true,
+            as_of: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        memories.len(),
+        1,
+        "conflict must not create replacement memory"
+    );
+    drop(repo);
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 }
 
 #[tokio::test]
