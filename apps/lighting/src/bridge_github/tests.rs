@@ -836,3 +836,200 @@ fn test_idle_cycle_writes_status_file_to_disk() {
     );
     assert!(parsed.authority_path_reachable);
 }
+
+#[tokio::test]
+async fn hostile_authority_history() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = TestTempDir::new();
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let endpoint_calls = calls.clone();
+    let app = Router::new()
+        .route(
+            "/api/v1/tethers/authority/check",
+            post(|Json(value): Json<serde_json::Value>| async move {
+                let decision = match value["principal_id"].as_str().unwrap_or("") {
+                    "agent:allow" => "ALLOW",
+                    "agent:ask" => "ASK",
+                    _ => "DENY",
+                };
+                Json(json!({"decision":decision,"grant_id":"fixture","reason":"fixture decision"}))
+            }),
+        )
+        .route(
+            "/api/v1/memories",
+            post(move || {
+                let calls = endpoint_calls.clone();
+                async move {
+                    calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Json(json!({"id":"019323ef-6258-75b2-a42e-13c2f0fcf6d6","content":"fixture"}))
+                }
+            }),
+        );
+    // Canonical claim/complete are mocked here: this fixture qualifies the real
+    // runner's local checkpoint/replay and independent mutation counts, not
+    // canonical SurrealKV durability (covered separately by store tests).
+    let app = app
+        .route(
+            "/api/v1/bridge/intents/claim",
+            post(|Json(req): Json<serde_json::Value>| async move {
+                Json(json!({"outcome": "claimed", "record": {
+                    "intent_id": req["intent_id"], "status": "CLAIMED"
+                }}))
+            }),
+        )
+        .route(
+            "/api/v1/bridge/intents/complete",
+            post(|Json(req): Json<serde_json::Value>| async move { Json(json!({"intent": req})) }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let url = format!("http://{}", listener.local_addr()?);
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let dead = TcpListener::bind("127.0.0.1:0").await?;
+    let dead_url = format!("http://{}", dead.local_addr()?);
+    drop(dead);
+    let mut history = Vec::new();
+    for actor in ["allow", "ask", "deny", "unavailable"] {
+        let gate = TethersGate::new(
+            if actor == "unavailable" {
+                dead_url.clone()
+            } else {
+                url.clone()
+            },
+            None,
+            None,
+        );
+        let executor = BridgeExecutor::new(url.clone(), gate, None);
+        let mut state =
+            BridgeStateStore::load_or_create(&temp.path().join(format!("{actor}.json")))?;
+        let raw = json!({"schema":"lantern.intent.v1","intent_id":format!("hostile-{actor}"),"action":"memory.create","requested_by":{"actor":actor,"transport":"github"},"created_at":"2026-10-03T00:00:00Z","payload":{"content":"disposable fixture"}});
+        let discovered = DiscoveredIntentCommit {
+            commit_sha: format!("fixture-{actor}"),
+            intent_file_path: format!("intents/hostile-{actor}.json"),
+            intent_raw_json: serde_json::to_string(&raw)?,
+        };
+        let before = calls.load(std::sync::atomic::Ordering::SeqCst);
+        let receipt = executor
+            .process_discovered_intent(&discovered, &mut state, None)
+            .await;
+        let after = calls.load(std::sync::atomic::Ordering::SeqCst);
+        history.push(
+            json!({"actor":actor,"before_calls":before,"after_calls":after,"receipt":receipt}),
+        );
+    }
+    server.abort();
+    let _ = server.await;
+    println!(
+        "TB_BRIDGE_HISTORY={}",
+        json!({"schema":"lantern-authority-history/v1","history":history})
+    );
+    Ok(())
+}
+
+// Full offline runner cycles against an owned local Git remote and counted mock endpoint.
+#[tokio::test]
+async fn hostile_restarted_cycles_history() -> Result<(), Box<dyn std::error::Error>> {
+    use super::runner::{BridgeConfig, BridgeRunner};
+    let temp = TestTempDir::new();
+    let queue_path = temp.path().join("queue");
+    std::fs::create_dir_all(&queue_path)?;
+    init_test_git_repo(&queue_path);
+    run_git_cmd(&queue_path, &["branch", "receipts"]);
+    let remote_path = temp
+        .path()
+        .join("matthewjameswatkins1978-cyber")
+        .join("lantern-post.git");
+    std::fs::create_dir_all(remote_path.parent().unwrap())?;
+    let remote = remote_path.to_string_lossy().replace('\\', "/");
+    run_git_cmd(temp.path(), &["init", "--bare", &remote]);
+    run_git_cmd(&queue_path, &["remote", "add", "origin", &remote]);
+    run_git_cmd(&queue_path, &["push", "origin", "--all"]);
+    let intents_path = queue_path.join("intents");
+    std::fs::create_dir_all(&intents_path)?;
+    let expected = ["hostile-intent-A", "hostile-intent-B", "hostile-intent-C"];
+    for id in expected {
+        let raw = json!({"schema":"lantern.intent.v1","intent_id":id,"action":"memory.create","requested_by":{"actor":"fixture","transport":"github"},"created_at":"2026-10-03T00:00:00Z","payload":{"content":id}});
+        std::fs::write(
+            intents_path.join(format!("{id}.json")),
+            serde_json::to_string(&raw)?,
+        )?;
+        run_git_cmd(&queue_path, &["add", "intents"]);
+        run_git_cmd(&queue_path, &["commit", "-m", id]);
+    }
+    run_git_cmd(&queue_path, &["push", "origin", "inbox"]);
+    let head = run_git_cmd(&queue_path, &["rev-parse", "inbox"]);
+    let mutation_path = temp.path().join("mutations.json");
+    std::fs::write(&mutation_path, "[]")?;
+    let mutation_file = mutation_path.clone();
+    let app = Router::new()
+        .route("/api/v1/tethers/authority/check", post(|| async { Json(json!({"decision":"ALLOW","grant_id":"fixture"})) }))
+        .route("/api/v1/memories", post(move |Json(value): Json<serde_json::Value>| {
+            let path = mutation_file.clone();
+            async move {
+                use std::io::Write;
+                let mut rows: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                rows.push(value.clone());
+                let mut file = std::fs::File::create(path).unwrap();
+                file.write_all(serde_json::to_string(&rows).unwrap().as_bytes()).unwrap();
+                file.sync_all().unwrap();
+                Json(json!({"id":"019323ef-6258-75b2-a42e-13c2f0fcf6d6","content":value["content"]}))
+            }
+        }));
+    // Canonical claim/complete are mocked here: this fixture qualifies the real
+    // runner's local checkpoint/replay and independent mutation counts, not
+    // canonical SurrealKV durability (covered separately by store tests).
+    let app = app
+        .route(
+            "/api/v1/bridge/intents/claim",
+            post(|Json(req): Json<serde_json::Value>| async move {
+                Json(json!({"outcome": "claimed", "record": {
+                    "intent_id": req["intent_id"], "status": "CLAIMED"
+                }}))
+            }),
+        )
+        .route(
+            "/api/v1/bridge/intents/complete",
+            post(|Json(req): Json<serde_json::Value>| async move { Json(json!({"intent": req})) }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let url = format!("http://{}", listener.local_addr()?);
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let state_path = temp.path().join("state.json");
+    let config = BridgeConfig {
+        service_url: url,
+        post_repo_path: queue_path.clone(),
+        git_repo_path: None,
+        state_path: state_path.clone(),
+        poll_interval_secs: 1,
+        push: false,
+        audit_token: None,
+        tethers_engine_path: None,
+    };
+    let mut cycles = Vec::new();
+    for iteration in 0..3 {
+        let runner = BridgeRunner::new(config.clone());
+        let before: Vec<serde_json::Value> =
+            serde_json::from_slice(&std::fs::read(&mutation_path)?)?;
+        let result = runner.run_once().await;
+        drop(runner);
+        let reopened = BridgeStateStore::load_or_create(&state_path)?;
+        let after: Vec<serde_json::Value> =
+            serde_json::from_slice(&std::fs::read(&mutation_path)?)?;
+        cycles.push(json!({"iteration":iteration,"before_calls":before.len(),"after_calls":after.len(),"completed":result.is_ok(),"error":result.err().map(|e|format!("{e:#}")),"reopened_state":reopened.data}));
+    }
+    server.abort();
+    let _ = server.await;
+    let mutations: Vec<serde_json::Value> =
+        serde_json::from_slice(&std::fs::read(&mutation_path)?)?;
+    let mut receipts = Vec::new();
+    for entry in std::fs::read_dir(queue_path.join("receipts"))? {
+        receipts.push(serde_json::from_slice::<serde_json::Value>(
+            &std::fs::read(entry?.path())?,
+        )?);
+    }
+    let status: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(queue_path.join("status/bridge.json"))?)?;
+    println!(
+        "TB_BRIDGE_HISTORY={}",
+        json!({"schema":"lantern-runner-history/v1","cycles":cycles,"expected_intents":expected,"inbox_head":head,"mutations":mutations,"receipts":receipts,"status":status,"remote_kind":"disposable_local_bare_git","push_enabled":false})
+    );
+    Ok(())
+}
