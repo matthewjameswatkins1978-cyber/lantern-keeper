@@ -92,7 +92,7 @@
     "lighting_service_tests": "79 passed, 1 ignored integration test",
     "lighting_tests": "11 passed",
     "docker_image_build": "passed",
-    "ci": "pending"
+    "ci": "passed"
   },
   "cost_control": {
     "nebius_resources_created": false,
