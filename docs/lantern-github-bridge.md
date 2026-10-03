@@ -61,6 +61,14 @@ The Lantern GitHub Bridge turns GitHub into a durable, two-way transport for cro
 
 ---
 
+### Mirror byte integrity and checkout policy
+
+Record sidecars certify the SHA-256 of the exact Lantern-exported bytes; `git_blob_sha` identifies the Git blob containing those same bytes. These are exact evidence hashes, not hashes of normalised text. Git blob content remains an independent integrity check.
+
+Every export includes `mirror/.gitattributes` with `* -text`. Git applies this policy throughout the generated mirror tree, including nested records, sidecars, index shards, manifest and status. It prevents text/EOL conversion during Git add and checkout, so `core.autocrlf=true` cannot rewrite integrity-covered LF bytes to CRLF. The policy travels with the atomically published mirror; repository text outside `mirror/` keeps its normal Git behaviour. Users do not need to change machine-wide Git settings.
+
+Verify a record's policy with `git check-attr text -- mirror/records/.../record.md` (expected: `text: unset`). Compare the sidecar SHA-256 against both the checked-out file and the bytes returned by `git show HEAD:mirror/records/.../record.md`.
+
 ## 3. Protocol Specification
 
 ### Protocol Descriptor (`lantern-post/protocol.json`)
