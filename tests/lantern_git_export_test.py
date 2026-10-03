@@ -1,3 +1,6 @@
+import argparse
+import subprocess
+from unittest import mock
 import importlib.util
 import json
 import os
@@ -14,6 +17,111 @@ SPEC.loader.exec_module(lantern_git_export)
 
 
 class LanternGitExportTests(unittest.TestCase):
+    def export_sample(self, root, require_marker=None):
+        records = [
+            {"id": "ed7e2de6-2d4d-464a-903d-f41df1b990f3", "kind": "reference",
+             "content": "Exact evidence\nwith multiple lines", "archived": False},
+            {"id": "c1a0e2ea-40a9-4ebc-8334-0525899b78f2", "kind": "reference",
+             "content": "Archived evidence", "archived": True},
+        ]
+        responses = [
+            {"service": "lighting", "project": "lantern-keeper", "version": "test"},
+            {"memory_items": records}, {"claims": []}, {"beliefs": []},
+            {"memories": []}, {"projects": []},
+        ]
+        args = argparse.Namespace(
+            service_url="http://127.0.0.1:4317", output=str(root),
+            require_marker=require_marker,
+            require_uuid=records[0]["id"] if require_marker else None,
+        )
+        with mock.patch.object(lantern_git_export, "get_json", side_effect=responses):
+            return lantern_git_export.export(args)
+
+    def test_autocrlf_checkout_preserves_exact_mirror_evidence(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repository = Path(temp) / "source"
+            checkout = Path(temp) / "checkout"
+            self.export_sample(repository)
+            # Outside the generated tree, normal text checkout still converts LF.
+            (repository / "outside.txt").write_bytes(b"ordinary text\nsecond line\n")
+
+            def git(root, *args):
+                return subprocess.check_output(
+                    ["git", "-C", str(root), *args], stderr=subprocess.PIPE,
+                )
+
+            git(repository, "init")
+            git(repository, "config", "core.autocrlf", "false")
+            git(repository, "add", ".")
+            git(repository, "-c", "user.name=Lantern test",
+                "-c", "user.email=lantern-test@example.invalid",
+                "-c", "commit.gpgsign=false", "commit", "-m", "Export evidence")
+            subprocess.check_output(
+                ["git", "clone", "--no-checkout", str(repository), str(checkout)],
+                stderr=subprocess.PIPE,
+            )
+            git(checkout, "config", "core.autocrlf", "true")
+            git(checkout, "checkout", "--force", "HEAD")
+            self.assertEqual(git(checkout, "config", "--get", "core.autocrlf").strip(), b"true")
+            self.assertEqual(
+                (checkout / "outside.txt").read_bytes(),
+                b"ordinary text\r\nsecond line\r\n",
+            )
+            # The basename pattern must cover nested records, sidecars and indexes,
+            # as well as the manifest, status and policy itself.
+            for path in sorted((checkout / "mirror").rglob("*")):
+                if not path.is_file():
+                    continue
+                relative = path.relative_to(checkout).as_posix()
+                self.assertEqual(
+                    git(checkout, "check-attr", "text", "--", relative).decode().strip(),
+                    f"{relative}: text: unset",
+                )
+                self.assertEqual(
+                    path.read_bytes(), (repository / relative).read_bytes(),
+                    relative,
+                )
+            sidecars = sorted((checkout / "mirror" / "records").rglob("*.integrity.json"))
+            self.assertEqual(len(sidecars), 2)
+            for sidecar_path in sidecars:
+                sidecar = json.loads(sidecar_path.read_bytes())
+                relative = f"mirror/{sidecar['path']}"
+                blob = git(checkout, "show", f"HEAD:{relative}")
+                data = (checkout / relative).read_bytes()
+                self.assertEqual(lantern_git_export.hashlib.sha256(blob).hexdigest(), sidecar["sha256"])
+                self.assertEqual(lantern_git_export.hashlib.sha256(data).hexdigest(), sidecar["sha256"])
+                self.assertEqual(
+                    git(checkout, "rev-parse", f"HEAD:{relative}").decode().strip(),
+                    sidecar["git_blob_sha"],
+                )
+                self.assertEqual(len(data), sidecar["bytes"])
+            manifest_data = (checkout / "mirror" / "manifest.json").read_bytes()
+            status = json.loads((checkout / "mirror" / "status.json").read_bytes())
+            self.assertEqual(
+                status["manifest_digest"],
+                f"sha256:{lantern_git_export.hashlib.sha256(manifest_data).hexdigest()}",
+            )
+
+    def test_failed_export_preserves_existing_mirror_and_policy(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.export_sample(root)
+            mirror = root / "mirror"
+            before = {
+                path.relative_to(mirror).as_posix(): path.read_bytes()
+                for path in mirror.rglob("*") if path.is_file()
+            }
+            self.assertIn(".gitattributes", before)
+            with self.assertRaisesRegex(RuntimeError, "required marker/UUID"):
+                self.export_sample(root, require_marker="absent-marker")
+            after = {
+                path.relative_to(mirror).as_posix(): path.read_bytes()
+                for path in mirror.rglob("*") if path.is_file()
+            }
+            self.assertEqual(before, after)
+            self.assertFalse(list(root.glob(".mirror-staging-*")))
+            self.assertFalse((root / "mirror.previous").exists())
+
     def test_uuid_mapping_is_stable_and_validated(self):
         record_id = "ed7e2de6-2d4d-464a-903d-f41df1b990f3"
         self.assertEqual(
