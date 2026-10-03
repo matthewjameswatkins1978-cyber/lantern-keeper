@@ -591,3 +591,75 @@ fn test_status_bridge_json_roundtrip() {
         Some("2026-10-02T05:00:00Z")
     );
 }
+
+// Test-only factual export for Terror Bat. Product invariants are checked outside this harness.
+#[tokio::test]
+async fn hostile_authority_history() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = TestTempDir::new();
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let endpoint_calls = calls.clone();
+    let app = Router::new()
+        .route(
+            "/api/v1/tethers/authority/check",
+            post(|Json(value): Json<serde_json::Value>| async move {
+                let decision = match value["principal_id"].as_str().unwrap_or("") {
+                    "agent:allow" => "ALLOW",
+                    "agent:ask" => "ASK",
+                    _ => "DENY",
+                };
+                Json(json!({"decision":decision,"grant_id":"fixture","reason":"fixture decision"}))
+            }),
+        )
+        .route(
+            "/api/v1/memories",
+            post(move || {
+                let calls = endpoint_calls.clone();
+                async move {
+                    calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Json(json!({"id":"019323ef-6258-75b2-a42e-13c2f0fcf6d6","content":"fixture"}))
+                }
+            }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let url = format!("http://{}", listener.local_addr()?);
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let dead = TcpListener::bind("127.0.0.1:0").await?;
+    let dead_url = format!("http://{}", dead.local_addr()?);
+    drop(dead);
+    let mut history = Vec::new();
+    for actor in ["allow", "ask", "deny", "unavailable"] {
+        let gate = TethersGate::new(
+            if actor == "unavailable" {
+                dead_url.clone()
+            } else {
+                url.clone()
+            },
+            None,
+            None,
+        );
+        let executor = BridgeExecutor::new(url.clone(), gate, None);
+        let mut state =
+            BridgeStateStore::load_or_create(&temp.path().join(format!("{actor}.json")))?;
+        let raw = json!({"schema":"lantern.intent.v1","intent_id":format!("hostile-{actor}"),"action":"memory.create","requested_by":{"actor":actor,"transport":"github"},"created_at":"2026-10-03T00:00:00Z","payload":{"content":"disposable fixture"}});
+        let discovered = DiscoveredIntentCommit {
+            commit_sha: format!("fixture-{actor}"),
+            intent_file_path: format!("intents/{actor}.json"),
+            intent_raw_json: serde_json::to_string(&raw)?,
+        };
+        let before = calls.load(std::sync::atomic::Ordering::SeqCst);
+        let receipt = executor
+            .process_discovered_intent(&discovered, &mut state)
+            .await;
+        let after = calls.load(std::sync::atomic::Ordering::SeqCst);
+        history.push(
+            json!({"actor":actor,"before_calls":before,"after_calls":after,"receipt":receipt}),
+        );
+    }
+    server.abort();
+    let _ = server.await;
+    println!(
+        "TB_BRIDGE_HISTORY={}",
+        json!({"schema":"lantern-authority-history/v1","history":history})
+    );
+    Ok(())
+}
