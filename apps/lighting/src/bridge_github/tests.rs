@@ -643,7 +643,7 @@ async fn hostile_authority_history() -> Result<(), Box<dyn std::error::Error>> {
         let raw = json!({"schema":"lantern.intent.v1","intent_id":format!("hostile-{actor}"),"action":"memory.create","requested_by":{"actor":actor,"transport":"github"},"created_at":"2026-10-03T00:00:00Z","payload":{"content":"disposable fixture"}});
         let discovered = DiscoveredIntentCommit {
             commit_sha: format!("fixture-{actor}"),
-            intent_file_path: format!("intents/{actor}.json"),
+            intent_file_path: format!("intents/hostile-{actor}.json"),
             intent_raw_json: serde_json::to_string(&raw)?,
         };
         let before = calls.load(std::sync::atomic::Ordering::SeqCst);
