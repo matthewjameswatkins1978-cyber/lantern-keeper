@@ -1,0 +1,28 @@
+{
+  "schema": "lantern.warden.nebius-token-factory-live/1",
+  "status": "passed",
+  "verification_timestamp_utc": "2026-10-04T00:52:08Z",
+  "source_commit": "45389c81f9bb79db2fcf462458b6ffe7b1f207d5",
+  "provider": "Nebius Token Factory",
+  "api_base_url": "https://api.tokenfactory.nebius.com/v1",
+  "model": "nvidia/nemotron-3-super-120b-a12b",
+  "model_listing": {
+    "status": "passed",
+    "model_count": 25,
+    "configured_model_available": true
+  },
+  "dreamer": {
+    "command": "cargo test -p lighting-service --lib live_nebius_candidate_is_candidate_only -- --nocapture",
+    "status": "passed",
+    "tests_passed": 1,
+    "candidate_validation": "passed",
+    "provider_metadata": "validated",
+    "authority_grant_or_revocation_fields": "absent"
+  },
+  "cloud_serverless": {
+    "status": "not_provisioned",
+    "read_only_listing": "No endpoints, jobs, or Devlabs",
+    "resources_created": false
+  },
+  "secrets_included": false
+}

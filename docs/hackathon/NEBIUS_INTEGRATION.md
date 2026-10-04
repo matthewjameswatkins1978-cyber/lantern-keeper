@@ -26,5 +26,5 @@ Dreamer candidates.
 
 - Adapter implementation: present on the hackathon branch.
 - Offline strict DTO/failure-path tests: passed.
-- Live Token Factory model listing: not yet run in this workspace.
-- Live Nemotron Dreamer completion: not yet run in this workspace.
+- Live Token Factory model listing: passed 2026-10-04 (25 models; configured Nemotron model available).
+- Live Nemotron Dreamer completion: passed through the real adapter; candidate validation, provider metadata, and the absence of authority fields were confirmed. See [live evidence](evidence/m7-token-factory-live.json).
