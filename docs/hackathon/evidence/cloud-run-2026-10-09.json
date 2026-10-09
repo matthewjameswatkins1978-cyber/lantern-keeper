@@ -1,0 +1,131 @@
+{
+  "captured_at": "2026-10-09T21:34:27+01:00",
+  "application": "Lantern Warden",
+  "mode": "public-demo",
+  "replay_only": true,
+  "cloud": {
+    "provider": "Google Cloud Run",
+    "project_id": "resolve-ai-agentic-2608151746",
+    "project_name": "Resolve AI - Agentic Hackathon",
+    "region": "europe-west2",
+    "service": "lantern-warden-demo",
+    "url": "https://lantern-warden-demo-116252318019.europe-west2.run.app",
+    "revision": "lantern-warden-demo-00002-g2b",
+    "traffic_percent": 100,
+    "image": "ghcr.io/matthewjameswatkins1978-cyber/lantern-warden@sha256:57f31eec266ec4e6229b7960fcb268573315057b7921d75a6b8ffeea82eba5b8",
+    "source_commit": "c641f211ab4518148270a3589382ced193d788af",
+    "source_tag": "warden-v0.1.1-m7",
+    "port": 4317,
+    "cpu": 1,
+    "memory": "1GiB",
+    "min_instances": 0,
+    "max_instances": 1,
+    "billing": "request-based",
+    "timeout_seconds": 60,
+    "max_concurrency": 20,
+    "env": {
+      "WARDEN_PUBLIC_DEMO": "1"
+    },
+    "secrets": []
+  },
+  "billing": {
+    "billing_account": "011489-5956FD-8DE224",
+    "billing_account_name": "My Billing Account",
+    "credit_name": "Marketing - All things agentic hackathon - wturney - 540464243",
+    "credit_remaining_gbp_at_capture": 85.64,
+    "credit_expires": "2026-11-11",
+    "monthly_service_cap_gbp": 4.0,
+    "cap_name": "Lantern Warden Cloud Run £5 cap",
+    "cap_scope": {
+      "project": "resolve-ai-agentic-2608151746",
+      "service": "Cloud Run (run.googleapis.com)"
+    },
+    "alert_thresholds_gbp": [2.0, 3.2, 4.0],
+    "billing_overview_cost_gbp_at_capture": 0.0,
+    "note": "The enforced cap is a protective control with a £1 buffer under the requested £5. Google billing reporting or in-flight usage can still create residual charges, and fixed charges may not pause."
+  },
+  "verification": {
+    "health": {
+      "status_code": 200,
+      "body": {
+        "product": "Lantern Warden",
+        "status": "ready",
+        "mode": "public-demo",
+        "version": "0.1.0",
+        "live_cognition": false
+      }
+    },
+    "console_status_code": 200,
+    "secret_names_checked": [
+      "NEBIUS_API_KEY",
+      "TAVILY_API_KEY",
+      "LANTERN_TETHERS_AUDIT_TOKEN"
+    ],
+    "secret_hits": 0,
+    "security_headers": [
+      "content-security-policy",
+      "x-content-type-options",
+      "x-frame-options",
+      "referrer-policy",
+      "permissions-policy"
+    ],
+    "replay": {
+      "reset": "READY",
+      "attack": "ATTACKED",
+      "retry_before_grant": "denied|NO_AUTHENTICATED_GRANT|NOT INVOKED",
+      "grant": "GRANTED",
+      "retry_after_grant": "success|ALLOW|EXECUTED",
+      "wrong_scope": "WRONG_SCOPE",
+      "revoke": "REVOKED",
+      "retry_after_revoke": "denied|GRANT_REVOKED|NOT INVOKED"
+    },
+    "state": {
+      "mode": "REPLAY",
+      "deployment_mode": "public-demo",
+      "live_cognition": false,
+      "secrets_included": false
+    },
+    "forbidden_paths_status_code": 404,
+    "forbidden_paths": [
+      "/api/v1/authority/grants",
+      "/api/v1/authority/revocations",
+      "/api/v1/authority/check",
+      "/api/v1/tethers/authority/check",
+      "/api/v1/tethers/receipts",
+      "/api/v1/cognitive/search-interpret",
+      "/api/v1/dreamer/propose",
+      "/api/v1/projects/demo/tethers/preview",
+      "/etc/passwd"
+    ]
+  },
+  "resource_observations": {
+    "cloud_run_metrics_window": "2026-10-08T21:34:27+01:00/2026-10-09T21:34:27+01:00",
+    "cloud_memory_utilisation_percent": {
+      "min": 5.5,
+      "max": 5.99,
+      "configured_memory": "1GiB",
+      "interpretation": "approximately 56-61 MiB; derived from utilisation percentage"
+    },
+    "cloud_cpu_utilisation_percent": {
+      "min": 0.5,
+      "max": 1.99
+    },
+    "cloud_max_instance_count": 1,
+    "cloud_startup_latency_ms": {
+      "min": 295.076,
+      "max": 339.73
+    },
+    "local_one_gib_preflight": {
+      "memory": "11.14MiB/1GiB",
+      "memory_percent": 1.09,
+      "health_ready_seconds": 1.89
+    }
+  },
+  "repository": {
+    "deployment_branch": "codex/lantern-warden-cloud-run",
+    "deployment_commit": "c641f211ab4518148270a3589382ced193d788af",
+    "pull_request": "https://github.com/matthewjameswatkins1978-cyber/lantern-keeper/pull/11",
+    "pull_request_status": "open and unmerged",
+    "devpost_submitted": false
+  }
+}
