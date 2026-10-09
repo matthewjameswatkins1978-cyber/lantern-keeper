@@ -1,0 +1,71 @@
+name: Publish public image
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Source commit SHA to stamp on the image
+        required: false
+        type: string
+  push:
+    tags:
+      - "warden-v*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/matthewjameswatkins1978-cyber/lantern-warden
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve source revision
+        id: revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="${{ github.event.inputs.source_sha }}"
+          if [[ -z "$revision" ]]; then
+            revision="${GITHUB_SHA}"
+          fi
+          case "$revision" in
+            *[!0-9a-fA-F]*|'')
+              echo "source_sha must be a hexadecimal commit SHA" >&2
+              exit 1
+              ;;
+          esac
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ steps.revision.outputs.revision }}
+            type=raw,value=m7
+
+      - name: Build and publish Linux image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.revision.outputs.revision }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
