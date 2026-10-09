@@ -6,8 +6,8 @@ use std::{
 use axum::{
     Extension, Router,
     extract::Json,
-    http::StatusCode,
-    response::Html,
+    http::{HeaderName, HeaderValue, StatusCode},
+    response::{Html, Response},
     routing::{get, post},
 };
 use chrono::{Duration, Utc};
@@ -448,7 +448,35 @@ pub fn public_router(console: PublicReplayConsole) -> Router {
         )
         .route("/api/v1/console/replay/retry", post(public_retry))
         .route("/api/v1/console/replay/revoke", post(public_revoke))
+        .layer(axum::middleware::map_response(public_security_headers))
         .layer(Extension(Arc::new(console)))
+}
+
+async fn public_security_headers(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(
+        HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static(
+            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        ),
+    );
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        HeaderName::from_static("x-frame-options"),
+        HeaderValue::from_static("DENY"),
+    );
+    headers.insert(
+        HeaderName::from_static("referrer-policy"),
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(
+        HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
+    response
 }
 
 async fn page() -> Html<&'static str> {
@@ -799,5 +827,32 @@ mod tests {
         let after_revoke = console.retry().await;
         assert_eq!(after_revoke["authority"]["reason_code"], "GRANT_REVOKED");
         assert_eq!(after_revoke["openshell"], "NOT INVOKED");
+    }
+
+    #[tokio::test]
+    async fn public_console_router_sets_restrictive_headers() {
+        use axum::{body::Body, http::Request};
+        use tower::ServiceExt;
+
+        let response = public_router(PublicReplayConsole::new())
+            .oneshot(
+                Request::builder()
+                    .uri("/console")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        assert_eq!(response.headers()["x-frame-options"], "DENY");
+        assert_eq!(response.headers()["referrer-policy"], "no-referrer");
+        assert!(
+            response.headers()["content-security-policy"]
+                .to_str()
+                .unwrap()
+                .contains("frame-ancestors 'none'")
+        );
     }
 }
