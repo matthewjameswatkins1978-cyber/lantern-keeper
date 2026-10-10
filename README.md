@@ -1,5 +1,7 @@
 # Lantern Keeper
 
+> **Developer preview, not a certified public release (repository check: 10 October 2026, `master` at `657affbe`).** `master` CI is passing, but no GitHub Release is published. PR #17 (Windows runtime consolidation + SurrealDB 3.3.0 stable, reconciling PR #12) and PR #11 (Warden M7 demo) are merged; [PR #12](https://github.com/matthewjameswatkins1978-cyber/lantern-keeper/pull/12) is closed as superseded with history preserved. The remote read-only MCP bridge has independent protocol tests, but **native tools are not yet available in ordinary ChatGPT Chat**. Do not infer Chat support from Codex, Work, or MCP Inspector. See [CURRENT.md](CURRENT.md) and the [release gates](docs/ROADMAP.md#release-gates--10-october-2026). Users can build and experiment locally, but managed multi-user hosting, audited security isolation, and formal releases are not yet supported commitments.
+
 > A local-first trust layer for persistent AI memory and controlled agent action.
 
 Lantern Keeper is infrastructure for AI systems that need to **remember without quietly rewriting history** and **act without quietly inheriting unlimited authority**.
