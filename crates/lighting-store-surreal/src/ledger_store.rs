@@ -61,7 +61,7 @@ impl LedgerEventRepository for SurrealLedgerRepository {
             ));
         }
 
-        let record: Option<Object> = self
+        let record: Result<Option<Object>, surrealdb::Error> = self
             .store
             .query(
                 r#"CREATE ledger_event CONTENT {
@@ -104,14 +104,28 @@ impl LedgerEventRepository for SurrealLedgerRepository {
                 serde_json::to_string(&event.metadata).map_err(operation)?,
             ))
             .await
-            .map_err(|error| operation(SurrealLedgerError::Query(error)))?
-            .take(0)
-            .map_err(|error| operation(SurrealLedgerError::Query(error)))?;
+            .and_then(|mut response| response.take(0));
 
-        if record.is_some() {
-            Ok(LedgerIngestResult::Stored(event))
-        } else {
-            Err(operation(SurrealLedgerError::Decode))
+        match record {
+            Ok(Some(_)) => Ok(LedgerIngestResult::Stored(event)),
+            Ok(None) => Err(operation(SurrealLedgerError::Decode)),
+            Err(error) => {
+                // A concurrent writer can win after the initial lookup. Only
+                // reconcile the failed CREATE when a fresh read proves the
+                // canonical winner; otherwise retain the original failure.
+                let winner: Result<Option<Object>, surrealdb::Error> = self
+                    .store
+                    .query("SELECT * FROM ledger_event WHERE idempotency_key = $key LIMIT 1")
+                    .bind(("key", event.idempotency_key.clone()))
+                    .await
+                    .and_then(|mut response| response.take(0));
+                match winner {
+                    Ok(Some(record)) => Ok(LedgerIngestResult::Duplicate(
+                        decode_event(record).map_err(operation)?,
+                    )),
+                    Ok(None) | Err(_) => Err(operation(SurrealLedgerError::Query(error))),
+                }
+            }
         }
     }
 

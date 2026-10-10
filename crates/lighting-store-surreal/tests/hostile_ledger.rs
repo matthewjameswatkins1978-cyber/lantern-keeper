@@ -10,8 +10,11 @@ use uuid::Uuid;
 #[ignore = "invoked by Terror Bat with explicit bounded scenario variables"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn emit_history() -> Result<(), Box<dyn std::error::Error>> {
-    let mode = std::env::var("TB_LANTERN_SCENARIO")?;
-    let count: usize = std::env::var("TB_LANTERN_WRITERS")?.parse()?;
+    // Defaults keep local runs usable; Terror Bat overrides via explicit bounded env.
+    let mode = std::env::var("TB_LANTERN_SCENARIO").unwrap_or_else(|_| "race".into());
+    let count: usize = std::env::var("TB_LANTERN_WRITERS")
+        .unwrap_or_else(|_| "16".into())
+        .parse()?;
     if !(1..=32).contains(&count) {
         return Err("writers outside 1..32".into());
     }

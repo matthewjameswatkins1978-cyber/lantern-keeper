@@ -26,6 +26,10 @@ fn test_config() -> StoreConfig {
     config.storage = "remote-surreal".to_owned();
     config.namespace = "lighting_test".to_owned();
     config.database = format!("lighting_source_test_{}", Uuid::new_v4().simple());
+    if config.username.is_empty() {
+        config.username = "root".to_owned();
+        config.password = "root".to_owned();
+    }
     config
 }
 

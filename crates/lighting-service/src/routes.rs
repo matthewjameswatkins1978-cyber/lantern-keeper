@@ -15,6 +15,11 @@ pub struct VersionResponse {
     pub service: &'static str,
     pub project: &'static str,
     pub version: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub datastore_mode: Option<String>,
+    pub surrealdb_expected_version: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub surrealdb_observed_version: Option<String>,
 }
 
 /// Response returned by `GET /health/ready`.
@@ -24,17 +29,57 @@ pub struct ReadinessResponse {
     pub reason: String,
 }
 
+/// Small public-demo health response. It deliberately contains no endpoint,
+/// storage, environment, or credential details.
+#[derive(Serialize)]
+pub struct PublicHealthResponse {
+    pub product: &'static str,
+    pub status: &'static str,
+    pub mode: &'static str,
+    pub version: &'static str,
+    pub live_cognition: bool,
+}
+
 /// Liveness probe. Always returns 200 — reports that the process is alive.
 pub async fn live() -> Json<LivenessResponse> {
     Json(LivenessResponse { alive: true })
 }
 
+/// Public-demo health. Provider availability is intentionally not inferred
+/// from credentials here; the public build is replay-only.
+pub async fn public_health(
+    State(state): State<AppState>,
+) -> (StatusCode, Json<PublicHealthResponse>) {
+    let status = if state.is_ready() {
+        "ready"
+    } else {
+        "starting"
+    };
+    (
+        if state.is_ready() {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        },
+        Json(PublicHealthResponse {
+            product: "Lantern Warden",
+            status,
+            mode: "public-demo",
+            version: env!("CARGO_PKG_VERSION"),
+            live_cognition: false,
+        }),
+    )
+}
+
 /// Service version information.
-pub async fn version() -> Json<VersionResponse> {
+pub async fn version(State(state): State<AppState>) -> Json<VersionResponse> {
     Json(VersionResponse {
         service: "Lighting",
         project: "Lantern Keeper",
         version: env!("CARGO_PKG_VERSION"),
+        datastore_mode: state.datastore_mode.clone(),
+        surrealdb_expected_version: state.surrealdb_expected_version,
+        surrealdb_observed_version: state.surrealdb_observed_version.clone(),
     })
 }
 

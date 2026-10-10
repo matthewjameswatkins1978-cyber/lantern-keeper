@@ -61,6 +61,7 @@ async fn app(d: &str) -> Router {
         epistemic_service: None,
         authority_service: None,
         dreamer_service: None,
+        ..AppState::default()
     })
 }
 async fn app_default() -> Router {

@@ -94,6 +94,19 @@ impl ReceiptStatus {
             Self::Suspect => "SUSPECT",
         }
     }
+
+    pub fn parse(s: &str) -> Self {
+        match s.to_uppercase().as_str() {
+            "APPLIED" => Self::Applied,
+            "DENIED" => Self::Denied,
+            "REQUIRES_APPROVAL" => Self::RequiresApproval,
+            "CONFLICT" => Self::Conflict,
+            "EXPIRED" => Self::Expired,
+            "SUSPECT" => Self::Suspect,
+            "INDETERMINATE" => Self::Indeterminate,
+            _ => Self::Failed,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -2,6 +2,9 @@ pub mod app;
 pub mod authority_dto;
 pub mod authority_ops;
 pub mod authority_routes;
+pub mod bridge_intent_dto;
+pub mod bridge_intent_ops;
+pub mod bridge_intent_routes;
 pub mod cognitive_dto;
 pub mod cognitive_ops;
 pub mod cognitive_routes;
@@ -49,8 +52,9 @@ pub mod tethers_routes;
 #[cfg(test)]
 mod tests;
 
-pub use app::build_router;
+pub use app::{build_public_router, build_router};
 pub use authority_ops::{AuthenticatedControlSession, AuthorityService, ControlSession};
+pub use bridge_intent_ops::BridgeIntentService;
 pub use cognitive_ops::{CognitiveOperationError, CognitivePlaneService};
 pub use dreamer_ops::{DreamerOperationError, DreamerProvider, DreamerService, NebiusDreamer};
 pub use episode_association_ops::EpisodeAssociationService;

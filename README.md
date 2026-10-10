@@ -15,6 +15,58 @@ That gives it two connected jobs:
 
 A memory system should be able to answer **“why do you believe this?”**. An agent system should also be able to answer **“why were you allowed to do that?”**. Lantern is built around both questions.
 
+## Lantern Warden
+
+Memory can influence thought.
+Only authority can permit action.
+
+Lantern Warden is the judge-facing trust console built on Lantern Keeper. It
+separates four questions that are often collapsed by an AI system:
+
+| State | Question | Meaning |
+| --- | --- | --- |
+| **HEARD** | What did it hear? | External evidence and its Source → Episode provenance |
+| **THOUGHT** | What does it think? | A candidate interpretation, never a canonical mutation |
+| **AUTHORISED** | Is it allowed? | Tethers policy plus an authenticated Warden authority decision |
+| **DONE** | What actually happened? | OpenShell effect, Trail, and linked receipts |
+
+The public demo is replay-first and synthetic-only. It is designed to show the
+accepted execution evidence without exposing grant administration, Tethers
+control, OpenShell control, personal memory, or credentials. The public
+endpoint is not a production deployment.
+
+### Trust chain
+
+```text
+Tavily external evidence
+          ↓
+Lantern Sources / Episodes
+          ↓
+Nemotron candidate cognition
+          ↓
+Lantern Warden state
+          X  no automatic authority edge
+          X
+Authenticated AuthorityGrant
+          ↓
+Tethers policy
+          ↓
+OpenShell
+          ↓
+Trail + Warden receipts
+```
+
+Tavily supplies bounded external evidence; NVIDIA Nemotron through Nebius
+Token Factory supplies candidate interpretation; Tethers supplies the
+deterministic policy boundary; OpenShell supplies the sandboxed effect
+boundary. None of the external evidence or model output can create authority.
+
+Local console: `LANTERN_TRUST_CONSOLE=1 cargo run --locked -p lighting -- serve`,
+then open `http://127.0.0.1:4317/console`. The public container mode is
+`WARDEN_PUBLIC_DEMO=1`; it registers only the health, version, static console,
+and replay-only surface. Release image instructions and limitations are in
+[`docs/hackathon/M7_PUBLIC_DEMO.md`](docs/hackathon/M7_PUBLIC_DEMO.md).
+
 ## The idea
 
 ```text
@@ -124,7 +176,7 @@ The current `master` branch is a **source-ready developer preview**. It is suita
 Implemented and verified work includes:
 
 - Rust 1.98.1 / Edition 2024 workspace;
-- embedded, versioned SurrealKV as the normal local store, with an optional SurrealDB 3.3.0-beta.4 remote lane;
+- embedded, versioned SurrealKV as the normal local store, with an optional SurrealDB 3.3.0 remote lane;
 - durable Sources, Episodes, Projects, Claims, Beliefs, soft Memory Items, relations, Traces, Proposals, predicates and dimensions;
 - immutable evidence-linked factual capture;
 - deterministic Claim-to-Belief reconciliation, supersession, correction lineage and stale propagation;
