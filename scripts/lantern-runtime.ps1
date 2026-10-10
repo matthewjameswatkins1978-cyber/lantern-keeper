@@ -248,13 +248,31 @@ function Stop-Runtime {
     Write-Host "==> Stopping Service task ($ServiceTaskName)..." -ForegroundColor Cyan
     Get-ScheduledTask -TaskName $ServiceTaskName -ErrorAction SilentlyContinue | Stop-ScheduledTask -ErrorAction SilentlyContinue
 
-    # Ensure any lighting.exe process executing from $RuntimeDir is stopped
+    # Ensure any lighting.exe process executing from $RuntimeDir is stopped.
+    # Normalize separators first: ExecutablePath always uses backslashes while
+    # $RuntimeDir may carry forward slashes (valid on Windows PowerShell),
+    # which would silently defeat the prefix match and leave the process alive.
+    $runtimePrefix = $RuntimeDir.Replace('/', '\').TrimEnd('\') + '\'
     $procs = Get-CimInstance Win32_Process -Filter "Name = 'lighting.exe'" -ErrorAction SilentlyContinue
+    $stoppedIds = @()
     foreach ($p in $procs) {
-        if ($p.ExecutablePath -and $p.ExecutablePath.StartsWith($RuntimeDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $exePath = if ($p.ExecutablePath) { $p.ExecutablePath.Replace('/', '\') } else { $null }
+        if ($exePath -and $exePath.StartsWith($runtimePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
             Write-Host "Stopping runtime lighting process (PID: $($p.ProcessId))..."
             Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+            $stoppedIds += $p.ProcessId
         }
+    }
+
+    # Wait (bounded) for reaped processes to actually exit so that callers
+    # such as cold backup do not race the store LOCK.
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline -and $stoppedIds.Count -gt 0) {
+        $stoppedIds = @($stoppedIds | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
+        if ($stoppedIds.Count -gt 0) { Start-Sleep -Milliseconds 500 }
+    }
+    if ($stoppedIds.Count -gt 0) {
+        Write-Warning "Runtime processes still alive after stop: $($stoppedIds -join ', ')"
     }
 
     # Also stop any running processes started from target-bridge-test if applicable
