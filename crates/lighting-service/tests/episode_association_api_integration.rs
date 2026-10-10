@@ -54,6 +54,7 @@ async fn full_app() -> Router {
         epistemic_service: None,
         authority_service: None,
         dreamer_service: None,
+        ..AppState::default()
     })
 }
 async fn body_json(body: Body) -> Value {

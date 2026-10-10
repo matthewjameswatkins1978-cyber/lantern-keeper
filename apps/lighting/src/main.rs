@@ -27,7 +27,7 @@ mod trust_console;
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 4317;
-const EXPECTED_SURREALDB_VERSION: &str = "3.3.0-beta.4";
+const EXPECTED_SURREALDB_VERSION: &str = "3.3.0";
 const EXPECTED_SCHEMA_VERSION: i64 = 10;
 
 fn main() -> anyhow::Result<()> {
@@ -679,6 +679,12 @@ async fn serve() -> anyhow::Result<()> {
         .migrate()
         .await
         .context("failed to apply durable receipt schema migration")?;
+    let bridge_intent_repo =
+        lighting_store_surreal::SurrealBridgeIntentRepository::new(store.clone());
+    bridge_intent_repo
+        .migrate()
+        .await
+        .context("failed to apply durable bridge intent schema migration")?;
 
     let public_demo = env::var("WARDEN_PUBLIC_DEMO").ok().as_deref() == Some("1");
     let trust_console =
@@ -705,6 +711,8 @@ async fn serve() -> anyhow::Result<()> {
     let project_retrieval_service =
         ProjectRetrievalService::new(Arc::clone(&mp_repo), Arc::clone(&source_repo));
     let memory_service = MemoryService::new(Arc::clone(&memory_repo));
+    let bridge_intent_service =
+        lighting_service::BridgeIntentService::new(Arc::new(bridge_intent_repo));
     let ledger_repo = SurrealLedgerRepository::new(store.clone());
     let ledger_service = LedgerService::new(Arc::new(ledger_repo));
     let epistemic_service = lighting_service::EpistemicService::new_with_evidence(
@@ -719,6 +727,7 @@ async fn serve() -> anyhow::Result<()> {
             return Err(error).context("failed to configure Tethers engine client");
         }
     };
+    let server_version = store.server_version().await.ok().flatten();
     let app_state = AppState {
         ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         source_service: Some(source_service),
@@ -730,6 +739,7 @@ async fn serve() -> anyhow::Result<()> {
         project_retrieval_service: Some(project_retrieval_service),
         tethers_client,
         memory_service: Some(memory_service),
+        bridge_intent_service: Some(bridge_intent_service),
         ledger_service: Some(ledger_service),
         epistemic_service: Some(epistemic_service),
         authority_service: Some(authority_service),
@@ -737,6 +747,9 @@ async fn serve() -> anyhow::Result<()> {
             .ok()
             .and_then(|_| lighting_service::NebiusDreamer::from_env().ok())
             .map(|provider| lighting_service::DreamerService::new(std::sync::Arc::new(provider))),
+        datastore_mode: Some(store_config.storage.clone()),
+        surrealdb_expected_version: EXPECTED_SURREALDB_VERSION,
+        surrealdb_observed_version: server_version,
     };
     app_state.mark_ready();
 

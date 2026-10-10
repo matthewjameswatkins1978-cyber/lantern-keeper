@@ -237,6 +237,13 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
     parent.mkdir(parents=True, exist_ok=True)
     staged = Path(tempfile.mkdtemp(prefix=".mirror-staging-", dir=parent))
     try:
+        # Git must preserve exact evidence bytes under any core.autocrlf setting.
+        (staged / ".gitattributes").write_text(
+            "# Generated Lantern evidence: disable text/EOL conversion in this tree.\n"
+            "* -text\n",
+            encoding="utf-8",
+            newline="\n",
+        )
         (staged / "records").mkdir()
         index_rows: dict[str, list[dict[str, Any]]] = {"active": [], "archived": []}
         seen_paths: set[str] = set()
