@@ -185,6 +185,18 @@ impl SurrealStore {
             .await
             .map_err(ExportError::Filesystem)?;
 
+        // Transport metadata, NOT part of the logical manifest: pin exact bytes
+        // so Git checkouts reproduce the export byte-for-byte under any
+        // core.autocrlf setting. restore_from only reads files named in
+        // manifest["files"], so this file cannot affect restore semantics or
+        // export_hash. Policy matches scripts/lantern_git_export.py.
+        tokio::fs::write(
+            directory.join(".gitattributes"),
+            "# Generated Lantern evidence: disable text/EOL conversion in this tree.\n* -text\n",
+        )
+        .await
+        .map_err(ExportError::Filesystem)?;
+
         Ok(ExportSummary {
             format: EXPORT_FORMAT,
             directory,
