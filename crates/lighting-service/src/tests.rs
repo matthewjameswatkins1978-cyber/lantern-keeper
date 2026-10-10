@@ -123,6 +123,7 @@ mod router_tests {
             epistemic_service: None,
             authority_service: None,
             dreamer_service: None,
+            ..AppState::default()
         };
         build_router(state)
     }
@@ -554,6 +555,7 @@ mod router_tests {
             epistemic_service: None,
             authority_service: None,
             dreamer_service: None,
+            ..AppState::default()
         };
         build_router(state)
     }
@@ -809,6 +811,7 @@ mod router_tests {
             epistemic_service: None,
             authority_service: None,
             dreamer_service: None,
+            ..AppState::default()
         };
         build_router(state)
     }
@@ -1765,6 +1768,7 @@ mod project_add_file_tests {
             epistemic_service: None,
             authority_service: None,
             dreamer_service: None,
+            ..AppState::default()
         };
         build_router(state)
     }
@@ -2082,6 +2086,7 @@ mod project_add_file_tests {
             epistemic_service: None,
             authority_service: None,
             dreamer_service: None,
+            ..AppState::default()
         };
         build_router(state)
     }
@@ -2482,6 +2487,7 @@ mod project_add_file_tests {
             epistemic_service: None,
             authority_service: None,
             dreamer_service: None,
+            ..AppState::default()
         };
         let app = build_router(state);
 
@@ -2602,6 +2608,7 @@ mod project_add_file_tests {
             epistemic_service: None,
             authority_service: None,
             dreamer_service: None,
+            ..AppState::default()
         };
         let app = build_router(state);
 

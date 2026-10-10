@@ -49,6 +49,7 @@ async fn app() -> Router {
         epistemic_service: None,
         authority_service: None,
         dreamer_service: None,
+        ..AppState::default()
     };
     build_router(st)
 }
@@ -160,6 +161,7 @@ async fn episode_survives_fresh_connection_with_exact_excerpt() {
         epistemic_service: None,
         authority_service: None,
         dreamer_service: None,
+        ..AppState::default()
     });
     let content = "Persistence test content line\nSecond line here\n";
     let sid = cs(&a1, content).await;
@@ -209,6 +211,7 @@ async fn episode_survives_fresh_connection_with_exact_excerpt() {
         epistemic_service: None,
         authority_service: None,
         dreamer_service: None,
+        ..AppState::default()
     });
     let gr = a2
         .oneshot(

@@ -4,10 +4,10 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::{
-    authority_routes, cognitive_routes, dreamer_routes, episode_association_routes, episode_routes,
-    epistemic_routes, ledger_routes, marker_retrieval_routes, marker_routes, memory_routes,
-    project_retrieval_routes, project_routes, routes, source_routes, state::AppState,
-    tethers_routes,
+    authority_routes, bridge_intent_routes, cognitive_routes, dreamer_routes,
+    episode_association_routes, episode_routes, epistemic_routes, ledger_routes,
+    marker_retrieval_routes, marker_routes, memory_routes, project_retrieval_routes,
+    project_routes, routes, source_routes, state::AppState, tethers_routes,
 };
 
 /// Maximum accepted request body size for Source creation (1 MiB).
@@ -118,6 +118,24 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::get(marker_routes::get_marker),
         );
 
+    let bridge_intent_routes = Router::new()
+        .route(
+            "/api/v1/bridge/intents/claim",
+            axum::routing::post(bridge_intent_routes::claim),
+        )
+        .route(
+            "/api/v1/bridge/intents/complete",
+            axum::routing::post(bridge_intent_routes::complete),
+        )
+        .route(
+            "/api/v1/bridge/intents/{intent_id}",
+            axum::routing::get(bridge_intent_routes::get),
+        )
+        .route(
+            "/api/v1/bridge/intents",
+            axum::routing::get(bridge_intent_routes::list),
+        );
+
     Router::new()
         .route("/health/live", axum::routing::get(routes::live))
         .route("/health/ready", axum::routing::get(routes::ready))
@@ -126,6 +144,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(project_routes)
         .merge(marker_routes)
         .merge(memory_routes)
+        .merge(bridge_intent_routes)
         .merge(ledger_routes)
         .merge(authority_routes)
         .route(

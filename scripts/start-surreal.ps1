@@ -7,7 +7,7 @@ $PidFile = Join-Path $RuntimeDir "surrealdb.json"
 $StdoutLogFile = Join-Path $RuntimeDir "surrealdb.out.log"
 $StderrLogFile = Join-Path $RuntimeDir "surrealdb.err.log"
 $Endpoint = "ws://127.0.0.1:8000"
-$ExpectedVersion = "3.3.0-beta.4"
+$ExpectedVersion = "3.3.0"
 
 function Find-Surreal {
     $Command = Get-Command surreal -ErrorAction SilentlyContinue

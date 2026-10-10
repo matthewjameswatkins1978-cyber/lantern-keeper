@@ -5,15 +5,15 @@ Status: **SUPPORTING CURRENT — qualification record**
 ## Decision
 
 Lantern Keeper uses embedded, versioned SurrealKV as its normal local storage
-path. This is an intentional beta adoption of the exact pinned
-`surrealdb = 3.3.0-beta.4` line. The remote WebSocket backend remains available
+path. This uses the exact pinned
+`surrealdb = 3.3.0` line. The remote WebSocket backend remains available
 for disposable integration tests and development diagnostics.
 
 ## Configuration
 
 - Rust: 1.98.1 stable, Edition 2024
-- SurrealDB Rust SDK: exactly 3.3.0-beta.4
-- Qualified remote server: exactly 3.3.0-beta.4
+- SurrealDB Rust SDK: exactly 3.3.0
+- Qualified remote server: exactly 3.3.0
 - Embedded engine: `kv-surrealkv`
 - Endpoint: `surrealkv://.lighting-data/surrealkv`
 - Versioning: enabled with `versioned=true`

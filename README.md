@@ -174,7 +174,7 @@ The current `master` branch is a **source-ready developer preview**. It is suita
 Implemented and verified work includes:
 
 - Rust 1.98.1 / Edition 2024 workspace;
-- embedded, versioned SurrealKV as the normal local store, with an optional SurrealDB 3.3.0-beta.4 remote lane;
+- embedded, versioned SurrealKV as the normal local store, with an optional SurrealDB 3.3.0 remote lane;
 - durable Sources, Episodes, Projects, Claims, Beliefs, soft Memory Items, relations, Traces, Proposals, predicates and dimensions;
 - immutable evidence-linked factual capture;
 - deterministic Claim-to-Belief reconciliation, supersession, correction lineage and stale propagation;

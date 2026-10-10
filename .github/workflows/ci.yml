@@ -22,6 +22,7 @@ jobs:
       - run: cargo check --locked --workspace --all-targets --all-features
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --locked --workspace -- --test-threads=1
+      - run: python3 -B -m unittest discover -s tests -p lantern_git_export_test.py -v
 
   public-image:
     runs-on: ubuntu-latest

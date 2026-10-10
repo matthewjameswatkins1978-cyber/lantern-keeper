@@ -59,6 +59,12 @@ async fn replay_is_idempotent_and_survives_reopen() -> Result<(), Box<dyn std::e
             repo.ingest(first.clone()).await?,
             LedgerIngestResult::Stored(_)
         ));
+        // A failed CREATE for a different key has no idempotency winner and
+        // must remain an error rather than being disguised as a duplicate.
+        let mut conflicting_id = first.clone();
+        conflicting_id.idempotency_key = "other-key".to_owned();
+        conflicting_id.content = "Must never replace the stored event.".to_owned();
+        assert!(repo.ingest(conflicting_id).await.is_err());
         assert!(matches!(
             repo.ingest(duplicate).await?,
             LedgerIngestResult::Duplicate(_)
@@ -90,5 +96,86 @@ async fn replay_is_idempotent_and_survives_reopen() -> Result<(), Box<dyn std::e
     }
 
     let _ = std::fs::remove_dir_all(path);
+    Ok(())
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_same_key_returns_winner_and_survives_reopen()
+-> Result<(), Box<dyn std::error::Error>> {
+    for writers in [2, 16] {
+        let path = test_path();
+        let key = format!("same-key-{writers}");
+        let mut results = Vec::new();
+        {
+            let store = SurrealStore::connect(&config(path.clone())).await?;
+            store.initialise_schema().await?;
+            let repo = SurrealLedgerRepository::new(store);
+            repo.migrate().await?;
+            let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(writers));
+            let mut tasks = Vec::new();
+            for writer in 0..writers {
+                let repo = repo.clone();
+                let barrier = barrier.clone();
+                let mut candidate = event(&key, Utc::now());
+                candidate.event_id = format!("candidate-{writer}");
+                candidate.content = format!("Candidate payload {writer}");
+                tasks.push(tokio::spawn(async move {
+                    barrier.wait().await;
+                    repo.ingest(candidate).await
+                }));
+            }
+            for task in tasks {
+                let result = task.await?;
+                if let Err(error) = &result {
+                    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(error);
+                    while let Some(error) = cause {
+                        eprintln!("race N={writers} error: {error:?}");
+                        if let Some(error) = error.downcast_ref::<surrealdb::Error>() {
+                            eprintln!("kind={} details={:?}", error.kind_str(), error.details());
+                        }
+                        cause = error.source();
+                    }
+                }
+                results.push(result);
+            }
+        }
+        // The last repository/task handle has dropped. Honour SurrealKV's
+        // asynchronous file-worker shutdown before reopening on Windows.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let durable = {
+            let store = SurrealStore::connect(&config(path.clone())).await?;
+            store.initialise_schema().await?;
+            let repo = SurrealLedgerRepository::new(store);
+            repo.migrate().await?;
+            repo.list(None).await?
+        };
+        let stored = results
+            .iter()
+            .filter(|result| matches!(result, Ok(LedgerIngestResult::Stored(_))))
+            .count();
+        let duplicates = results
+            .iter()
+            .filter(|result| matches!(result, Ok(LedgerIngestResult::Duplicate(_))))
+            .count();
+        let errors = results.iter().filter(|result| result.is_err()).count();
+        eprintln!(
+            "race N={writers} Stored={stored} Duplicate={duplicates} Error={errors} closed_and_reopened=true durable_count={}",
+            durable.len()
+        );
+        assert_eq!(durable.len(), 1, "exactly one durable row after reopen");
+        assert_eq!(durable[0].idempotency_key, key);
+        assert_eq!((stored, duplicates, errors), (1, writers - 1, 0));
+        for result in results {
+            match result? {
+                LedgerIngestResult::Stored(event) | LedgerIngestResult::Duplicate(event) => {
+                    assert_eq!(
+                        event, durable[0],
+                        "caller must receive the canonical winner"
+                    );
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        std::fs::remove_dir_all(path)?;
+    }
     Ok(())
 }

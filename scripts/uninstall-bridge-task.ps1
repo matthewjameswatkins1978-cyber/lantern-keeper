@@ -1,16 +1,11 @@
 # uninstall-bridge-task.ps1
-# Unregisters the Lantern GitHub Bridge scheduled task from Windows Task Scheduler.
+# Thin compatibility wrapper for lantern-runtime.ps1 uninstall.
 param(
-    [string]$TaskName = "LanternGitHubBridge"
+    [string]$TaskName = "LanternKeeper-Bridge"
 )
 
 $ErrorActionPreference = 'Stop'
-$task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+$runtimeScript = Join-Path $PSScriptRoot "lantern-runtime.ps1"
 
-if ($null -eq $task) {
-    Write-Host "Task '$TaskName' is not currently registered."
-} else {
-    Write-Host "Unregistering task: $TaskName"
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-    Write-Host "Task '$TaskName' removed successfully."
-}
+Write-Host "Forwarding to unified runtime uninstaller: $runtimeScript" -ForegroundColor Cyan
+& $runtimeScript uninstall -BridgeTaskName $TaskName

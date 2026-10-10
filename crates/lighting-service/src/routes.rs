@@ -15,6 +15,11 @@ pub struct VersionResponse {
     pub service: &'static str,
     pub project: &'static str,
     pub version: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub datastore_mode: Option<String>,
+    pub surrealdb_expected_version: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub surrealdb_observed_version: Option<String>,
 }
 
 /// Response returned by `GET /health/ready`.
@@ -67,11 +72,14 @@ pub async fn public_health(
 }
 
 /// Service version information.
-pub async fn version() -> Json<VersionResponse> {
+pub async fn version(State(state): State<AppState>) -> Json<VersionResponse> {
     Json(VersionResponse {
         service: "Lighting",
         project: "Lantern Keeper",
         version: env!("CARGO_PKG_VERSION"),
+        datastore_mode: state.datastore_mode.clone(),
+        surrealdb_expected_version: state.surrealdb_expected_version,
+        surrealdb_observed_version: state.surrealdb_observed_version.clone(),
     })
 }
 
