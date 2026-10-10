@@ -85,12 +85,20 @@ function Ensure-Directories {
 function Build-Release-Binary {
     Write-Host "==> Building Lighting release binary via Cargo..." -ForegroundColor Cyan
     Push-Location $ProjectRoot
+    # PowerShell 5.1 escalates native stderr output to terminating errors when
+    # $ErrorActionPreference is 'Stop' and output is redirected (2>&1, *>, or
+    # capture). Cargo reports routine progress on stderr, so scope the
+    # preference down for the native call and keep the explicit exit-code
+    # check as the real failure signal.
+    $prevEAP = $ErrorActionPreference
     try {
+        $ErrorActionPreference = 'Continue'
         & cargo build --release -p lighting
         if ($LASTEXITCODE -ne 0) {
             throw "Cargo release build failed with code $LASTEXITCODE"
         }
     } finally {
+        $ErrorActionPreference = $prevEAP
         Pop-Location
     }
 }
@@ -124,12 +132,17 @@ function Install-Runtime-Files {
     }
 
     # Generate run-service.cmd
-    # Sets storage and path environment variables, then launches lighting.exe serve
+    # Sets storage and path environment variables, then launches lighting.exe serve.
+    # The serve bind port comes from LIGHTING_PORT (default 4317), so derive it
+    # from the service URL: otherwise an install on a non-default port would
+    # still bind 4317 and collide with an existing instance.
+    $servicePort = ([uri]$ServiceUrl).Port
     $serviceContent = @"
 @echo off
 set LIGHTING_STORAGE=embedded-surrealkv
 set LIGHTING_SURREAL_PATH=$DataDir
 set LIGHTING_SERVICE_URL=$ServiceUrl
+set LIGHTING_PORT=$servicePort
 "$InstalledBinary" serve >> "$ServiceLog" 2>> "$ServiceErrLog"
 "@
     Set-Content -Path $ServiceScript -Value $serviceContent -Encoding ASCII -Force
@@ -243,13 +256,31 @@ function Stop-Runtime {
     Write-Host "==> Stopping Service task ($ServiceTaskName)..." -ForegroundColor Cyan
     Get-ScheduledTask -TaskName $ServiceTaskName -ErrorAction SilentlyContinue | Stop-ScheduledTask -ErrorAction SilentlyContinue
 
-    # Ensure any lighting.exe process executing from $RuntimeDir is stopped
+    # Ensure any lighting.exe process executing from $RuntimeDir is stopped.
+    # Normalize separators first: ExecutablePath always uses backslashes while
+    # $RuntimeDir may carry forward slashes (valid on Windows PowerShell),
+    # which would silently defeat the prefix match and leave the process alive.
+    $runtimePrefix = $RuntimeDir.Replace('/', '\').TrimEnd('\') + '\'
     $procs = Get-CimInstance Win32_Process -Filter "Name = 'lighting.exe'" -ErrorAction SilentlyContinue
+    $stoppedIds = @()
     foreach ($p in $procs) {
-        if ($p.ExecutablePath -and $p.ExecutablePath.StartsWith($RuntimeDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $exePath = if ($p.ExecutablePath) { $p.ExecutablePath.Replace('/', '\') } else { $null }
+        if ($exePath -and $exePath.StartsWith($runtimePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
             Write-Host "Stopping runtime lighting process (PID: $($p.ProcessId))..."
             Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+            $stoppedIds += $p.ProcessId
         }
+    }
+
+    # Wait (bounded) for reaped processes to actually exit so that callers
+    # such as cold backup do not race the store LOCK.
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline -and $stoppedIds.Count -gt 0) {
+        $stoppedIds = @($stoppedIds | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
+        if ($stoppedIds.Count -gt 0) { Start-Sleep -Milliseconds 500 }
+    }
+    if ($stoppedIds.Count -gt 0) {
+        throw "Stop-Runtime failed: runtime processes still alive after bounded wait: $($stoppedIds -join ', '). Refusing to continue: update, uninstall or backup would be unsafe."
     }
 
     # Also stop any running processes started from target-bridge-test if applicable
@@ -543,14 +574,36 @@ function Update-Runtime {
         Register-Service-Task
         Register-Bridge-Task
         Start-Runtime
+        # The update receipt must be earned: Start-Runtime only warns on
+        # unreadiness, so gate success explicitly. A throw here enters the
+        # catch below (rollback) and the update is reported as failed.
+        if (-not (Wait-For-Service-Healthy -TimeoutSeconds 15)) {
+            throw "Updated service did not reach readiness at $ServiceUrl within timeout."
+        }
         Write-Host "==> Update successful and runtime restarted." -ForegroundColor Green
     } catch {
-        Write-Error "Update failed: $_. Rolling back..."
+        $updateError = $_
+        Write-Warning "Update failed: $updateError. Rolling back..."
+        $rollbackErrors = @()
         if (Test-Path $backupBinary) {
-            Move-Item -Path $backupBinary -Destination $InstalledBinary -Force
-            Start-Runtime
+            try {
+                Move-Item -Path $backupBinary -Destination $InstalledBinary -Force
+                Write-Host "Rollback: original binary restored." -ForegroundColor Green
+            } catch {
+                $rollbackErrors += "binary restore failed: $_"
+            }
+        } else {
+            $rollbackErrors += "no backup binary present; nothing to restore"
         }
-        throw
+        try {
+            Start-Runtime
+        } catch {
+            $rollbackErrors += "post-rollback restart failed: $_"
+        }
+        if ($rollbackErrors.Count -gt 0) {
+            throw "Update failed: $updateError. Rollback FAILED: $($rollbackErrors -join ' | '). Runtime state is uncertain; inspect $InstalledBinary and $ServiceUrl before retrying."
+        }
+        throw $updateError
     }
 }
 
