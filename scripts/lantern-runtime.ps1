@@ -124,12 +124,17 @@ function Install-Runtime-Files {
     }
 
     # Generate run-service.cmd
-    # Sets storage and path environment variables, then launches lighting.exe serve
+    # Sets storage and path environment variables, then launches lighting.exe serve.
+    # The serve bind port comes from LIGHTING_PORT (default 4317), so derive it
+    # from the service URL: otherwise an install on a non-default port would
+    # still bind 4317 and collide with an existing instance.
+    $servicePort = ([uri]$ServiceUrl).Port
     $serviceContent = @"
 @echo off
 set LIGHTING_STORAGE=embedded-surrealkv
 set LIGHTING_SURREAL_PATH=$DataDir
 set LIGHTING_SERVICE_URL=$ServiceUrl
+set LIGHTING_PORT=$servicePort
 "$InstalledBinary" serve >> "$ServiceLog" 2>> "$ServiceErrLog"
 "@
     Set-Content -Path $ServiceScript -Value $serviceContent -Encoding ASCII -Force
