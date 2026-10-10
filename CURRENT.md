@@ -1,6 +1,12 @@
 # Lantern Keeper — Current State
 
-## Repository status — 10 October 2026
+## Repository status — 10 October 2026 (post-integration update)
+
+- **Default branch:** `master` at `657affbe31440a66b925266668dc0879aa80e5e5` (merge of PR #17). SurrealDB 3.3.0 stable and the Windows runtime consolidation are now **on master**; PR #11 (Warden M7 demo) merged earlier as `cb8d77d`. PR #12 was closed as superseded by #17 with its history preserved — do not treat it as an open integration task.
+- **CI scope:** `.github/workflows/ci.yml` runs Rust checks/tests on `ubuntu-latest` with `LIGHTING_SKIP_INTEGRATION_TESTS=1`, plus a `lantern_git_export_test.py` unittest step and a `public-image` Docker build job. Still no Windows CI lane, and a green badge is still **not** a persistence, recovery or hostile-test certification.
+- The pre-integration audit below is preserved for provenance; its statements about branch state refer to `master` at `8f506da`.
+
+### Pre-integration audit — 10 October 2026 (`master` at `8f506da`)
 
 This is a **dated GitHub audit**, not a claim that the same branch/release state will remain current. Consult the live repository and CI before a new consequential decision.
 
