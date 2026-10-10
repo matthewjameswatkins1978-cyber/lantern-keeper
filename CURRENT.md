@@ -1,5 +1,21 @@
 # Lantern Keeper — Current State
 
+## Repository status — 10 October 2026
+
+This is a **dated GitHub audit**, not a claim that the same branch/release state will remain current. Consult the live repository and CI before a new consequential decision.
+
+- **Default branch:** `master` at `8f506dadf7802c3b4ce40d1049d22ffadc8c5b3c`. Its most recent observed [CI run](https://github.com/matthewjameswatkins1978-cyber/lantern-keeper/actions/runs/37149292477) passed. Current master still pins `surrealdb = "=3.3.0-beta.4"`; do not present SurrealDB 3.3.0 stable as landed on master.
+- **Open PR #12:** [Windows runtime consolidation and SurrealDB 3.3.0 stable](https://github.com/matthewjameswatkins1978-cyber/lantern-keeper/pull/12), head `7b199476`. Its PR CI passed at that head on 3 October, but GitHub currently reports **merge conflicts** (`mergeable_state: dirty`). It requires independent reconciliation, conflict resolution and verification; do not merge automatically.
+- **Open PR #11:** [Lantern Warden M7 replay-only public demo](https://github.com/matthewjameswatkins1978-cyber/lantern-keeper/pull/11), head `4c03abda`; GitHub reports mergeable with green CI, but this is a distinct demonstration profile and requires an explicit merge decision. The newer `codex/lantern-warden-cloud-run` branch (`0cce3ca5`) also has a passing 9 October [CI run](https://github.com/matthewjameswatkins1978-cyber/lantern-keeper/actions/runs/37988282966), not evidence that its changes landed on `master`.
+- **Release/distribution:** no published GitHub Releases returned as of this audit. The repository currently declares `MIT OR Apache-2.0` with both license files; no relicensing decision has been made. Twenty named branches exist, including feature, recovery and archive references; do not prune them without ownership/provenance review.
+- **CI scope:** `.github/workflows/ci.yml` currently runs Rust checks/tests on `ubuntu-latest` and sets `LIGHTING_SKIP_INTEGRATION_TESTS=1`. A green CI badge is therefore **not** an end-to-end persistence, Windows, recovery or hostile-test certification. The inspected default branch reports `protected: false`; consider branch safeguards before public release, without changing repository settings implicitly.
+- **ChatGPT integration:** as of 10 October, a fresh **ordinary ChatGPT Chat** could load the private Lantern Keeper V2 skill but no native `lantern_*` tools were registered (empty registry result). The local/read-only Streamable HTTP transport passed separate tests; this does **not** establish Chat tool mounting or authenticated production deployment. The OpenAI Plugin Creator and `Auth unsupported` investigation remains open; preserve the `lantern-git` fallback.
+- **Next release gates:** reconcile PR #12, clarify Warden's independent delivery path, rerun integration/recovery and cross-platform tests, obtain documented install/upgrade/rollback proof, run isolated Terror Bat adversarial campaigns coordinated by Gary/Pi, verify security/privacy and bounded hosting costs, and independently accept native MCP tool execution in *ordinary Chat* before claiming that integration. See [the roadmap](docs/ROADMAP.md#release-gates--10-october-2026).
+
+### Earlier verified engineering checkpoint
+
+The material below is a snapshot recorded on **17 September 2026**. It is preserved for provenance; descriptions of what is "current" or "verified" below apply to that checkpoint unless refreshed against newer code/tests.
+
 Status as of **17 September 2026**.
 
 ## Status
