@@ -272,7 +272,7 @@ function Stop-Runtime {
         if ($stoppedIds.Count -gt 0) { Start-Sleep -Milliseconds 500 }
     }
     if ($stoppedIds.Count -gt 0) {
-        Write-Warning "Runtime processes still alive after stop: $($stoppedIds -join ', ')"
+        throw "Stop-Runtime failed: runtime processes still alive after bounded wait: $($stoppedIds -join ', '). Refusing to continue: update, uninstall or backup would be unsafe."
     }
 
     # Also stop any running processes started from target-bridge-test if applicable
@@ -566,6 +566,12 @@ function Update-Runtime {
         Register-Service-Task
         Register-Bridge-Task
         Start-Runtime
+        # The update receipt must be earned: Start-Runtime only warns on
+        # unreadiness, so gate success explicitly. A throw here enters the
+        # catch below (rollback) and the update is reported as failed.
+        if (-not (Wait-For-Service-Healthy -TimeoutSeconds 15)) {
+            throw "Updated service did not reach readiness at $ServiceUrl within timeout."
+        }
         Write-Host "==> Update successful and runtime restarted." -ForegroundColor Green
     } catch {
         Write-Error "Update failed: $_. Rolling back..."
