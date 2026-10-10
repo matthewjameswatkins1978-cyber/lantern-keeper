@@ -85,12 +85,20 @@ function Ensure-Directories {
 function Build-Release-Binary {
     Write-Host "==> Building Lighting release binary via Cargo..." -ForegroundColor Cyan
     Push-Location $ProjectRoot
+    # PowerShell 5.1 escalates native stderr output to terminating errors when
+    # $ErrorActionPreference is 'Stop' and output is redirected (2>&1, *>, or
+    # capture). Cargo reports routine progress on stderr, so scope the
+    # preference down for the native call and keep the explicit exit-code
+    # check as the real failure signal.
+    $prevEAP = $ErrorActionPreference
     try {
+        $ErrorActionPreference = 'Continue'
         & cargo build --release -p lighting
         if ($LASTEXITCODE -ne 0) {
             throw "Cargo release build failed with code $LASTEXITCODE"
         }
     } finally {
+        $ErrorActionPreference = $prevEAP
         Pop-Location
     }
 }
@@ -574,12 +582,28 @@ function Update-Runtime {
         }
         Write-Host "==> Update successful and runtime restarted." -ForegroundColor Green
     } catch {
-        Write-Error "Update failed: $_. Rolling back..."
+        $updateError = $_
+        Write-Warning "Update failed: $updateError. Rolling back..."
+        $rollbackErrors = @()
         if (Test-Path $backupBinary) {
-            Move-Item -Path $backupBinary -Destination $InstalledBinary -Force
-            Start-Runtime
+            try {
+                Move-Item -Path $backupBinary -Destination $InstalledBinary -Force
+                Write-Host "Rollback: original binary restored." -ForegroundColor Green
+            } catch {
+                $rollbackErrors += "binary restore failed: $_"
+            }
+        } else {
+            $rollbackErrors += "no backup binary present; nothing to restore"
         }
-        throw
+        try {
+            Start-Runtime
+        } catch {
+            $rollbackErrors += "post-rollback restart failed: $_"
+        }
+        if ($rollbackErrors.Count -gt 0) {
+            throw "Update failed: $updateError. Rollback FAILED: $($rollbackErrors -join ' | '). Runtime state is uncertain; inspect $InstalledBinary and $ServiceUrl before retrying."
+        }
+        throw $updateError
     }
 }
 
