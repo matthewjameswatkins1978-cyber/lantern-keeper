@@ -49,7 +49,7 @@ pub mod tethers_routes;
 #[cfg(test)]
 mod tests;
 
-pub use app::build_router;
+pub use app::{build_public_router, build_router};
 pub use authority_ops::{AuthenticatedControlSession, AuthorityService, ControlSession};
 pub use cognitive_ops::{CognitiveOperationError, CognitivePlaneService};
 pub use dreamer_ops::{DreamerOperationError, DreamerProvider, DreamerService, NebiusDreamer};

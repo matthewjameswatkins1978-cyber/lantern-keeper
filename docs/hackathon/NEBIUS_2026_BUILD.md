@@ -16,9 +16,9 @@ This living checklist records only work actually implemented and verified.
 - [ ] F — adversarial benchmark and baseline comparison.
 - [x] G — bounded OpenShell effect boundary (local WSL/Docker, authenticated
   Lantern Warden authority, Tethers Trail, and receipt ordering proven).
-- [ ] H — POWER / STILL TRUE / WHY trust console.
-- [ ] I — resettable public synthetic demo.
-- [ ] J — submission hardening, clean clone, CI, and release evidence.
+- [x] H — POWER / STILL TRUE / WHY trust console (M6 local console; evidence: `evidence/m6-trust-console.json`).
+- [x] I — resettable public synthetic demo (M7 replay image, clean-room build, restart smoke; evidence: `evidence/m7-public-demo.json`).
+- [ ] J — submission hardening, clean clone, CI, and release evidence (local evidence and CI recorded; Token Factory live inference now passes, but a dedicated Nebius AI Cloud endpoint remains unprovisioned).
 
 ## Current checkpoint
 
@@ -70,9 +70,12 @@ evidence. Offline fixtures may prove failure behaviour and architecture but
 must not be described as live provider proof.
 
 Phase D has a candidate-only Nebius adapter with strict local response
-validation. The adapter can call the OpenAI-compatible Token Factory endpoint
-when configured, but live credentials/model availability have not been proved
-in this workspace.
+validation. Live Token Factory credentials, model availability and the
+candidate-only Dreamer response are now verified; see
+[NEBIUS_INTEGRATION.md](NEBIUS_INTEGRATION.md) and
+[evidence/m7-token-factory-live.json](evidence/m7-token-factory-live.json).
+A dedicated Nebius AI Cloud Serverless endpoint is a separate resource and
+remains unprovisioned.
 
 The Tavily adapter is now implemented as an untrusted evidence client. Results
 are persisted as Source/Episode evidence with provider metadata and normalized
