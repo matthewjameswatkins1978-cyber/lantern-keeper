@@ -7,8 +7,8 @@ use serde::Deserialize;
 
 use crate::{
     epistemic_dto::{
-        BeliefRequest, ClaimRequest, CorrectionRequest, LiveClaimRequest, MemoryItemRequest,
-        MemoryItemSearchRequest,
+        BeliefRequest, ClaimRequest, CorrectionRequest, InquiryCreateRequest,
+        InquiryObservationRequest, LiveClaimRequest, MemoryItemRequest, MemoryItemSearchRequest,
     },
     epistemic_ops::EpistemicOperationError,
     state::AppState,
@@ -95,6 +95,104 @@ pub async fn compile_context(
     };
     match service.compile_context(request).await {
         Ok(pack) => (StatusCode::OK, Json(serde_json::json!({"context": pack}))),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn create_inquiry(
+    State(state): State<AppState>,
+    Json(request): Json<InquiryCreateRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.create_inquiry(request).await {
+        Ok(inquiry) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({"inquiry": inquiry})),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn get_inquiry(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.get_inquiry(&id).await {
+        Ok(inquiry) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"inquiry": inquiry})),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn inquiry_history(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.inquiry_history(&id).await {
+        Ok(revisions) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"revisions": revisions})),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn observe_inquiry(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(request): Json<InquiryObservationRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.observe_inquiry(&id, request).await {
+        Ok(inquiry) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"inquiry": inquiry})),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn next_inquiry_question(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.next_inquiry_question(&id).await {
+        Ok(next) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"next_question": next})),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
+pub async fn propose_inquiry_hypothesis(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(candidate): Json<lighting_core::DreamerCandidate>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(service) = state.epistemic_service else {
+        return error_response(EpistemicOperationError::Unavailable);
+    };
+    match service.propose_inquiry_hypothesis(&id, candidate).await {
+        Ok(proposal) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({"proposal": proposal})),
+        ),
         Err(error) => error_response(error),
     }
 }

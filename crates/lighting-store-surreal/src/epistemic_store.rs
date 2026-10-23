@@ -7,8 +7,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lighting_core::{
     Belief, BeliefId, BeliefRevision, Claim, ClaimId, ContextPack, ContextPackId,
-    DimensionDefinition, EpistemicRepository, EpistemicRepositoryError, GraphRelation, MemoryItem,
-    MemoryItemSearch, PredicateDefinition, Proposal, ProposalId, Trace,
+    DimensionDefinition, EpistemicRepository, EpistemicRepositoryError, GraphRelation, Inquiry,
+    InquiryId, InquiryRevision, MemoryItem, MemoryItemSearch, PredicateDefinition, Proposal,
+    ProposalId, Trace,
 };
 use surrealdb::types::Object;
 use thiserror::Error;
@@ -39,7 +40,7 @@ impl SurrealEpistemicRepository {
 
     pub async fn migrate(&self) -> Result<(), SurrealEpistemicError> {
         self.store
-            .query(SCHEMA_MIGRATION_V9)
+            .query(SCHEMA_MIGRATION_V10)
             .await
             .map(|_| ())
             .map_err(SurrealEpistemicError::Query)
@@ -344,6 +345,79 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .await
             .map(|record| record.map(decode).transpose())
             .map_err(operation)?
+            .map_err(operation)
+    }
+
+    async fn store_inquiry(&self, inquiry: Inquiry) -> Result<Inquiry, EpistemicRepositoryError> {
+        let payload = serde_json::to_string(&inquiry)
+            .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
+        self.store
+            .query("CREATE inquiry CONTENT { id: $id, payload: $payload, created_at: $created_at, updated_at: $updated_at }")
+            .bind(("id", inquiry.id.as_str()))
+            .bind(("payload", payload))
+            .bind(("created_at", inquiry.created_at))
+            .bind(("updated_at", inquiry.updated_at))
+            .await
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        Ok(inquiry)
+    }
+
+    async fn get_inquiry(
+        &self,
+        id: &InquiryId,
+    ) -> Result<Option<Inquiry>, EpistemicRepositoryError> {
+        self.get_by_id("inquiry", id.as_str())
+            .await
+            .map(|record| record.map(decode).transpose())
+            .map_err(operation)?
+            .map_err(operation)
+    }
+
+    async fn append_inquiry_revision(
+        &self,
+        inquiry: Inquiry,
+        revision: InquiryRevision,
+        trace: Trace,
+    ) -> Result<Inquiry, EpistemicRepositoryError> {
+        let inquiry_payload = serde_json::to_string(&inquiry)
+            .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
+        let revision_payload = serde_json::to_string(&revision)
+            .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
+        let trace_payload = serde_json::to_string(&trace)
+            .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
+        self.store
+            .query("BEGIN TRANSACTION; UPDATE inquiry SET payload = $inquiry_payload, updated_at = $updated_at WHERE id = type::record('inquiry', $inquiry_id); CREATE inquiry_revision CONTENT { id: $revision_id, inquiry_id: $revision_inquiry_id, payload: $revision_payload, created_at: $revision_created_at }; CREATE trace CONTENT { id: $trace_id, payload: $trace_payload, created_at: $trace_created_at }; COMMIT TRANSACTION")
+            .bind(("inquiry_id", inquiry.id.as_str()))
+            .bind(("inquiry_payload", inquiry_payload))
+            .bind(("updated_at", inquiry.updated_at))
+            .bind(("revision_id", revision.id.as_str()))
+            .bind(("revision_inquiry_id", revision.inquiry_id.as_str()))
+            .bind(("revision_payload", revision_payload))
+            .bind(("revision_created_at", revision.created_at))
+            .bind(("trace_id", trace.id.as_str()))
+            .bind(("trace_payload", trace_payload))
+            .bind(("trace_created_at", trace.created_at))
+            .await
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        Ok(inquiry)
+    }
+
+    async fn list_inquiry_revisions(
+        &self,
+        inquiry_id: &InquiryId,
+    ) -> Result<Vec<InquiryRevision>, EpistemicRepositoryError> {
+        let records: Vec<Object> = self
+            .store
+            .query("SELECT * FROM inquiry_revision WHERE inquiry_id = $inquiry_id ORDER BY created_at ASC, id ASC")
+            .bind(("inquiry_id", inquiry_id.as_str()))
+            .await
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?
+            .take(0)
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        records
+            .into_iter()
+            .map(decode)
+            .collect::<Result<Vec<_>, _>>()
             .map_err(operation)
     }
 
@@ -754,7 +828,7 @@ fn belief_state(belief: &Belief) -> &'static str {
     }
 }
 
-const SCHEMA_MIGRATION_V9: &str = r#"
+const SCHEMA_MIGRATION_V10: &str = r#"
 DEFINE TABLE IF NOT EXISTS epistemic_claim SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS payload ON epistemic_claim TYPE string;
 DEFINE FIELD IF NOT EXISTS dedupe_key ON epistemic_claim TYPE string;
@@ -777,6 +851,17 @@ DEFINE INDEX IF NOT EXISTS belief_revision_belief ON belief_revision FIELDS beli
 DEFINE TABLE IF NOT EXISTS context_pack SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS payload ON context_pack TYPE string;
 DEFINE FIELD IF NOT EXISTS created_at ON context_pack TYPE datetime;
+
+DEFINE TABLE IF NOT EXISTS inquiry SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS payload ON inquiry TYPE string;
+DEFINE FIELD IF NOT EXISTS created_at ON inquiry TYPE datetime;
+DEFINE FIELD IF NOT EXISTS updated_at ON inquiry TYPE datetime;
+
+DEFINE TABLE IF NOT EXISTS inquiry_revision SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS inquiry_id ON inquiry_revision TYPE string;
+DEFINE FIELD IF NOT EXISTS payload ON inquiry_revision TYPE string;
+DEFINE FIELD IF NOT EXISTS created_at ON inquiry_revision TYPE datetime;
+DEFINE INDEX IF NOT EXISTS inquiry_revision_inquiry ON inquiry_revision FIELDS inquiry_id;
 
 DEFINE TABLE IF NOT EXISTS memory_item SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS payload ON memory_item TYPE string;
@@ -821,7 +906,7 @@ DEFINE INDEX IF NOT EXISTS dimension_definition_key ON dimension_definition FIEL
 UPSERT __lighting_schema:bootstrap CONTENT {
     project: "Lantern Keeper",
     service: "Lighting",
-    schema_version: 9,
+    schema_version: 10,
     updated_at: time::now()
 };
 "#;

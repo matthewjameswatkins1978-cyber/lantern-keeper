@@ -3,19 +3,21 @@ use std::{collections::BTreeMap, sync::Arc};
 use chrono::Utc;
 use lighting_core::{
     Belief, BeliefId, BeliefLineage, BeliefRevision, BeliefRevisionId, BeliefState, Claim, ClaimId,
-    ContextPack, ContextPackId, ContextTrace, DimensionDefinition, Episode, EpisodeTitle,
-    EpistemicError, EpistemicRepository, EpistemicRepositoryError, MemoryItem, MemoryItemSearch,
-    MemoryPathRepository, NewBelief, NewClaim, NewGraphRelation, NewMemoryItem, NewSource,
-    PredicateDefinition, PredicateStatus, Proposal, ProposalId, ReconciliationAction,
-    ReconciliationDecision, SourceContent, SourceKind, SourceRepository, SourceTitle, Stance,
-    StoreSourceResult, Trace, TraceId, TrustClass, normalize_registry_key, propagate_stale_beliefs,
-    reconcile_claim,
+    ContextPack, ContextPackId, ContextTrace, DimensionDefinition, DreamerCandidate, Episode,
+    EpisodeTitle, EpistemicError, EpistemicRepository, EpistemicRepositoryError, EvidenceLink,
+    EvidenceProvenance, HypothesisStatus, Inquiry, InquiryHypothesisId, InquiryId, InquiryRevision,
+    InquiryRevisionId, MemoryItem, MemoryItemSearch, MemoryPathRepository, NewBelief, NewClaim,
+    NewGraphRelation, NewHypothesis, NewInquiry, NewMemoryItem, NewSource, PredicateDefinition,
+    PredicateStatus, Proposal, ProposalId, ReconciliationAction, ReconciliationDecision,
+    SourceContent, SourceKind, SourceRepository, SourceTitle, Stance, StoreSourceResult, Trace,
+    TraceId, TrustClass, normalize_registry_key, propagate_stale_beliefs, reconcile_claim,
 };
 
 use crate::epistemic_dto::{
     BeliefRequest, ClaimRequest, ContextCompileRequest, CorrectionRequest,
-    DimensionDefinitionRequest, ForemanReviewRequest, LiveClaimRequest, MemoryItemRequest,
-    MemoryItemSearchRequest, PredicateDefinitionRequest, ReconcileClaimRequest, RelationRequest,
+    DimensionDefinitionRequest, ForemanReviewRequest, InquiryCreateRequest,
+    InquiryObservationRequest, LiveClaimRequest, MemoryItemRequest, MemoryItemSearchRequest,
+    PredicateDefinitionRequest, ReconcileClaimRequest, RelationRequest,
 };
 use crate::source_dto::ApiError;
 
@@ -113,6 +115,212 @@ impl EpistemicService {
             source_repo: Some(source_repo),
             memory_path_repo: Some(memory_path_repo),
         }
+    }
+
+    pub async fn create_inquiry(
+        &self,
+        request: InquiryCreateRequest,
+    ) -> Result<Inquiry, EpistemicOperationError> {
+        let now = Utc::now();
+        let inquiry = Inquiry::new(NewInquiry {
+            question: request.question,
+            subject: request.subject,
+            hypotheses: request
+                .hypotheses
+                .into_iter()
+                .map(|hypothesis| NewHypothesis {
+                    statement: hypothesis.statement,
+                    kind: hypothesis.kind,
+                })
+                .collect(),
+            created_at: now,
+        })
+        .map_err(|error| EpistemicOperationError::Invalid(error.to_string()))?;
+        self.repo
+            .store_inquiry(inquiry.clone())
+            .await
+            .map_err(map_repository_error)?;
+        let trace_id = new_trace_id()?;
+        let revision_id =
+            InquiryRevisionId::new(uuid::Uuid::new_v4().to_string()).map_err(|_| {
+                EpistemicOperationError::Invalid("invalid inquiry revision id".to_owned())
+            })?;
+        let mut initial = inquiry.clone();
+        for hypothesis in &mut initial.hypotheses {
+            hypothesis.current_revision_id = Some(revision_id.clone());
+        }
+        initial.current_revision_id = Some(revision_id.clone());
+        let revision = InquiryRevision {
+            id: revision_id,
+            inquiry_id: initial.id.clone(),
+            previous_revision_id: None,
+            hypotheses: initial.hypotheses.clone(),
+            evidence: Vec::new(),
+            unresolved_questions: Vec::new(),
+            lesson: None,
+            trace_id: trace_id.clone(),
+            created_at: now,
+        };
+        let trace = inquiry_trace(
+            trace_id,
+            &initial,
+            "inquiry_created",
+            Vec::new(),
+            "initial competing hypotheses",
+        );
+        self.repo
+            .append_inquiry_revision(initial.clone(), revision, trace)
+            .await
+            .map_err(map_repository_error)
+    }
+
+    pub async fn get_inquiry(&self, id: &str) -> Result<Inquiry, EpistemicOperationError> {
+        let id = InquiryId::new(id.to_owned()).map_err(|_| {
+            EpistemicOperationError::Invalid("inquiry id cannot be blank".to_owned())
+        })?;
+        self.repo
+            .get_inquiry(&id)
+            .await
+            .map_err(map_repository_error)?
+            .ok_or(EpistemicOperationError::NotFound)
+    }
+
+    pub async fn inquiry_history(
+        &self,
+        id: &str,
+    ) -> Result<Vec<InquiryRevision>, EpistemicOperationError> {
+        let id = InquiryId::new(id.to_owned()).map_err(|_| {
+            EpistemicOperationError::Invalid("inquiry id cannot be blank".to_owned())
+        })?;
+        self.repo
+            .list_inquiry_revisions(&id)
+            .await
+            .map_err(map_repository_error)
+    }
+
+    pub async fn observe_inquiry(
+        &self,
+        id: &str,
+        request: InquiryObservationRequest,
+    ) -> Result<Inquiry, EpistemicOperationError> {
+        if request.evidence_text.is_empty() {
+            return Err(EpistemicOperationError::Invalid(
+                "evidence_text cannot be blank".to_owned(),
+            ));
+        }
+        if request.observation_summary.trim().is_empty() {
+            return Err(EpistemicOperationError::Invalid(
+                "observation_summary cannot be blank".to_owned(),
+            ));
+        }
+        let mut inquiry = self.get_inquiry(id).await?;
+        let hypothesis_id =
+            InquiryHypothesisId::new(request.hypothesis_id.clone()).map_err(|_| {
+                EpistemicOperationError::Invalid("hypothesis id cannot be blank".to_owned())
+            })?;
+        let previous_revision_id = inquiry.current_revision_id.clone();
+        let hypothesis = inquiry
+            .hypotheses
+            .iter_mut()
+            .find(|hypothesis| hypothesis.id == hypothesis_id)
+            .ok_or_else(|| {
+                EpistemicOperationError::Invalid("hypothesis does not belong to inquiry".to_owned())
+            })?;
+        let evidence = self
+            .record_text_evidence("Lantern inquiry observation", &request.evidence_text)
+            .await?;
+        let now = Utc::now();
+        let status = request.new_status.unwrap_or(match request.role {
+            lighting_core::EvidenceRole::Contradicts => HypothesisStatus::Challenged,
+            lighting_core::EvidenceRole::Supports | lighting_core::EvidenceRole::Corroborates => {
+                HypothesisStatus::Supported
+            }
+            lighting_core::EvidenceRole::Inspires => HypothesisStatus::Active,
+        });
+        hypothesis.status = status;
+        let trace_id = new_trace_id()?;
+        let revision_id =
+            InquiryRevisionId::new(uuid::Uuid::new_v4().to_string()).map_err(|_| {
+                EpistemicOperationError::Invalid("invalid inquiry revision id".to_owned())
+            })?;
+        for current in &mut inquiry.hypotheses {
+            current.current_revision_id = Some(revision_id.clone());
+        }
+        inquiry.current_revision_id = Some(revision_id.clone());
+        inquiry.evidence.push(EvidenceLink {
+            hypothesis_id,
+            source_id: Some(evidence.source_id.clone()),
+            claim_id: None,
+            role: request.role,
+            provenance: request.provenance.unwrap_or(EvidenceProvenance::Original),
+            note: request
+                .note
+                .clone()
+                .or_else(|| Some(request.observation_summary.clone())),
+        });
+        inquiry.unresolved_questions = request.unresolved_questions.clone();
+        let revision = InquiryRevision {
+            id: revision_id,
+            inquiry_id: inquiry.id.clone(),
+            previous_revision_id,
+            hypotheses: inquiry.hypotheses.clone(),
+            evidence: inquiry.evidence.clone(),
+            unresolved_questions: inquiry.unresolved_questions.clone(),
+            lesson: request.lesson,
+            trace_id: trace_id.clone(),
+            created_at: now,
+        };
+        let trace = inquiry_trace(
+            trace_id,
+            &inquiry,
+            "inquiry_observation",
+            vec![evidence.source_id],
+            &request.observation_summary,
+        );
+        self.repo
+            .append_inquiry_revision(inquiry.clone(), revision, trace)
+            .await
+            .map_err(map_repository_error)
+    }
+
+    pub async fn next_inquiry_question(
+        &self,
+        id: &str,
+    ) -> Result<lighting_core::InquiryNextQuestion, EpistemicOperationError> {
+        Ok(self.get_inquiry(id).await?.next_question())
+    }
+
+    pub async fn propose_inquiry_hypothesis(
+        &self,
+        id: &str,
+        candidate: DreamerCandidate,
+    ) -> Result<Proposal, EpistemicOperationError> {
+        let inquiry = self.get_inquiry(id).await?;
+        candidate
+            .validate()
+            .map_err(|error| EpistemicOperationError::Invalid(error.to_string()))?;
+        if candidate.subject != inquiry.subject {
+            return Err(EpistemicOperationError::Invalid(
+                "Dreamer candidate subject does not match inquiry subject".to_owned(),
+            ));
+        }
+        let proposal = Proposal {
+            id: ProposalId::new(uuid::Uuid::new_v4().to_string()).map_err(|_| {
+                EpistemicOperationError::Invalid("proposal ID could not be created".to_owned())
+            })?,
+            proposal_type: "inquiry_hypothesis".to_owned(),
+            proposed_by: format!("dreamer:{}", candidate.provider),
+            target_ids: vec![inquiry.id.to_string()],
+            payload: serde_json::to_string(&candidate)
+                .map_err(|error| EpistemicOperationError::Invalid(error.to_string()))?,
+            status: "pending".to_owned(),
+            created_at: Utc::now(),
+            decided_at: None,
+        };
+        self.repo
+            .enqueue_proposal(proposal)
+            .await
+            .map_err(map_repository_error)
     }
 
     pub async fn capture_claim(
@@ -1820,6 +2028,29 @@ fn make_revision(
         trace_id: trace_id.clone(),
         created_at,
     })
+}
+
+fn inquiry_trace(
+    trace_id: TraceId,
+    inquiry: &Inquiry,
+    event_type: &str,
+    input_ids: Vec<String>,
+    detail: &str,
+) -> Trace {
+    Trace {
+        id: trace_id,
+        event_type: event_type.to_owned(),
+        actor_id: "inquiry".to_owned(),
+        subject_id: Some(inquiry.id.to_string()),
+        input_ids,
+        output_ids: inquiry
+            .hypotheses
+            .iter()
+            .map(|hypothesis| hypothesis.id.to_string())
+            .collect(),
+        details: BTreeMap::from([(String::from("detail"), detail.to_owned())]),
+        created_at: inquiry.updated_at,
+    }
 }
 
 fn new_trace_id() -> Result<TraceId, EpistemicOperationError> {

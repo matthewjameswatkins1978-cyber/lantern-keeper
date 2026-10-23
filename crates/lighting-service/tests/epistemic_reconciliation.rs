@@ -2,14 +2,16 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use chrono::{Duration, Utc};
 use lighting_core::{
-    EpistemicRepository, MemoryItemKind, Proposal, ProposalId, ReconciliationAction, Stance,
+    EpistemicRepository, HypothesisKind, MemoryItemKind, Proposal, ProposalId,
+    ReconciliationAction, Stance,
 };
 use lighting_service::{
     EpistemicService,
     epistemic_dto::{
         BeliefRequest, ClaimRequest, ContextCompileRequest, CorrectionRequest,
-        ForemanReviewRequest, MemoryItemRequest, PredicateDefinitionRequest, ReconcileClaimRequest,
-        RelationRequest,
+        ForemanReviewRequest, InquiryCreateRequest, InquiryHypothesisRequest,
+        InquiryObservationRequest, MemoryItemRequest, PredicateDefinitionRequest,
+        ReconcileClaimRequest, RelationRequest,
     },
 };
 use lighting_store_surreal::{StoreConfig, SurrealEpistemicRepository, SurrealStore};
@@ -511,6 +513,96 @@ async fn foreman_reviews_bounded_proposals_and_records_the_decision()
     assert_eq!(accepted.status, "accepted");
     assert!(accepted.decided_at.is_some());
     assert!(service.foreman_queue(10).await?.is_empty());
+
+    let _ = std::fs::remove_dir_all(path);
+    Ok(())
+}
+
+#[tokio::test]
+async fn inquiry_preserves_competing_history_and_survives_restart()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = test_path();
+    let store = SurrealStore::connect(&embedded_config(path.clone())).await?;
+    store.initialise_schema().await?;
+    let repository = SurrealEpistemicRepository::new(store.clone());
+    repository.migrate().await?;
+    let source_repo = SurrealSourceRepository::new(store.clone());
+    let memory_path_repo = SurrealMemoryPathRepository::new(store.clone());
+    source_repo.migrate().await?;
+    memory_path_repo.migrate().await?;
+    let service = EpistemicService::new_with_evidence(
+        Arc::new(repository.clone()),
+        Arc::new(source_repo),
+        Arc::new(memory_path_repo),
+    );
+
+    let inquiry = service
+        .create_inquiry(InquiryCreateRequest {
+            question: "Why does the service freeze?".to_owned(),
+            subject: "service-freeze".to_owned(),
+            hypotheses: vec![
+                InquiryHypothesisRequest {
+                    statement: "CPU exhaustion causes the freeze".to_owned(),
+                    kind: HypothesisKind::Empirical,
+                },
+                InquiryHypothesisRequest {
+                    statement: "Lock contention causes the freeze".to_owned(),
+                    kind: HypothesisKind::Empirical,
+                },
+            ],
+        })
+        .await?;
+    let cpu_id = inquiry.hypotheses[0].id.to_string();
+    let revised = service
+        .observe_inquiry(
+            inquiry.id.as_str(),
+            InquiryObservationRequest {
+                hypothesis_id: cpu_id,
+                evidence_text: "During the freeze, CPU utilisation remained below 10%.".to_owned(),
+                observation_summary: "CPU remains low during the freeze".to_owned(),
+                role: lighting_core::EvidenceRole::Contradicts,
+                provenance: None,
+                note: None,
+                new_status: None,
+                unresolved_questions: vec!["Are threads waiting on a lock?".to_owned()],
+                lesson: Some(
+                    "Low CPU challenges CPU exhaustion but does not prove lock contention."
+                        .to_owned(),
+                ),
+            },
+        )
+        .await?;
+    assert_eq!(revised.hypotheses.len(), 2);
+    assert_eq!(
+        revised.hypotheses[0].status,
+        lighting_core::HypothesisStatus::Challenged
+    );
+    assert_eq!(service.inquiry_history(inquiry.id.as_str()).await?.len(), 2);
+    assert!(
+        service
+            .next_inquiry_question(inquiry.id.as_str())
+            .await?
+            .cheapest_test
+            .contains("thread dump")
+    );
+
+    drop(service);
+    drop(repository);
+    drop(store);
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+
+    let reopened_store = SurrealStore::connect(&embedded_config(path.clone())).await?;
+    reopened_store.initialise_schema().await?;
+    let reopened_repository = SurrealEpistemicRepository::new(reopened_store);
+    reopened_repository.migrate().await?;
+    let reopened = EpistemicService::new(Arc::new(reopened_repository.clone()));
+    let persisted = reopened.get_inquiry(inquiry.id.as_str()).await?;
+    assert_eq!(persisted.hypotheses.len(), 2);
+    assert_eq!(
+        reopened.inquiry_history(inquiry.id.as_str()).await?.len(),
+        2
+    );
+    assert!(persisted.evidence[0].source_id.is_some());
 
     let _ = std::fs::remove_dir_all(path);
     Ok(())

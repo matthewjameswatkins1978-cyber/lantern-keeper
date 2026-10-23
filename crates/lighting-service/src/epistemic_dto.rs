@@ -2,8 +2,10 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 use lighting_core::{
-    Belief, Claim, DimensionDefinition, Frame, GraphRelation, MemoryItem, MemoryItemKind,
-    PredicateDefinition, PredicateDefinitionStatus, PredicateStatus, Stance, TrustClass,
+    Belief, Claim, DimensionDefinition, DreamerCandidate, EvidenceProvenance, EvidenceRole, Frame,
+    GraphRelation, HypothesisKind, HypothesisStatus, Inquiry, InquiryRevision, MemoryItem,
+    MemoryItemKind, PredicateDefinition, PredicateDefinitionStatus, PredicateStatus, Stance,
+    TrustClass,
 };
 use serde::{Deserialize, Serialize};
 
@@ -166,6 +168,49 @@ pub struct ContextCompileRequest {
     pub item_budget: usize,
     #[serde(default = "default_context_token_budget")]
     pub token_budget: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InquiryHypothesisRequest {
+    pub statement: String,
+    pub kind: HypothesisKind,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InquiryCreateRequest {
+    pub question: String,
+    pub subject: String,
+    pub hypotheses: Vec<InquiryHypothesisRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InquiryObservationRequest {
+    pub hypothesis_id: String,
+    pub evidence_text: String,
+    pub observation_summary: String,
+    pub role: EvidenceRole,
+    #[serde(default)]
+    pub provenance: Option<EvidenceProvenance>,
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub new_status: Option<HypothesisStatus>,
+    #[serde(default)]
+    pub unresolved_questions: Vec<String>,
+    #[serde(default)]
+    pub lesson: Option<String>,
+}
+
+pub type InquiryHypothesisProposalRequest = DreamerCandidate;
+
+#[derive(Debug, Serialize)]
+pub struct InquiryResponse {
+    pub inquiry: Inquiry,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InquiryHistoryResponse {
+    pub revisions: Vec<InquiryRevision>,
 }
 
 #[derive(Debug, Deserialize)]

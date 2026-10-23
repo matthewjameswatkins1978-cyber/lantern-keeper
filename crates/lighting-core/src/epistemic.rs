@@ -12,8 +12,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    BeliefId, BeliefRevisionId, ClaimId, ContextPackId, MemoryItemId, ProposalId, TraceId,
+    BeliefId, BeliefRevisionId, ClaimId, ContextPackId, InquiryId, MemoryItemId, ProposalId,
+    TraceId,
 };
+use crate::{Inquiry, InquiryRevision};
 
 pub type Scope = BTreeMap<String, String>;
 
@@ -660,6 +662,21 @@ pub trait EpistemicRepository: Send + Sync {
         &self,
         id: &ContextPackId,
     ) -> Result<Option<ContextPack>, EpistemicRepositoryError>;
+    async fn store_inquiry(&self, inquiry: Inquiry) -> Result<Inquiry, EpistemicRepositoryError>;
+    async fn get_inquiry(
+        &self,
+        id: &InquiryId,
+    ) -> Result<Option<Inquiry>, EpistemicRepositoryError>;
+    async fn append_inquiry_revision(
+        &self,
+        inquiry: Inquiry,
+        revision: InquiryRevision,
+        trace: Trace,
+    ) -> Result<Inquiry, EpistemicRepositoryError>;
+    async fn list_inquiry_revisions(
+        &self,
+        inquiry_id: &InquiryId,
+    ) -> Result<Vec<InquiryRevision>, EpistemicRepositoryError>;
     async fn store_memory_item(
         &self,
         item: MemoryItem,
