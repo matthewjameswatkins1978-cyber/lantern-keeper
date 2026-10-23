@@ -14,6 +14,7 @@ pub mod authority;
 pub mod bridge_intent;
 pub mod dreamer;
 pub mod epistemic;
+pub mod inquiry;
 pub mod ledger;
 pub mod memory;
 pub mod memory_path;
@@ -38,6 +39,10 @@ pub use epistemic::{
     PredicateStatus, Proposal, ReconciliationAction, ReconciliationDecision, RelationKind, Scope,
     Stance, Trace, TrustClass, normalize_registry_key, normalize_scope, propagate_stale_beliefs,
     reconcile_claim, scope_hash, scopes_overlap,
+};
+pub use inquiry::{
+    EvidenceLink, EvidenceProvenance, EvidenceRole, Hypothesis, HypothesisKind, HypothesisStatus,
+    Inquiry, InquiryError, InquiryNextQuestion, InquiryRevision, NewHypothesis, NewInquiry,
 };
 pub use ledger::{
     LedgerEvent, LedgerEventError, LedgerEventRepository, LedgerIngestResult,
@@ -131,6 +136,9 @@ identifier_type!(ActionId);
 identifier_type!(ReceiptId);
 identifier_type!(TrailId);
 identifier_type!(ApprovalId);
+identifier_type!(InquiryId);
+identifier_type!(InquiryHypothesisId);
+identifier_type!(InquiryRevisionId);
 
 #[cfg(test)]
 mod tests {

@@ -175,6 +175,30 @@ pub fn build_router(state: AppState) -> Router {
                     axum::routing::post(epistemic_routes::compile_context),
                 )
                 .route(
+                    "/api/v1/inquiries",
+                    axum::routing::post(epistemic_routes::create_inquiry),
+                )
+                .route(
+                    "/api/v1/inquiries/{inquiry_id}",
+                    axum::routing::get(epistemic_routes::get_inquiry),
+                )
+                .route(
+                    "/api/v1/inquiries/{inquiry_id}/history",
+                    axum::routing::get(epistemic_routes::inquiry_history),
+                )
+                .route(
+                    "/api/v1/inquiries/{inquiry_id}/observations",
+                    axum::routing::post(epistemic_routes::observe_inquiry),
+                )
+                .route(
+                    "/api/v1/inquiries/{inquiry_id}/next-question",
+                    axum::routing::get(epistemic_routes::next_inquiry_question),
+                )
+                .route(
+                    "/api/v1/inquiries/{inquiry_id}/hypothesis-proposals",
+                    axum::routing::post(epistemic_routes::propose_inquiry_hypothesis),
+                )
+                .route(
                     "/api/v1/foreman/queue",
                     axum::routing::get(epistemic_routes::foreman_queue),
                 )
