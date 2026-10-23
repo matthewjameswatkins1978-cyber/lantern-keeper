@@ -611,6 +611,8 @@ pub enum EpistemicError {
 pub enum EpistemicRepositoryError {
     #[error("epistemic repository operation failed: {0}")]
     Operation(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("epistemic revision conflict")]
+    Conflict,
     #[error("epistemic record was not found")]
     NotFound,
 }
@@ -662,7 +664,12 @@ pub trait EpistemicRepository: Send + Sync {
         &self,
         id: &ContextPackId,
     ) -> Result<Option<ContextPack>, EpistemicRepositoryError>;
-    async fn store_inquiry(&self, inquiry: Inquiry) -> Result<Inquiry, EpistemicRepositoryError>;
+    async fn create_inquiry_with_revision(
+        &self,
+        inquiry: Inquiry,
+        revision: InquiryRevision,
+        trace: Trace,
+    ) -> Result<Inquiry, EpistemicRepositoryError>;
     async fn get_inquiry(
         &self,
         id: &InquiryId,

@@ -348,15 +348,32 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .map_err(operation)
     }
 
-    async fn store_inquiry(&self, inquiry: Inquiry) -> Result<Inquiry, EpistemicRepositoryError> {
-        let payload = serde_json::to_string(&inquiry)
+    async fn create_inquiry_with_revision(
+        &self,
+        inquiry: Inquiry,
+        revision: InquiryRevision,
+        trace: Trace,
+    ) -> Result<Inquiry, EpistemicRepositoryError> {
+        let inquiry_payload = serde_json::to_string(&inquiry)
+            .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
+        let revision_payload = serde_json::to_string(&revision)
+            .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
+        let trace_payload = serde_json::to_string(&trace)
             .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
         self.store
-            .query("CREATE inquiry CONTENT { id: $id, payload: $payload, created_at: $created_at, updated_at: $updated_at }")
-            .bind(("id", inquiry.id.as_str()))
-            .bind(("payload", payload))
-            .bind(("created_at", inquiry.created_at))
-            .bind(("updated_at", inquiry.updated_at))
+            .query("BEGIN TRANSACTION; CREATE inquiry CONTENT { id: $inquiry_id, payload: $inquiry_payload, current_revision_id: $current_revision_id, created_at: $inquiry_created_at, updated_at: $inquiry_updated_at }; CREATE inquiry_revision CONTENT { id: $revision_id, inquiry_id: $revision_inquiry_id, payload: $revision_payload, created_at: $revision_created_at }; CREATE trace CONTENT { id: $trace_id, payload: $trace_payload, created_at: $trace_created_at }; COMMIT TRANSACTION")
+            .bind(("inquiry_id", inquiry.id.as_str()))
+            .bind(("inquiry_payload", inquiry_payload))
+            .bind(("current_revision_id", revision.id.as_str()))
+            .bind(("inquiry_created_at", inquiry.created_at))
+            .bind(("inquiry_updated_at", inquiry.updated_at))
+            .bind(("revision_id", revision.id.as_str()))
+            .bind(("revision_inquiry_id", revision.inquiry_id.as_str()))
+            .bind(("revision_payload", revision_payload))
+            .bind(("revision_created_at", revision.created_at))
+            .bind(("trace_id", trace.id.as_str()))
+            .bind(("trace_payload", trace_payload))
+            .bind(("trace_created_at", trace.created_at))
             .await
             .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
         Ok(inquiry)
@@ -385,10 +402,17 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
         let trace_payload = serde_json::to_string(&trace)
             .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
+        let expected_revision_id = revision
+            .previous_revision_id
+            .as_ref()
+            .map(|id| id.as_str())
+            .unwrap_or("");
         self.store
-            .query("BEGIN TRANSACTION; UPDATE inquiry SET payload = $inquiry_payload, updated_at = $updated_at WHERE id = type::record('inquiry', $inquiry_id); CREATE inquiry_revision CONTENT { id: $revision_id, inquiry_id: $revision_inquiry_id, payload: $revision_payload, created_at: $revision_created_at }; CREATE trace CONTENT { id: $trace_id, payload: $trace_payload, created_at: $trace_created_at }; COMMIT TRANSACTION")
+            .query("BEGIN TRANSACTION; LET $updated = (UPDATE inquiry SET payload = $inquiry_payload, current_revision_id = $current_revision_id, updated_at = $updated_at WHERE id = type::record('inquiry', $inquiry_id) AND (current_revision_id = $expected_revision_id OR (current_revision_id IS NONE AND $expected_revision_id = '') ) RETURN AFTER); IF array::len($updated) = 0 THEN { THROW 'inquiry revision conflict'; } END; CREATE inquiry_revision CONTENT { id: $revision_id, inquiry_id: $revision_inquiry_id, payload: $revision_payload, created_at: $revision_created_at }; CREATE trace CONTENT { id: $trace_id, payload: $trace_payload, created_at: $trace_created_at }; COMMIT TRANSACTION")
             .bind(("inquiry_id", inquiry.id.as_str()))
             .bind(("inquiry_payload", inquiry_payload))
+            .bind(("expected_revision_id", expected_revision_id.to_owned()))
+            .bind(("current_revision_id", revision.id.as_str()))
             .bind(("updated_at", inquiry.updated_at))
             .bind(("revision_id", revision.id.as_str()))
             .bind(("revision_inquiry_id", revision.inquiry_id.as_str()))
@@ -398,7 +422,7 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .bind(("trace_payload", trace_payload))
             .bind(("trace_created_at", trace.created_at))
             .await
-            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+            .map_err(map_inquiry_query_error)?;
         Ok(inquiry)
     }
 
@@ -819,6 +843,14 @@ fn operation(error: impl std::error::Error + Send + Sync + 'static) -> Epistemic
     EpistemicRepositoryError::Operation(Box::new(error))
 }
 
+fn map_inquiry_query_error(error: surrealdb::Error) -> EpistemicRepositoryError {
+    if error.to_string().contains("inquiry revision conflict") {
+        EpistemicRepositoryError::Conflict
+    } else {
+        operation(SurrealEpistemicError::Query(error))
+    }
+}
+
 fn belief_state(belief: &Belief) -> &'static str {
     match belief.state {
         lighting_core::BeliefState::Active => "active",
@@ -854,6 +886,7 @@ DEFINE FIELD IF NOT EXISTS created_at ON context_pack TYPE datetime;
 
 DEFINE TABLE IF NOT EXISTS inquiry SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS payload ON inquiry TYPE string;
+DEFINE FIELD IF NOT EXISTS current_revision_id ON inquiry TYPE string;
 DEFINE FIELD IF NOT EXISTS created_at ON inquiry TYPE datetime;
 DEFINE FIELD IF NOT EXISTS updated_at ON inquiry TYPE datetime;
 

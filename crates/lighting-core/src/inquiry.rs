@@ -423,6 +423,25 @@ mod tests {
     }
 
     #[test]
+    fn unverified_evidence_does_not_count_as_independent() {
+        let mut inquiry = inquiry();
+        let hypothesis = inquiry.hypotheses[0].id.clone();
+        inquiry.evidence.push(EvidenceLink {
+            hypothesis_id: hypothesis.clone(),
+            source_id: Some("unverified-source".to_owned()),
+            claim_id: None,
+            role: EvidenceRole::Corroborates,
+            provenance: EvidenceProvenance::Unverified,
+            note: Some("candidate source".to_owned()),
+        });
+        assert!(
+            inquiry
+                .independent_source_ids(&hypothesis, EvidenceRole::Corroborates)
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn hostile_evidence_is_data_not_an_instruction() {
         let mut inquiry = inquiry();
         inquiry
