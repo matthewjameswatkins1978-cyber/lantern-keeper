@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use lighting_core::{
     Belief, BeliefId, BeliefRevision, Claim, ClaimId, ContextPack, ContextPackId,
     DimensionDefinition, EpistemicRepository, EpistemicRepositoryError, GraphRelation, MemoryItem,
-    MemoryItemSearch, PredicateDefinition, Proposal, ProposalId, Trace,
+    MemoryItemSearch, PredicateDefinition, Proposal, ProposalId, Scope, Trace,
 };
 use surrealdb::types::Object;
 use thiserror::Error;
@@ -40,6 +40,7 @@ impl SurrealEpistemicRepository {
     pub async fn migrate(&self) -> Result<(), SurrealEpistemicError> {
         self.store
             .query(SCHEMA_MIGRATION_V9)
+            .query(SCHEMA_MIGRATION_V10)
             .await
             .map(|_| ())
             .map_err(SurrealEpistemicError::Query)
@@ -142,6 +143,36 @@ impl EpistemicRepository for SurrealEpistemicRepository {
         let records: Vec<Object> = self
             .store
             .query(sql)
+            .await
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?
+            .take(0)
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        records
+            .into_iter()
+            .map(decode)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(operation)
+    }
+
+    async fn list_beliefs_scoped(
+        &self,
+        scope: &Scope,
+        include_stale: bool,
+        limit: usize,
+    ) -> Result<Vec<Belief>, EpistemicRepositoryError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let sql = if include_stale {
+            "SELECT * FROM belief WHERE scope = $scope ORDER BY updated_at DESC, id ASC LIMIT $limit"
+        } else {
+            "SELECT * FROM belief WHERE scope = $scope AND stale = false ORDER BY updated_at DESC, id ASC LIMIT $limit"
+        };
+        let records: Vec<Object> = self
+            .store
+            .query(sql)
+            .bind(("scope", scope.clone()))
+            .bind(("limit", limit))
             .await
             .map_err(|error| operation(SurrealEpistemicError::Query(error)))?
             .take(0)
@@ -822,6 +853,21 @@ UPSERT __lighting_schema:bootstrap CONTENT {
     project: "Lantern Keeper",
     service: "Lighting",
     schema_version: 9,
+    updated_at: time::now()
+};
+"#;
+
+const SCHEMA_MIGRATION_V10: &str = r#"
+DEFINE FIELD IF NOT EXISTS scope ON belief TYPE object VALUE encoding::json::decode(payload).scope;
+DEFINE FIELD IF NOT EXISTS scope.* ON belief TYPE string;
+DEFINE INDEX IF NOT EXISTS belief_scope ON belief FIELDS scope;
+
+UPDATE belief SET scope = encoding::json::decode(payload).scope WHERE scope = NONE;
+
+UPSERT __lighting_schema:bootstrap CONTENT {
+    project: "Lantern Keeper",
+    service: "Lighting",
+    schema_version: 10,
     updated_at: time::now()
 };
 "#;

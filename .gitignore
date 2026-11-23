@@ -2,6 +2,7 @@
 /.lighting-data/
 /.lighting-runtime/
 /.private-migration/
+/.tm-fragments/
 /.env
 /.local/
 /logs/

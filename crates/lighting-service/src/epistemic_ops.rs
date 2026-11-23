@@ -56,6 +56,19 @@ pub struct LiveClaimResult {
     pub reconciliation: ReconciliationResult,
 }
 
+/// Hard cap on candidates fetched by `compile_context_scoped`.
+///
+/// LK-HOST-001 v1.1: <=128 total candidates across authorised lanes; the
+/// hosted scoped path has a single typed-belief lane today.
+const SCOPED_CANDIDATE_LIMIT: usize = 128;
+/// Hard cap on unique lineage claim IDs hydrated per scoped context call.
+/// Bounded point lookups; typed nonaccepted beyond. D1 batched hydration is
+/// an M2 concern.
+const MAX_LINEAGE_HYDRATION_IDS: usize = 512;
+/// Response-size ceiling for hosted context packs (256 KiB, aligned with
+/// `docs/mcp.md`).
+const HOSTED_CONTEXT_PACK_MAX_BYTES: usize = 256 * 1024;
+
 struct TextEvidence {
     source_id: String,
     episode_id: String,
@@ -1020,6 +1033,115 @@ impl EpistemicService {
             .await
             .map_err(map_repository_error)?;
         Ok(pack)
+    }
+
+    /// Compiles a bounded, zero-persistence context pack for the hosted
+    /// profile (LK-HOST-001 M0 delta item 1, representative scoped call).
+    ///
+    /// Explicit, versioned differences from [`Self::compile_context`]:
+    /// * candidates come from an indexed exact-scope-equality query capped at
+    ///   `SCOPED_CANDIDATE_LIMIT` — never a fetch-all;
+    /// * the soft-memory lane contributes no candidates: `MemoryItem` carries
+    ///   no scope, so this path fails closed until M2 adds scoped soft memory;
+    /// * lineage evidence for candidates is hydrated through bounded point
+    ///   lookups, capped at `MAX_LINEAGE_HYDRATION_IDS` (typed nonaccepted beyond);
+    /// * hosted budget caps apply: 32 items / 8,000 estimated tokens (v1.1 §5);
+    /// * the pack is rejected above `HOSTED_CONTEXT_PACK_MAX_BYTES`;
+    /// * **nothing is persisted** — no Context Pack row and no Trace (v1.1
+    ///   zero-write read contract). Native `compile_context` keeps its
+    ///   fetch-all and persistence behaviour unchanged.
+    ///
+    /// Exact scope equality fails closed: a broader authorised scope does not
+    /// observe narrower-scoped records (M2 owns richer containment semantics).
+    /// `request.scope` must be the authenticated principal's authorised
+    /// scope; principal wiring is an M3 concern.
+    pub async fn compile_context_scoped(
+        &self,
+        request: ContextCompileRequest,
+    ) -> Result<ContextPack, EpistemicOperationError> {
+        let query = required_text(request.query, "context query")?;
+        let item_budget = request.item_budget.clamp(1, 32);
+        let token_budget = request.token_budget.clamp(128, 8_000);
+        let scope = lighting_core::normalize_scope(&request.scope).map_err(map_domain_error)?;
+        let beliefs = self
+            .repo
+            .list_beliefs_scoped(&scope, true, SCOPED_CANDIDATE_LIMIT)
+            .await
+            .map_err(map_repository_error)?;
+        let claims = self.hydrate_lineage_claims(&beliefs).await?;
+        let pack_id = ContextPackId::new(uuid::Uuid::new_v4().to_string()).map_err(|_| {
+            EpistemicOperationError::Invalid("context ID could not be created".to_owned())
+        })?;
+        let pack = compile_select(CompileSelectInput {
+            query,
+            intent: request.intent,
+            actor: request.actor,
+            scope,
+            project_hints: request.project_hints,
+            item_budget,
+            token_budget,
+            pack_id,
+            created_at: Utc::now(),
+            beliefs,
+            memories: Vec::new(),
+            claims,
+        })
+        .pack;
+        let encoded = serde_json::to_string(&pack).map_err(|error| {
+            EpistemicOperationError::Invalid(format!(
+                "context pack could not be serialized: {error}"
+            ))
+        })?;
+        if encoded.len() > HOSTED_CONTEXT_PACK_MAX_BYTES {
+            return Err(EpistemicOperationError::Invalid(format!(
+                "context pack exceeds the hosted serialization cap of {HOSTED_CONTEXT_PACK_MAX_BYTES} bytes"
+            )));
+        }
+        Ok(pack)
+    }
+
+    /// Point-lookup hydration of the unique lineage claim IDs referenced by
+    /// `beliefs`, bounded by `MAX_LINEAGE_HYDRATION_IDS` and failing closed
+    /// beyond it. Missing claim records are tolerated, mirroring the native
+    /// fetch-all path, which silently skips lineage it cannot find.
+    async fn hydrate_lineage_claims(
+        &self,
+        beliefs: &[Belief],
+    ) -> Result<Vec<Claim>, EpistemicOperationError> {
+        let mut ids: Vec<ClaimId> = Vec::new();
+        for belief in beliefs {
+            for claim_id in belief
+                .lineage
+                .supporting_claim_ids
+                .iter()
+                .chain(belief.lineage.contradictory_claim_ids.iter())
+            {
+                let Ok(id) = ClaimId::new(claim_id.clone()) else {
+                    continue;
+                };
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
+        if ids.len() > MAX_LINEAGE_HYDRATION_IDS {
+            return Err(EpistemicOperationError::Invalid(format!(
+                "lineage hydration budget exceeded: {} unique claim ids (cap {MAX_LINEAGE_HYDRATION_IDS})",
+                ids.len()
+            )));
+        }
+        let mut claims = Vec::with_capacity(ids.len());
+        for id in &ids {
+            if let Some(claim) = self
+                .repo
+                .get_claim(id)
+                .await
+                .map_err(map_repository_error)?
+            {
+                claims.push(claim);
+            }
+        }
+        Ok(claims)
     }
 
     pub async fn store_relation(

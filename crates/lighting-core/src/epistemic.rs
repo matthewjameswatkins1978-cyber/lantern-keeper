@@ -634,6 +634,22 @@ pub trait EpistemicRepository: Send + Sync {
         &self,
         include_stale: bool,
     ) -> Result<Vec<Belief>, EpistemicRepositoryError>;
+
+    /// Returns beliefs whose stored scope is **exactly equal** to `scope`
+    /// (both sides in canonical normalised form), newest first, capped at
+    /// `limit`.
+    ///
+    /// `limit` is a hard bound: `0` returns no rows and the query is never
+    /// unbounded. Exact equality is the LK-HOST-001 delta-1 representative
+    /// rule and deliberately fails closed — a broader authorised scope does
+    /// not observe records stored under a narrower scope (richer containment
+    /// semantics are an M2 concern).
+    async fn list_beliefs_scoped(
+        &self,
+        scope: &Scope,
+        include_stale: bool,
+        limit: usize,
+    ) -> Result<Vec<Belief>, EpistemicRepositoryError>;
     async fn mark_belief_stale(
         &self,
         id: &BeliefId,
