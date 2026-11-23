@@ -21,6 +21,7 @@ pub mod memory_path;
 pub mod receipt;
 pub mod source;
 pub mod source_outline;
+pub mod write_envelope;
 
 pub use authority::{
     AuthenticationClass, AuthorityCheck, AuthorityDecision, AuthorityError, AuthorityGrant,
@@ -64,6 +65,10 @@ pub use source::{
     SourceRepository, SourceRepositoryError, SourceTitle, StoreSourceResult, find_all_matches,
 };
 pub use source_outline::{Heading, MarkdownOutline, parse_outline};
+pub use write_envelope::{
+    EnvelopeReceiptRecord, NativeWriteEnvelope, WRITE_ENVELOPE_VERSION, WriteEnvelope,
+    WriteEnvelopeError, WriteEnvelopeOutcome, WriteEnvelopeReceipt, write_envelope_key,
+};
 
 /// Lighting service version.
 pub const LIGHTING_VERSION: &str = env!("CARGO_PKG_VERSION");
