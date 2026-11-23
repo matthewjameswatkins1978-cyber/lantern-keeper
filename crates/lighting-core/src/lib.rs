@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod authority;
+pub mod bounded;
 pub mod bridge_intent;
 pub mod dreamer;
 pub mod epistemic;
@@ -25,6 +26,11 @@ pub use authority::{
     AuthenticationClass, AuthorityCheck, AuthorityDecision, AuthorityError, AuthorityGrant,
     AuthorityLedger, AuthorityRequest, AuthorityRevocation, AuthorityScope, DenyReason, Principal,
     PrincipalKind,
+};
+pub use bounded::{
+    BoundedEpistemicRepository, BoundedError, DEFAULT_PAGE_LIMIT, IdempotentTransition,
+    MAX_PAGE_LIMIT, MAX_TRAVERSAL_DEPTH, MAX_TRAVERSAL_FANOUT, Page, PageCursor, PageRequest,
+    TraversalBounds, TraversalClosure, WriteOutcome, WriteReceipt,
 };
 pub use bridge_intent::{
     BridgeClaimResult, BridgeIntentRecord, BridgeIntentRepository, BridgeIntentRepositoryError,

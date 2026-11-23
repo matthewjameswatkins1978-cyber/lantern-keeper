@@ -44,12 +44,15 @@ use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 use lighting_core::{
-    Belief, BeliefId, BeliefRevision, BeliefRevisionId, Claim, ClaimId, EpistemicRepository,
-    LedgerEvent, LedgerEventRepository, LedgerIngestResult, LedgerRole, NewBelief, NewClaim,
-    PredicateStatus, ReconciliationAction, Scope, Stance, Trace, TraceId, TrustClass, scope_hash,
+    Belief, BeliefId, BeliefRevision, BeliefRevisionId, BoundedEpistemicRepository, BoundedError,
+    Claim, ClaimId, EpistemicRepository, IdempotentTransition, LedgerEvent, LedgerEventRepository,
+    LedgerIngestResult, LedgerRole, MAX_PAGE_LIMIT, MAX_TRAVERSAL_DEPTH, MAX_TRAVERSAL_FANOUT,
+    NewBelief, NewClaim, PageCursor, PageRequest, PredicateStatus, ReconciliationAction, Scope,
+    Stance, Trace, TraceId, TraversalBounds, TrustClass, WriteOutcome, scope_hash,
 };
 use lighting_store_surreal::{
-    StoreConfig, SurrealEpistemicRepository, SurrealLedgerRepository, SurrealStore,
+    StoreConfig, SurrealBoundedRepository, SurrealEpistemicRepository, SurrealLedgerRepository,
+    SurrealStore,
 };
 use uuid::Uuid;
 
@@ -413,10 +416,10 @@ async fn rolled_back_transition_leaves_no_orphan_revision() -> Result<(), Box<dy
 }
 
 #[tokio::test]
-#[ignore = "measured native defect at ac619cca: apply_belief_transition does not inspect \
-            per-statement results, so a BEGIN/COMMIT batch that rolls back still returns \
-            Ok(current). A caller records an accepted write that does not exist. Needs \
-            statement-error propagation before a hosted adapter can claim durable writes."]
+#[ignore = "re-pointed: the existing native apply_belief_transition still returns Ok for a \
+            rolled-back batch, and is intentionally unchanged by this slice. The guarantee now \
+            lives on the additive bounded surface, proven by \
+            rejected_statement_surfaces_as_failure_not_success."]
 async fn rolled_back_transition_must_not_report_success() -> Result<(), Box<dyn std::error::Error>>
 {
     let repository = epistemic_harness("false-accept").await?;
@@ -667,11 +670,10 @@ async fn concurrent_writers_never_leave_a_torn_or_unattributable_projection()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "measured native defect at ac619cca: two concurrent apply_belief_transition calls can \
-            both return Ok while only one revision and one projection value persist, so the \
-            loser is told its correction was accepted although no evidence exists. There is no \
-            compare-and-set / expected-version precondition. This is the measured justification \
-            for a D1 CAS requirement and for a bounded single-writer path."]
+#[ignore = "re-pointed: the existing native apply_belief_transition still has no compare-and-set \
+            precondition, so a losing concurrent writer is silently dropped. The guarantee now \
+            lives on the additive bounded surface, proven by \
+            concurrent_idempotent_transitions_commit_exactly_one."]
 async fn every_concurrent_success_has_durable_evidence() -> Result<(), Box<dyn std::error::Error>> {
     let repository = epistemic_harness("concurrent-false-accept").await?;
     let outcome = run_concurrent_writers(&repository, "workshop-race").await?;
@@ -766,9 +768,9 @@ async fn unbounded_list_contract_measures_1k_records() -> Result<(), Box<dyn std
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[ignore = "gap: epistemic writes carry no caller-supplied idempotency key; only Claim.dedupe_key \
-            (content-derived) and ledger idempotency_key provide replay keys, so an accepted \
-            projection transition cannot be safely retried after a lost response"]
+#[ignore = "re-pointed: the native transition path still has no caller-supplied idempotency key. \
+            The bounded surface provides one, proven by \
+            idempotent_transition_replays_without_duplicate_records."]
 async fn projection_transition_replay_is_keyed_by_caller() -> Result<(), Box<dyn std::error::Error>>
 {
     // A retry of apply_belief_transition after a lost response creates the trace
@@ -778,43 +780,589 @@ async fn projection_transition_replay_is_keyed_by_caller() -> Result<(), Box<dyn
 }
 
 #[tokio::test]
-#[ignore = "gap: list_claims/list_beliefs/list_relations expose no limit or cursor, so a hosted \
-            adapter must either violate the trait or invent a service-side bound"]
+#[ignore = "re-pointed: the native repository intentionally keeps its unbounded list_* methods for \
+            local use. Cursor paging exists on the additive bounded surface, proven by \
+            bounded_pages_are_keyset_ordered_without_omission."]
 async fn list_calls_are_bounded_for_hosted_row_limits() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// 8. v1.1 contract shape — recorded ahead of implementation
+// 9. Additive bounded surface (LK-HOST-001 v1.1)
+//
+// These run against lighting_core::bounded / SurrealBoundedRepository, which is
+// additive: the native repository, its unbounded list_* methods and the existing
+// transition path are unchanged and still pinned above.
 // ---------------------------------------------------------------------------
 
+async fn bounded_harness(
+    label: &str,
+) -> Result<(SurrealEpistemicRepository, SurrealBoundedRepository), Box<dyn std::error::Error>> {
+    let store = SurrealStore::connect(&embedded_config(test_path(label))).await?;
+    store.initialise_schema().await?;
+    let epistemic = SurrealEpistemicRepository::new(store.clone());
+    epistemic.migrate().await?;
+    let bounded = SurrealBoundedRepository::new(store);
+    bounded.migrate().await?;
+    Ok((epistemic, bounded))
+}
+
+fn transition(
+    belief: Option<&Belief>,
+    previous: Option<&Belief>,
+    key: &str,
+    expected_revision: Option<u64>,
+    new_value: Option<&str>,
+) -> IdempotentTransition {
+    let current = match (new_value, previous) {
+        (Some(value), Some(previous)) => {
+            let mut next = previous.clone();
+            next.current_value = value.to_owned();
+            next.updated_at = Utc::now();
+            Some(next)
+        }
+        _ => belief.cloned(),
+    };
+    let trace = trace("bounded.transition");
+    let revisions = match (previous, new_value) {
+        (Some(previous), Some(value)) => vec![revision(
+            &previous.id,
+            Some(previous.current_value.as_str()),
+            value,
+            &trace.id,
+        )],
+        _ => Vec::new(),
+    };
+    IdempotentTransition {
+        principal_id: "pi".to_owned(),
+        scope: scope("workshop"),
+        idempotency_key: key.to_owned(),
+        expected_revision,
+        previous: previous.cloned(),
+        current,
+        revisions,
+        trace,
+        stale_beliefs: Vec::new(),
+    }
+}
+
 #[tokio::test]
-#[ignore = "contract shape (LK-HOST-001 v1.1): no idempotency key exists in the registry, so an \
-            accepted write cannot yet bind principal + scope + canonical payload hash. Exact \
-            retries must recover the original receipt; a changed envelope under the same key must \
-            conflict rather than create a second record."]
-async fn idempotency_key_binds_principal_scope_and_payload_hash()
+async fn bounded_pages_are_keyset_ordered_without_omission()
 -> Result<(), Box<dyn std::error::Error>> {
-    // Required semantics for the hosted seam, recorded before implementation:
-    //   key = (authenticated principal_id, authorised scope, canonical payload hash)
-    //   - identical envelope: return the stored receipt, no new record;
-    //   - same key, different payload: conflict, never overwrite;
-    //   - same payload, different principal or scope: distinct record, never shared.
-    // Claim.dedupe_key covers content and scope but not principal, and is not a
-    // receipt key. Ledger idempotency_key is per-source and not scoped.
+    let (epistemic, bounded) = bounded_harness("bounded-pages").await?;
+    let at = Utc::now();
+
+    let mut claim_ids = Vec::new();
+    for index in 0..25 {
+        let claim = new_claim(
+            &format!("subject-{}", index % 5),
+            "preferred_editor",
+            &format!("claim-{index}"),
+            scope("pages"),
+            at,
+        );
+        claim_ids.push(claim.id.to_string());
+        epistemic.store_claim(claim).await?;
+    }
+    let mut belief_ids = Vec::new();
+    for index in 0..21 {
+        let belief = new_belief(
+            &format!("subject-{}", index % 5),
+            "preferred_editor",
+            &format!("belief-{index}"),
+            scope("pages"),
+            at,
+        );
+        belief_ids.push(belief.id.to_string());
+        epistemic.store_belief(belief).await?;
+    }
+    for index in 0..17 {
+        let relation = lighting_core::GraphRelation {
+            id: lighting_core::RelationId::new(Uuid::new_v4().to_string())?,
+            in_id: format!("belief:{}", belief_ids[index % belief_ids.len()]),
+            out_id: format!("claim:{}", claim_ids[index % claim_ids.len()]),
+            relation_type: "supports".to_owned(),
+            origin: "m1-contract".to_owned(),
+            confidence: 0.9,
+            resolved: true,
+            created_at: at,
+            dedupe_key: format!("rel-{index}"),
+        };
+        epistemic.store_relation(relation).await?;
+    }
+
+    let mut page_count = 0;
+    let mut request = PageRequest::first(10)?;
+    let mut total = 0;
+    loop {
+        let page = bounded.list_claims_page(request).await?;
+        total += page.items().len();
+        page_count += 1;
+        match page.next_cursor() {
+            Some(cursor) => request = PageRequest::after(cursor.clone(), 10)?,
+            None => break,
+        }
+    }
+    assert_eq!(
+        total,
+        claim_ids.len(),
+        "every claim must appear exactly once"
+    );
+    assert!(
+        page_count >= 3,
+        "paging must actually page, saw {page_count}"
+    );
+
+    let mut belief_total = 0;
+    let mut request = PageRequest::first(7)?;
+    loop {
+        let page = bounded.list_beliefs_page(true, request).await?;
+        belief_total += page.items().len();
+        match page.next_cursor() {
+            Some(cursor) => request = PageRequest::after(cursor.clone(), 7)?,
+            None => break,
+        }
+    }
+    assert_eq!(
+        belief_total,
+        belief_ids.len(),
+        "every belief must appear exactly once"
+    );
+
+    let mut relation_total = 0;
+    let mut request = PageRequest::first(5)?;
+    loop {
+        let page = bounded.list_relations_page(request).await?;
+        relation_total += page.items().len();
+        match page.next_cursor() {
+            Some(cursor) => request = PageRequest::after(cursor.clone(), 5)?,
+            None => break,
+        }
+    }
+    assert_eq!(
+        relation_total, 17,
+        "every relation must appear exactly once"
+    );
+
+    // A page that returns fewer than the limit must not offer a cursor.
+    let first = bounded
+        .list_claims_page(PageRequest::first(MAX_PAGE_LIMIT)?)
+        .await?;
+    assert_eq!(first.items().len(), claim_ids.len());
+    assert!(
+        first.next_cursor().is_none(),
+        "an exhausted page must not offer a cursor"
+    );
     Ok(())
 }
 
 #[tokio::test]
-#[ignore = "contract shape (LK-HOST-001 v1.1): stale/dependency traversal is unbounded in the \
-            current seam (stale_beliefs is caller-supplied and no depth or fanout is capped), so \
-            bounded traversal with typed nonacceptance on overflow cannot be expressed yet."]
+async fn bounded_page_rejects_invalid_cursor_and_limit() -> Result<(), Box<dyn std::error::Error>> {
+    let (_epistemic, bounded) = bounded_harness("bounded-refusals").await?;
+
+    assert_eq!(
+        PageRequest::first(0).expect_err("zero limit must be refused"),
+        BoundedError::LimitOutOfRange { limit: 0 }
+    );
+    assert_eq!(
+        PageRequest::first(MAX_PAGE_LIMIT + 1).expect_err("oversized limit must be refused"),
+        BoundedError::LimitOutOfRange {
+            limit: MAX_PAGE_LIMIT + 1
+        }
+    );
+
+    let forged = PageCursor::from("Zm9yZ2Vk".to_owned());
+    let result = bounded
+        .list_claims_page(PageRequest::after(forged, 10)?)
+        .await;
+    assert_eq!(
+        result.expect_err("a cursor this server did not issue must be refused"),
+        BoundedError::InvalidCursor
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn idempotent_transition_replays_without_duplicate_records()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (epistemic, bounded) = bounded_harness("bounded-replay").await?;
+    let at = Utc::now();
+
+    let first_transition = transition(None, None, "key-replay", None, None);
+    let mut seed = first_transition.clone();
+    let belief = new_belief("matthew", "preferred_editor", "zed", scope("workshop"), at);
+    seed.current = Some(belief.clone());
+    seed.previous = None;
+
+    let accepted = bounded.apply_idempotent_transition(seed.clone()).await?;
+    assert_eq!(
+        accepted.outcome,
+        WriteOutcome::Accepted { revision_seq: 1 },
+        "the first write must be accepted at revision 1"
+    );
+    let replayed = bounded.apply_idempotent_transition(seed.clone()).await?;
+    assert_eq!(
+        replayed.outcome,
+        WriteOutcome::Replayed,
+        "an exact retry must replay instead of writing again"
+    );
+    assert_eq!(
+        replayed.receipt_id, accepted.receipt_id,
+        "a replay must recover the original receipt"
+    );
+    assert_eq!(
+        epistemic.list_belief_revisions(&belief.id).await?.len(),
+        0,
+        "replay must not duplicate revisions"
+    );
+    assert_eq!(
+        epistemic.list_beliefs(true).await?.len(),
+        1,
+        "replay must not duplicate the projection"
+    );
+
+    let mut changed = seed.clone();
+    changed.current = Some({
+        let mut other = belief.clone();
+        other.current_value = "helix".to_owned();
+        other
+    });
+    assert!(
+        matches!(
+            bounded.apply_idempotent_transition(changed).await,
+            Err(BoundedError::PayloadMismatch { .. })
+        ),
+        "the same key with a changed payload must conflict"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn idempotency_key_binds_principal_scope_and_payload_hash()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_epistemic, bounded) = bounded_harness("bounded-binding").await?;
+    let at = Utc::now();
+
+    let mut original = transition(None, None, "key-binding", None, None);
+    original.current = Some(new_belief(
+        "matthew",
+        "preferred_editor",
+        "zed",
+        scope("workshop"),
+        at,
+    ));
+    bounded
+        .apply_idempotent_transition(original.clone())
+        .await?;
+
+    // The key is qualified by principal and scope, so the same text under another
+    // principal or scope is a distinct write and can never replay this receipt.
+    let mut foreign_principal = transition(None, None, "key-binding", None, None);
+    foreign_principal.principal_id = "muse".to_owned();
+    foreign_principal.current = Some(new_belief(
+        "matthew",
+        "preferred_editor",
+        "muse-archive",
+        scope("workshop"),
+        at,
+    ));
+    let foreign_receipt = bounded
+        .apply_idempotent_transition(foreign_principal)
+        .await?;
+    assert_ne!(
+        foreign_receipt.receipt_id,
+        original.receipt_id(),
+        "the same key text under another principal must not share a receipt"
+    );
+    assert_eq!(
+        foreign_receipt.outcome,
+        WriteOutcome::Accepted { revision_seq: 1 },
+        "another principal's write is not a replay of this one"
+    );
+
+    let mut foreign_scope = transition(None, None, "key-binding", None, None);
+    foreign_scope.scope = scope("hosted-memory");
+    foreign_scope.current = Some(new_belief(
+        "matthew",
+        "preferred_editor",
+        "scoped-archive",
+        scope("hosted-memory"),
+        at,
+    ));
+    let scoped_receipt = bounded.apply_idempotent_transition(foreign_scope).await?;
+    assert_ne!(
+        scoped_receipt.receipt_id,
+        original.receipt_id(),
+        "the same key text under another scope must not share a receipt"
+    );
+
+    let mut blank_key = transition(None, None, "   ", None, None);
+    blank_key.current = Some(new_belief(
+        "matthew",
+        "preferred_editor",
+        "blank",
+        scope("workshop"),
+        at,
+    ));
+    assert!(
+        matches!(
+            bounded.apply_idempotent_transition(blank_key).await,
+            Err(BoundedError::InvalidIdempotencyKey)
+        ),
+        "a blank key must be refused before any storage work"
+    );
+
+    let mut other_key = transition(None, None, "key-binding-2", None, None);
+    other_key.current = Some(new_belief(
+        "matthew",
+        "preferred_editor",
+        "other",
+        scope("workshop"),
+        at,
+    ));
+    let accepted = bounded.apply_idempotent_transition(other_key).await?;
+    assert_ne!(
+        accepted.receipt_id,
+        original.receipt_id(),
+        "a different key must produce a different receipt"
+    );
+    Ok(())
+}
+#[tokio::test]
+async fn stale_revision_is_refused_without_partial_state() -> Result<(), Box<dyn std::error::Error>>
+{
+    let (epistemic, bounded) = bounded_harness("bounded-cas").await?;
+    let at = Utc::now();
+    let belief = new_belief("matthew", "preferred_editor", "zed", scope("workshop"), at);
+
+    let mut create = transition(None, None, "cas-create", None, None);
+    create.current = Some(belief.clone());
+    bounded.apply_idempotent_transition(create).await?;
+
+    let mut supersede = transition(None, Some(&belief), "cas-supersede", Some(0), Some("helix"));
+    supersede.current = Some({
+        let mut next = belief.clone();
+        next.current_value = "helix".to_owned();
+        next.updated_at = Utc::now();
+        next
+    });
+    let refused = bounded.apply_idempotent_transition(supersede).await;
+    assert_eq!(
+        refused.expect_err("a stale expected_revision must be refused"),
+        BoundedError::RevisionConflict {
+            expected: Some(0),
+            actual: Some(1)
+        }
+    );
+
+    assert_eq!(
+        epistemic.get_belief(&belief.id).await?,
+        Some(belief.clone()),
+        "a refused transition must not change the projection"
+    );
+    assert_eq!(
+        epistemic.list_belief_revisions(&belief.id).await?.len(),
+        0,
+        "a refused transition must not leave a revision"
+    );
+    assert_eq!(
+        bounded.current_revision(&belief.id).await?,
+        Some(1),
+        "the refused write must not advance the revision"
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_idempotent_transitions_commit_exactly_one()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (epistemic, bounded) = bounded_harness("bounded-concurrent").await?;
+    let at = Utc::now();
+    let belief = new_belief("matthew", "preferred_editor", "zed", scope("workshop"), at);
+
+    let mut create = transition(None, None, "race-create", None, None);
+    create.current = Some(belief.clone());
+    bounded.apply_idempotent_transition(create).await?;
+
+    let mut left = transition(None, Some(&belief), "race-left", Some(1), Some("helix"));
+    left.current = Some({
+        let mut next = belief.clone();
+        next.current_value = "helix".to_owned();
+        next.updated_at = Utc::now();
+        next
+    });
+    let mut right = transition(None, Some(&belief), "race-right", Some(1), Some("vim"));
+    right.current = Some({
+        let mut next = belief.clone();
+        next.current_value = "vim".to_owned();
+        next.updated_at = Utc::now();
+        next
+    });
+
+    let (left_result, right_result) = tokio::join!(
+        bounded.apply_idempotent_transition(left),
+        bounded.apply_idempotent_transition(right),
+    );
+
+    let accepted = [&left_result, &right_result]
+        .iter()
+        .filter(|result| result.is_ok())
+        .count();
+    assert_eq!(
+        accepted, 1,
+        "exactly one concurrent writer may commit: left={left_result:?} right={right_result:?}"
+    );
+    assert!(
+        matches!(
+            left_result.as_ref().err().or(right_result.as_ref().err()),
+            Some(BoundedError::RevisionConflict { .. })
+        ),
+        "the losing writer must be refused with a typed conflict, not silently dropped"
+    );
+
+    let revisions = epistemic.list_belief_revisions(&belief.id).await?;
+    assert_eq!(
+        revisions.len(),
+        1,
+        "a refused concurrent write must leave no revision and no lost evidence"
+    );
+    assert_eq!(
+        bounded.current_revision(&belief.id).await?,
+        Some(2),
+        "the accepted writer must advance the revision exactly once"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn rejected_statement_surfaces_as_failure_not_success()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (epistemic, bounded) = bounded_harness("bounded-rejected").await?;
+    let at = Utc::now();
+    let belief = new_belief("matthew", "preferred_editor", "zed", scope("workshop"), at);
+
+    let mut create = transition(None, None, "reject-create", None, None);
+    create.current = Some(belief.clone());
+    bounded.apply_idempotent_transition(create).await?;
+
+    let mut accepted = transition(
+        None,
+        Some(&belief),
+        "reject-supersede",
+        Some(1),
+        Some("helix"),
+    );
+    accepted.current = Some({
+        let mut next = belief.clone();
+        next.current_value = "helix".to_owned();
+        next.updated_at = Utc::now();
+        next
+    });
+    let receipt = bounded
+        .apply_idempotent_transition(accepted.clone())
+        .await?;
+    assert_eq!(receipt.outcome, WriteOutcome::Accepted { revision_seq: 2 });
+    let existing_revision = epistemic.list_belief_revisions(&belief.id).await?[0]
+        .id
+        .clone();
+
+    // Inject a mid-batch failure: the revision id already exists.
+    let mut failing = transition(
+        None,
+        accepted.current.as_ref(),
+        "reject-failing",
+        Some(2),
+        Some("vim"),
+    );
+    failing.current = Some({
+        let mut next = accepted.current.clone().expect("current");
+        next.current_value = "vim".to_owned();
+        next.updated_at = Utc::now();
+        next
+    });
+    let failing_trace = trace("bounded.failing");
+    failing.revisions = vec![lighting_core::BeliefRevision {
+        id: existing_revision,
+        created_at: Utc::now(),
+        ..revision(&belief.id, Some("helix"), "vim", &failing_trace.id)
+    }];
+    failing.trace = failing_trace;
+
+    let refused = bounded.apply_idempotent_transition(failing).await;
+    assert!(
+        matches!(
+            refused,
+            Err(BoundedError::StatementRejected { .. })
+                | Err(BoundedError::RevisionConflict { .. })
+        ),
+        "a rolled-back batch must be reported as a typed failure, got {refused:?}"
+    );
+
+    let current = epistemic
+        .get_belief(&belief.id)
+        .await?
+        .expect("belief must survive a rejected batch");
+    assert_eq!(
+        current.current_value, "helix",
+        "a rejected batch must not partially apply its projection update"
+    );
+    assert_eq!(
+        epistemic.list_belief_revisions(&belief.id).await?.len(),
+        1,
+        "a rejected batch must leave no orphan revision"
+    );
+    assert_eq!(
+        bounded.current_revision(&belief.id).await?,
+        Some(2),
+        "a rejected batch must not advance the revision"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn dependency_traversal_is_bounded_and_fails_closed() -> Result<(), Box<dyn std::error::Error>>
 {
-    // Required semantics:
-    //   - traversal depth and fanout are explicit, bounded parameters;
-    //   - exceeding a bound returns a typed nonacceptance, not a partial result;
-    //   - nonacceptance leaves no partial commit and no orphan revision;
-    //   - callers can distinguish overflow from success and from invalid input.
+    let (epistemic, bounded) = bounded_harness("bounded-traversal").await?;
+    let at = Utc::now();
+
+    let root = new_belief("matthew", "preferred_editor", "zed", scope("workshop"), at);
+    epistemic.store_belief(root.clone()).await?;
+
+    let mut middle = new_belief(
+        "matthew",
+        "editor_theme",
+        "solarized",
+        scope("workshop"),
+        at,
+    );
+    middle.lineage.prior_belief_id = Some(root.id.to_string());
+    epistemic.store_belief(middle.clone()).await?;
+
+    let mut leaf = new_belief("matthew", "editor_font", "jetbrains", scope("workshop"), at);
+    leaf.lineage.prior_belief_id = Some(middle.id.to_string());
+    epistemic.store_belief(leaf.clone()).await?;
+
+    let overflow = bounded
+        .dependency_closure(&leaf.id, TraversalBounds::new(1, MAX_TRAVERSAL_FANOUT)?)
+        .await;
+    assert!(
+        matches!(overflow, Err(BoundedError::TraversalOverflow { .. })),
+        "a traversal that would exceed the depth bound must be refused, got {overflow:?}"
+    );
+
+    let closure = bounded
+        .dependency_closure(&leaf.id, TraversalBounds::new(2, MAX_TRAVERSAL_FANOUT)?)
+        .await?;
+    assert_eq!(
+        closure.beliefs().len(),
+        3,
+        "a bounded traversal within the bound must return the whole chain"
+    );
+    assert_eq!(closure.reached_depth(), 2);
+
+    assert!(
+        TraversalBounds::new(MAX_TRAVERSAL_DEPTH + 1, MAX_TRAVERSAL_FANOUT).is_err(),
+        "a depth bound above the contract maximum must be refused"
+    );
     Ok(())
 }

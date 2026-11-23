@@ -3,6 +3,7 @@
 //! Not wired into the service in LK-001.
 
 pub mod authority_store;
+pub mod bounded_store;
 pub mod bridge_intent_store;
 pub mod config;
 pub mod connection;
@@ -16,6 +17,7 @@ pub mod schema;
 pub mod source_store;
 
 pub use authority_store::{AuthorityRepository, SurrealAuthorityError, SurrealAuthorityRepository};
+pub use bounded_store::SurrealBoundedRepository;
 pub use bridge_intent_store::{SurrealBridgeIntentError, SurrealBridgeIntentRepository};
 pub use config::{RedactedStoreConfig, StoreConfig};
 pub use connection::{StoreError, SurrealStore};
