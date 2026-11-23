@@ -60,6 +60,30 @@ impl SurrealStore {
         &self,
         directory: impl AsRef<Path>,
     ) -> Result<ExportSummary, ExportError> {
+        self.export_inner(directory, None).await
+    }
+
+    /// Export while the caller holds an operator-controlled write fence.
+    ///
+    /// The fence itself lives outside this crate: whoever calls this method
+    /// guarantees no concurrent writers for the duration of the call
+    /// (see the v1.1 hosted contract). The manifest records
+    /// `"fenced": true` plus the caller-supplied `fence_id`; an unfenced
+    /// [`Self::export_to`] export records no `fenced` key at all, so its
+    /// bytes are unchanged by this addition.
+    pub async fn export_fenced_to(
+        &self,
+        directory: impl AsRef<Path>,
+        fence_id: &str,
+    ) -> Result<ExportSummary, ExportError> {
+        self.export_inner(directory, Some(fence_id)).await
+    }
+
+    async fn export_inner(
+        &self,
+        directory: impl AsRef<Path>,
+        fence: Option<&str>,
+    ) -> Result<ExportSummary, ExportError> {
         let directory = directory.as_ref().to_path_buf();
         tokio::fs::create_dir_all(&directory)
             .await
@@ -162,7 +186,7 @@ impl SurrealStore {
             .await
             .map_err(|error| ExportError::InvalidManifest(error.to_string()))?;
 
-        let manifest = serde_json::json!({
+        let mut manifest = serde_json::json!({
             "format": EXPORT_FORMAT,
             "generated_at": Utc::now(),
             "source_of_truth": "Lantern Keeper SurrealDB logical records",
@@ -180,6 +204,10 @@ impl SurrealStore {
                 "epistemic.ndjson"
             ]
         });
+        if let Some(fence_id) = fence {
+            manifest["fenced"] = serde_json::json!(true);
+            manifest["fence_id"] = serde_json::json!(fence_id);
+        }
         let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(ExportError::Json)?;
         tokio::fs::write(directory.join("manifest.json"), manifest_bytes)
             .await
