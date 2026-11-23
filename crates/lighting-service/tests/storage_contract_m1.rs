@@ -1072,6 +1072,8 @@ async fn idempotency_key_binds_principal_scope_and_payload_hash()
 
     // The key is qualified by principal and scope, so the same text under another
     // principal or scope is a distinct write and can never replay this receipt.
+    // Decided LK-HOST-001 v1.1: global-key uniqueness would make a conflict an
+    // existence oracle across principals, so binding (not contention) is correct.
     let mut foreign_principal = transition(None, None, "key-binding", None, None);
     foreign_principal.principal_id = "muse".to_owned();
     foreign_principal.current = Some(new_belief(

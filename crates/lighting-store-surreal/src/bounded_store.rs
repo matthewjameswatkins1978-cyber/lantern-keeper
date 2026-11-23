@@ -273,7 +273,10 @@ impl BoundedEpistemicRepository for SurrealBoundedRepository {
         // The receipt id is derived from principal + scope + key, so another
         // principal or scope using the same key is a distinct write and can
         // never replay this receipt. Only a changed payload under the same
-        // binding is a conflict.
+        // binding is a conflict. Decided LK-HOST-001 v1.1 (Muse, 23 Nov 2026):
+        // a global key space is not a safer default, because a cross-principal
+        // conflict would itself be an existence oracle and so violate the
+        // no-leakage rule.
         if let Some(existing) = self.load_receipt(&receipt_id).await? {
             if existing.payload_hash != payload_hash {
                 return Err(BoundedError::PayloadMismatch {
