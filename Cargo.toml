@@ -5,6 +5,7 @@ members = [
     "crates/lighting-core",
     "crates/lighting-service",
     "crates/lighting-store-surreal",
+    "crates/parity-harness",
 ]
 resolver = "3"
 
