@@ -488,6 +488,8 @@ async fn lanternbench_correction_trace_and_zombie_severance()
             replacement_value: "Zed".to_owned(),
             context_pack_id: Some(pack.id.to_string()),
             scope: BTreeMap::new(),
+            idempotency_key: None,
+            expected_revision: None,
         })
         .await?;
     let replacement = correction

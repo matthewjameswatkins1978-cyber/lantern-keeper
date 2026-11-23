@@ -3,14 +3,15 @@ use std::{collections::BTreeMap, sync::Arc};
 use chrono::Utc;
 use lighting_core::{
     Belief, BeliefId, BeliefLineage, BeliefRevision, BeliefRevisionId, BeliefState, Claim, ClaimId,
-    ContextPack, ContextPackId, ContextTrace, DimensionDefinition, Episode, EpisodeTitle,
-    EpistemicError, EpistemicRepository, EpistemicRepositoryError, MemoryItem, MemoryItemSearch,
-    MemoryPathRepository, NewBelief, NewClaim, NewGraphRelation, NewMemoryItem, NewSource,
-    PredicateDefinition, PredicateStatus, Proposal, ProposalId, ReconciliationAction,
-    ReconciliationDecision, SourceContent, SourceKind, SourceRepository, SourceTitle, Stance,
-    StoreSourceResult, Trace, TraceId, TrustClass, normalize_registry_key, propagate_stale_beliefs,
-    reconcile_claim,
+    ContextPack, ContextPackId, ContextTrace, CorrectionIdempotencyRecord, DimensionDefinition,
+    Episode, EpisodeTitle, EpistemicError, EpistemicRepository, EpistemicRepositoryError,
+    MemoryItem, MemoryItemSearch, MemoryPathRepository, NewBelief, NewClaim, NewGraphRelation,
+    NewMemoryItem, NewSource, PredicateDefinition, PredicateStatus, Proposal, ProposalId,
+    ReconciliationAction, ReconciliationDecision, SourceContent, SourceKind, SourceRepository,
+    SourceTitle, Stance, StoreSourceResult, Trace, TraceId, TrustClass, normalize_registry_key,
+    propagate_stale_beliefs, reconcile_claim,
 };
+use sha2::{Digest, Sha256};
 
 use crate::epistemic_dto::{
     BeliefRequest, ClaimRequest, ContextCompileRequest, CorrectionRequest,
@@ -27,18 +28,22 @@ pub enum EpistemicOperationError {
     Invalid(String),
     #[error("epistemic record was not found")]
     NotFound,
+    #[error("correction target revision does not match the expected current revision: {0}")]
+    RevisionConflict(String),
+    #[error("idempotency key was already used with a different correction payload: {0}")]
+    IdempotencyConflict(String),
     #[error("epistemic repository operation failed")]
     Repository(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct ReconciliationResult {
     pub claim: Claim,
     pub decision: ReconciliationDecision,
     pub belief: Option<Belief>,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct CorrectionResult {
     pub source_id: String,
     pub episode_id: String,
@@ -68,6 +73,10 @@ const MAX_LINEAGE_HYDRATION_IDS: usize = 512;
 /// Response-size ceiling for hosted context packs (256 KiB, aligned with
 /// `docs/mcp.md`).
 const HOSTED_CONTEXT_PACK_MAX_BYTES: usize = 256 * 1024;
+/// Principal bound into correction idempotency keys (delta-2). Matches the
+/// existing correction originator; M3 replaces this with the authenticated
+/// principal.
+pub const CORRECTION_IDEMPOTENCY_PRINCIPAL: &str = "matthew";
 
 struct TextEvidence {
     source_id: String,
@@ -94,6 +103,14 @@ impl From<EpistemicOperationError> for ApiError {
             EpistemicOperationError::NotFound => ApiError {
                 code: "epistemic_record_not_found".to_owned(),
                 message: "The requested epistemic record does not exist".to_owned(),
+            },
+            EpistemicOperationError::RevisionConflict(message) => ApiError {
+                code: "revision_conflict".to_owned(),
+                message,
+            },
+            EpistemicOperationError::IdempotencyConflict(message) => ApiError {
+                code: "idempotency_conflict".to_owned(),
+                message,
             },
             EpistemicOperationError::Repository(_) => ApiError::internal_error(),
         }
@@ -282,6 +299,46 @@ impl EpistemicService {
         &self,
         request: CorrectionRequest,
     ) -> Result<CorrectionResult, EpistemicOperationError> {
+        // Keyed idempotency envelope (LK-HOST-001 delta-2). With no key this
+        // block is skipped entirely and the legacy path runs unchanged.
+        let idempotency = match request.idempotency_key.as_deref() {
+            None => None,
+            Some(raw) => {
+                let caller_key = raw.trim();
+                if caller_key.is_empty() {
+                    return Err(EpistemicOperationError::Invalid(
+                        "idempotency key cannot be blank".to_owned(),
+                    ));
+                }
+                if caller_key.contains('|') {
+                    return Err(EpistemicOperationError::Invalid(
+                        "idempotency key must not contain '|'".to_owned(),
+                    ));
+                }
+                let composite = format!(
+                    "{CORRECTION_IDEMPOTENCY_PRINCIPAL}|{}|{caller_key}",
+                    lighting_core::scope_hash(&request.scope)
+                );
+                let payload_hash = correction_payload_hash(&request)?;
+                if let Some(record) = self
+                    .repo
+                    .get_correction_idempotency(&composite)
+                    .await
+                    .map_err(map_repository_error)?
+                {
+                    if record.payload_hash != payload_hash {
+                        return Err(EpistemicOperationError::IdempotencyConflict(
+                            "idempotency key was already used with a different correction payload"
+                                .to_owned(),
+                        ));
+                    }
+                    let original: CorrectionResult = serde_json::from_str(&record.result_json)
+                        .map_err(|error| EpistemicOperationError::Repository(Box::new(error)))?;
+                    return Ok(original);
+                }
+                Some((composite, payload_hash))
+            }
+        };
         let target_id = match (
             request
                 .target_belief_id
@@ -357,6 +414,25 @@ impl EpistemicService {
                 ));
             }
         }
+        // Expected-revision precondition (delta-2): verified after target
+        // resolution and strictly before the first write, so a mismatch
+        // persists nothing.
+        if let Some(expected) = request.expected_revision.as_deref() {
+            let actual = serde_json::to_value(target.updated_at)
+                .map_err(|error| {
+                    EpistemicOperationError::Invalid(format!(
+                        "target revision could not be serialised: {error}"
+                    ))
+                })?
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_default();
+            if actual != expected {
+                return Err(EpistemicOperationError::RevisionConflict(format!(
+                    "expected revision {expected}, stored revision is {actual}"
+                )));
+            }
+        }
         let correction_text = request.correction_text;
         if correction_text.trim().is_empty() {
             return Err(EpistemicOperationError::Invalid(
@@ -411,13 +487,30 @@ impl EpistemicService {
                 },
             )
             .await?;
-        Ok(CorrectionResult {
+        let result = CorrectionResult {
             source_id: evidence.source_id,
             episode_id: evidence.episode_id,
             context_pack_id: context_pack_id.map(|id| id.to_string()),
             claim,
             reconciliation,
-        })
+        };
+        if let Some((key, payload_hash)) = idempotency {
+            let record = CorrectionIdempotencyRecord {
+                key,
+                payload_hash,
+                result_json: serde_json::to_string(&result).map_err(|error| {
+                    EpistemicOperationError::Invalid(format!(
+                        "correction result could not be serialised: {error}"
+                    ))
+                })?,
+                created_at: Utc::now(),
+            };
+            self.repo
+                .store_correction_idempotency(record)
+                .await
+                .map_err(map_repository_error)?;
+        }
+        Ok(result)
     }
 
     pub async fn reconcile_claim(
@@ -1730,6 +1823,30 @@ fn belief_from_claim(
         derived_from_belief_ids: Vec::new(),
     };
     Ok(belief)
+}
+
+/// Canonical payload hash for a keyed correction envelope (delta-2): binds
+/// the request's target selection, text, value, scope, pack and expected
+/// revision so a reused key with a changed envelope conflicts instead of
+/// replaying. `serde_json` object maps are sorted, so the encoding is
+/// deterministic.
+fn correction_payload_hash(request: &CorrectionRequest) -> Result<String, EpistemicOperationError> {
+    let canonical = serde_json::to_vec(&serde_json::json!({
+        "target_belief_id": request.target_belief_id,
+        "target_query": request.target_query,
+        "correction_text": request.correction_text,
+        "replacement_value": request.replacement_value,
+        "scope": request.scope,
+        "context_pack_id": request.context_pack_id,
+        "expected_revision": request.expected_revision,
+    }))
+    .map_err(|error| {
+        EpistemicOperationError::Invalid(format!(
+            "correction payload could not be canonicalised: {error}"
+        ))
+    })?;
+    let digest = Sha256::digest(canonical);
+    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 fn context_tokens(query: &str) -> Vec<String> {

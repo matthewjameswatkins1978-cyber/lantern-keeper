@@ -7,8 +7,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lighting_core::{
     Belief, BeliefId, BeliefRevision, Claim, ClaimId, ContextPack, ContextPackId,
-    DimensionDefinition, EpistemicRepository, EpistemicRepositoryError, GraphRelation, MemoryItem,
-    MemoryItemSearch, PredicateDefinition, Proposal, ProposalId, Scope, Trace,
+    CorrectionIdempotencyRecord, DimensionDefinition, EpistemicRepository,
+    EpistemicRepositoryError, GraphRelation, MemoryItem, MemoryItemSearch, PredicateDefinition,
+    Proposal, ProposalId, Scope, Trace,
 };
 use surrealdb::types::Object;
 use thiserror::Error;
@@ -41,6 +42,7 @@ impl SurrealEpistemicRepository {
         self.store
             .query(SCHEMA_MIGRATION_V9)
             .query(SCHEMA_MIGRATION_V10)
+            .query(SCHEMA_MIGRATION_V11)
             .await
             .map(|_| ())
             .map_err(SurrealEpistemicError::Query)
@@ -182,6 +184,48 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .map(decode)
             .collect::<Result<Vec<_>, _>>()
             .map_err(operation)
+    }
+
+    async fn store_correction_idempotency(
+        &self,
+        record: CorrectionIdempotencyRecord,
+    ) -> Result<CorrectionIdempotencyRecord, EpistemicRepositoryError> {
+        let payload = serde_json::to_string(&record)
+            .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
+        let key = record.key.clone();
+        let _created: Vec<Object> = self
+            .store
+            .query(
+                "CREATE correction_idempotency CONTENT { key: $key, payload: $payload, created_at: $created_at }",
+            )
+            .bind(("key", key))
+            .bind(("payload", payload))
+            .bind(("created_at", record.created_at))
+            .await
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?
+            .take(0)
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        Ok(record)
+    }
+
+    async fn get_correction_idempotency(
+        &self,
+        key: &str,
+    ) -> Result<Option<CorrectionIdempotencyRecord>, EpistemicRepositoryError> {
+        let records: Vec<Object> = self
+            .store
+            .query("SELECT * FROM correction_idempotency WHERE key = $key LIMIT 1")
+            .bind(("key", key.to_owned()))
+            .await
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?
+            .take(0)
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        records
+            .into_iter()
+            .map(decode)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(operation)
+            .map(|mut found| found.pop())
     }
 
     async fn mark_belief_stale(
@@ -868,6 +912,21 @@ UPSERT __lighting_schema:bootstrap CONTENT {
     project: "Lantern Keeper",
     service: "Lighting",
     schema_version: 10,
+    updated_at: time::now()
+};
+"#;
+
+const SCHEMA_MIGRATION_V11: &str = r#"
+DEFINE TABLE IF NOT EXISTS correction_idempotency SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS key ON correction_idempotency TYPE string;
+DEFINE FIELD IF NOT EXISTS payload ON correction_idempotency TYPE string;
+DEFINE FIELD IF NOT EXISTS created_at ON correction_idempotency TYPE datetime;
+DEFINE INDEX IF NOT EXISTS correction_idempotency_key ON correction_idempotency FIELDS key UNIQUE;
+
+UPSERT __lighting_schema:bootstrap CONTENT {
+    project: "Lantern Keeper",
+    service: "Lighting",
+    schema_version: 11,
     updated_at: time::now()
 };
 "#;

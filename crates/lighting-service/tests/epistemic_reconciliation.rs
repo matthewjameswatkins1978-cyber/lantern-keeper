@@ -289,6 +289,8 @@ async fn correction_records_evidence_and_reconciles_one_target()
             replacement_value: "ignored".to_owned(),
             context_pack_id: None,
             scope: BTreeMap::new(),
+            idempotency_key: None,
+            expected_revision: None,
         })
         .await
         .expect_err("ambiguous target queries must not mutate memory");
@@ -302,6 +304,8 @@ async fn correction_records_evidence_and_reconciles_one_target()
             replacement_value: "Zed".to_owned(),
             context_pack_id: None,
             scope: BTreeMap::new(),
+            idempotency_key: None,
+            expected_revision: None,
         })
         .await?;
     assert!(!correction.source_id.is_empty());

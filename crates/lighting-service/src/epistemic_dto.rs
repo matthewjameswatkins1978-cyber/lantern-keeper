@@ -98,6 +98,17 @@ pub struct CorrectionRequest {
     pub context_pack_id: Option<String>,
     #[serde(default)]
     pub scope: BTreeMap<String, String>,
+    /// Optional caller-supplied idempotency key (LK-HOST-001 delta-2).
+    /// Absent: legacy behaviour, byte-identical. Present: the service binds
+    /// principal + normalised scope hash + payload hash around this key.
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+    /// Optional expected current revision of the target belief: the
+    /// `updated_at` value exactly as serialized in the belief's JSON.
+    /// Present: verified before any write; mismatch aborts with
+    /// `RevisionConflict` and nothing is persisted.
+    #[serde(default)]
+    pub expected_revision: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

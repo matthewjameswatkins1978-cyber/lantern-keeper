@@ -28,12 +28,16 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use lighting_core::{
-    Belief, Claim, EpistemicRepository, NewBelief, NewClaim, PredicateStatus, Scope, Stance,
-    TrustClass,
+    Belief, BeliefState, Claim, EpistemicRepository, NewBelief, NewClaim, PredicateStatus,
+    ReconciliationAction, Scope, Stance, TrustClass, scope_hash,
 };
 use lighting_service::EpistemicService;
-use lighting_service::epistemic_dto::ContextCompileRequest;
-use lighting_store_surreal::{StoreConfig, SurrealEpistemicRepository, SurrealStore};
+use lighting_service::epistemic_dto::{ContextCompileRequest, CorrectionRequest};
+use lighting_service::epistemic_ops::{CORRECTION_IDEMPOTENCY_PRINCIPAL, EpistemicOperationError};
+use lighting_store_surreal::{
+    StoreConfig, SurrealEpistemicRepository, SurrealMemoryPathRepository, SurrealSourceRepository,
+    SurrealStore,
+};
 use uuid::Uuid;
 
 const NAMESPACE: &str = "m1_scoped_context";
@@ -74,7 +78,15 @@ async fn harness(label: &str) -> Result<Harness, Box<dyn std::error::Error>> {
     store.initialise_schema().await?;
     let repo = Arc::new(SurrealEpistemicRepository::new(store.clone()));
     repo.migrate().await?;
-    let service = EpistemicService::new(repo.clone());
+    let source_repo = SurrealSourceRepository::new(store.clone());
+    source_repo.migrate().await?;
+    let memory_path_repo = SurrealMemoryPathRepository::new(store.clone());
+    memory_path_repo.migrate().await?;
+    let service = EpistemicService::new_with_evidence(
+        repo.clone(),
+        Arc::new(source_repo),
+        Arc::new(memory_path_repo),
+    );
     Ok(Harness {
         store,
         repo,
@@ -515,6 +527,293 @@ async fn pre_v10_row_becomes_scoped_queryable_after_migration()
         found.len(),
         2,
         "rows created after V10 must carry the computed scope column"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// delta-2: keyed record_correction — idempotency receipt + expected revision
+// ---------------------------------------------------------------------------
+
+/// The target belief's `updated_at` exactly as serialized in its JSON — the
+/// revision handle callers supply as `expected_revision`.
+fn revision_string(belief: &Belief) -> String {
+    serde_json::to_value(belief.updated_at)
+        .expect("belief updated_at serialises")
+        .as_str()
+        .expect("updated_at serialises as a string")
+        .to_owned()
+}
+
+fn correction(
+    target_id: &str,
+    replacement: &str,
+    scope: Scope,
+    key: Option<&str>,
+    expected: Option<String>,
+) -> CorrectionRequest {
+    CorrectionRequest {
+        target_belief_id: Some(target_id.to_owned()),
+        target_query: None,
+        correction_text: format!("operator correction: replace with {replacement}"),
+        replacement_value: replacement.to_owned(),
+        context_pack_id: None,
+        scope,
+        idempotency_key: key.map(str::to_owned),
+        expected_revision: expected,
+    }
+}
+
+async fn seed_target(h: &Harness) -> Result<(Belief, Scope), Box<dyn std::error::Error>> {
+    let at = Utc::now();
+    let authorised = scope("lantern", "pi");
+    let belief = new_belief("matthew", "preferred_editor", "Zed", authorised.clone(), at);
+    h.repo.store_belief(belief.clone()).await?;
+    Ok((belief, authorised))
+}
+
+#[tokio::test]
+async fn correction_without_key_follows_the_legacy_path() -> Result<(), Box<dyn std::error::Error>>
+{
+    let h = harness("corr-no-key").await?;
+    let (belief, authorised) = seed_target(&h).await?;
+
+    let result = h
+        .service
+        .record_correction(correction(
+            belief.id.as_str(),
+            "Neo",
+            authorised.clone(),
+            None,
+            None,
+        ))
+        .await?;
+
+    assert_eq!(
+        result.reconciliation.decision.action,
+        ReconciliationAction::Supersede,
+        "the unkeyed path must reconcile exactly as before"
+    );
+    assert_eq!(result.reconciliation.claim.value, "Neo");
+    assert!(!result.source_id.is_empty());
+    let stored = h
+        .repo
+        .get_belief(&belief.id)
+        .await?
+        .expect("target persists");
+    assert_eq!(stored.state, BeliefState::Superseded);
+
+    // An unkeyed retry re-executes the legacy path: the target is no longer
+    // active, so it fails validation instead of short-circuiting into a replay.
+    let retry = h
+        .service
+        .record_correction(correction(
+            belief.id.as_str(),
+            "Neo",
+            authorised,
+            None,
+            None,
+        ))
+        .await;
+    assert!(
+        matches!(retry, Err(EpistemicOperationError::Invalid(_))),
+        "unkeyed calls must carry no replay protection"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn correction_with_key_executes_once_and_records_a_receipt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let h = harness("corr-key-happy").await?;
+    let (belief, authorised) = seed_target(&h).await?;
+    let key = "delta2-happy-key";
+    let composite = format!(
+        "{CORRECTION_IDEMPOTENCY_PRINCIPAL}|{}|{key}",
+        scope_hash(&authorised)
+    );
+    assert!(
+        h.repo
+            .get_correction_idempotency(&composite)
+            .await?
+            .is_none()
+    );
+
+    let result = h
+        .service
+        .record_correction(correction(
+            belief.id.as_str(),
+            "Neo",
+            authorised,
+            Some(key),
+            Some(revision_string(&belief)),
+        ))
+        .await?;
+
+    assert_eq!(
+        result.reconciliation.decision.action,
+        ReconciliationAction::Supersede
+    );
+    let record = h
+        .repo
+        .get_correction_idempotency(&composite)
+        .await?
+        .expect("a keyed correction stores an idempotency receipt");
+    assert!(!record.result_json.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn expected_revision_mismatch_aborts_with_nothing_persisted()
+-> Result<(), Box<dyn std::error::Error>> {
+    let h = harness("corr-mismatch").await?;
+    let (belief, authorised) = seed_target(&h).await?;
+    let key = "delta2-mismatch-key";
+    let composite = format!(
+        "{CORRECTION_IDEMPOTENCY_PRINCIPAL}|{}|{key}",
+        scope_hash(&authorised)
+    );
+    let baseline = h
+        .store
+        .export_to(test_path("export-mismatch-before"))
+        .await?;
+
+    let error = h
+        .service
+        .record_correction(correction(
+            belief.id.as_str(),
+            "Neo",
+            authorised,
+            Some(key),
+            Some("not-the-current-revision".to_owned()),
+        ))
+        .await
+        .expect_err("a revision mismatch must abort");
+    assert!(
+        matches!(error, EpistemicOperationError::RevisionConflict(_)),
+        "typed RevisionConflict expected, got: {error}"
+    );
+
+    let after = h
+        .store
+        .export_to(test_path("export-mismatch-after"))
+        .await?;
+    assert_eq!(
+        after.record_count, baseline.record_count,
+        "a revision conflict must persist nothing — no source, episode, claim, belief or receipt"
+    );
+    assert!(
+        h.repo
+            .get_correction_idempotency(&composite)
+            .await?
+            .is_none()
+    );
+    let stored = h
+        .repo
+        .get_belief(&belief.id)
+        .await?
+        .expect("target still exists");
+    assert_eq!(stored.state, BeliefState::Active, "target untouched");
+    assert_eq!(stored.current_value, "Zed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn exact_replay_returns_the_original_result_without_reexecuting()
+-> Result<(), Box<dyn std::error::Error>> {
+    let h = harness("corr-replay").await?;
+    let (belief, authorised) = seed_target(&h).await?;
+    let key = "delta2-replay-key";
+    let expected = revision_string(&belief);
+
+    let first = h
+        .service
+        .record_correction(correction(
+            belief.id.as_str(),
+            "Neo",
+            authorised.clone(),
+            Some(key),
+            Some(expected.clone()),
+        ))
+        .await?;
+    assert_eq!(
+        first.reconciliation.decision.action,
+        ReconciliationAction::Supersede
+    );
+    let after_first = h.store.export_to(test_path("export-replay-1")).await?;
+
+    // Exact retry: same envelope. The receipt must win before any target
+    // validation — the target is superseded now, so a re-execution would fail.
+    let second = h
+        .service
+        .record_correction(correction(
+            belief.id.as_str(),
+            "Neo",
+            authorised,
+            Some(key),
+            Some(expected),
+        ))
+        .await?;
+
+    assert_eq!(
+        second.claim.id, first.claim.id,
+        "replay returns the original claim"
+    );
+    assert_eq!(second.source_id, first.source_id);
+    assert_eq!(second.episode_id, first.episode_id);
+    let after_second = h.store.export_to(test_path("export-replay-2")).await?;
+    assert_eq!(
+        after_second.record_count, after_first.record_count,
+        "a replay must not execute the correction again"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn reused_key_with_changed_payload_conflicts_without_writing()
+-> Result<(), Box<dyn std::error::Error>> {
+    let h = harness("corr-key-conflict").await?;
+    let (belief, authorised) = seed_target(&h).await?;
+    let key = "delta2-conflict-key";
+    let expected = revision_string(&belief);
+
+    let _first = h
+        .service
+        .record_correction(correction(
+            belief.id.as_str(),
+            "Neo",
+            authorised.clone(),
+            Some(key),
+            Some(expected),
+        ))
+        .await?;
+    let baseline = h
+        .store
+        .export_to(test_path("export-conflict-before"))
+        .await?;
+
+    let error = h
+        .service
+        .record_correction(correction(
+            belief.id.as_str(),
+            "Vim",
+            authorised,
+            Some(key),
+            None,
+        ))
+        .await
+        .expect_err("a reused key with a changed payload must conflict");
+    assert!(
+        matches!(error, EpistemicOperationError::IdempotencyConflict(_)),
+        "typed IdempotencyConflict expected, got: {error}"
+    );
+    let after = h
+        .store
+        .export_to(test_path("export-conflict-after"))
+        .await?;
+    assert_eq!(
+        after.record_count, baseline.record_count,
+        "a payload conflict persists nothing"
     );
     Ok(())
 }
