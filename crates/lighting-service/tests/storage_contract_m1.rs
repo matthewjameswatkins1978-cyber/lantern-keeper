@@ -787,6 +787,21 @@ async fn list_calls_are_bounded_for_hosted_row_limits() -> Result<(), Box<dyn st
     Ok(())
 }
 
+#[tokio::test]
+#[ignore = "measured at M1 base 2787b46: store_belief and SurrealEpistemicRepository::migrate \
+            issue statements without inspecting per-statement results, so a rejected statement \
+            can still look like success. Same false-acceptance family as \
+            rolled_back_transition_must_not_report_success; the bounded surface checks \
+            take_errors, these two native paths do not. Reported for a sequenced follow-up, not \
+            drive-by fixed here."]
+async fn native_store_belief_and_migrate_do_not_check_statement_results()
+-> Result<(), Box<dyn std::error::Error>> {
+    // No assertion is possible through the current native API: both calls return
+    // Ok or an Err derived from the driver call, never from a per-statement
+    // result. The bounded surface (bounded_store.rs) is the checked path.
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // 9. Additive bounded surface (LK-HOST-001 v1.1)
 //
