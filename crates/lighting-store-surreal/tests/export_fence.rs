@@ -144,3 +144,91 @@ async fn fenced_export_records_fence_and_restores() -> Result<(), Box<dyn std::e
     let _ = std::fs::remove_dir_all(restored.directory);
     Ok(())
 }
+
+#[tokio::test]
+async fn restore_reports_fence_state() -> Result<(), Box<dyn std::error::Error>> {
+    let (store, db_path) = seeded_store("fence-summary").await?;
+    let unfenced_path = test_path("fence-summary-unfenced");
+    store.export_to(&unfenced_path).await?;
+    let unfenced = store.restore_from(&unfenced_path).await?;
+    assert!(
+        !unfenced.fenced,
+        "unfenced restore must report fenced=false"
+    );
+    assert!(
+        unfenced.fence_id.is_none(),
+        "unfenced restore must report no fence id"
+    );
+
+    let fenced_path = test_path("fence-summary-fenced");
+    store
+        .export_fenced_to(&fenced_path, "fence-summary-001")
+        .await?;
+    let fenced = store.restore_from(&fenced_path).await?;
+    assert!(fenced.fenced, "fenced restore must report fenced=true");
+    assert_eq!(
+        fenced.fence_id.as_deref(),
+        Some("fence-summary-001"),
+        "fenced restore must report the caller fence id"
+    );
+
+    let _ = std::fs::remove_dir_all(db_path);
+    let _ = std::fs::remove_dir_all(unfenced_path);
+    let _ = std::fs::remove_dir_all(fenced_path);
+    Ok(())
+}
+
+#[tokio::test]
+async fn truncated_export_fails_closed_on_hash_mismatch() -> Result<(), Box<dyn std::error::Error>>
+{
+    let (store, db_path) = seeded_store("fence-truncate").await?;
+    let export_path = test_path("fence-truncate-export");
+    store.export_to(&export_path).await?;
+
+    // Truncate a data file: valid JSON prefix, missing tail. The manifest
+    // hash no longer matches, so restore must refuse before writing anything.
+    let mut biggest: Option<(PathBuf, Vec<u8>)> = None;
+    for entry in std::fs::read_dir(&export_path)? {
+        let entry = entry?;
+        let candidate = entry.path();
+        if candidate.extension().and_then(|ext| ext.to_str()) != Some("ndjson") {
+            continue;
+        }
+        let bytes = std::fs::read(&candidate)?;
+        let replace = match &biggest {
+            Some((_, current)) => bytes.len() > current.len(),
+            None => true,
+        };
+        if replace {
+            biggest = Some((candidate, bytes));
+        }
+    }
+    let (target, bytes) = biggest.expect("export produced no ndjson files");
+    assert!(bytes.len() > 8, "largest export file too small to truncate");
+    std::fs::write(&target, &bytes[..bytes.len() / 2])?;
+
+    let err = match store.restore_from(&export_path).await {
+        Ok(_) => panic!("truncated export restored without error"),
+        Err(error) => error,
+    };
+    let message = error_to_string(&err);
+    assert!(
+        message.contains("hash mismatch"),
+        "truncation must fail on the content hash, got: {message}"
+    );
+
+    let _ = std::fs::remove_dir_all(db_path);
+    let _ = std::fs::remove_dir_all(export_path);
+    Ok(())
+}
+
+fn error_to_string(error: &dyn std::error::Error) -> String {
+    use std::fmt::Write as _;
+    let mut out = error.to_string();
+    let mut source = error.source();
+    while let Some(next) = source {
+        let _ = write!(out, ": {next}");
+        source = next.source();
+    }
+    out
+}
