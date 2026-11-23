@@ -96,6 +96,8 @@ impl SurrealStore {
                     "dimension_definition",
                     "belief_revision",
                     "context_pack",
+                    "inquiry",
+                    "inquiry_revision",
                 ],
             ),
         ];
@@ -393,6 +395,8 @@ fn is_export_table(table: &str) -> bool {
             | "memory_relation"
             | "trace"
             | "proposal"
+            | "inquiry"
+            | "inquiry_revision"
             | "predicate_definition"
             | "dimension_definition"
             | "memory"
