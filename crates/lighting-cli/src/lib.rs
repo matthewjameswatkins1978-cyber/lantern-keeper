@@ -118,6 +118,9 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
         CliCommand::BasicMemoryAccounting { path, output, json } => {
             cmd_basic_memory_accounting(&path, &output, json)
         }
+        CliCommand::BasicMemoryReconcile { path, output, json } => {
+            cmd_basic_memory_reconcile(&client, &path, output.as_deref(), json)
+        }
         CliCommand::Predicate { command } => match command {
             PredicateCommand::List { json } => cmd_predicate_list(&client, json),
             PredicateCommand::Get { key, json } => cmd_predicate_get(&client, &key, json),
@@ -332,6 +335,18 @@ pub enum CliCommand {
         #[arg(long)]
         output: PathBuf,
         /// Also print the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reconcile a Basic Memory snapshot against the running service, read-only:
+    /// counts, per-note content and relationship coverage (LK-CUTOVER-001 C3).
+    BasicMemoryReconcile {
+        /// Validated snapshot directory or one notes-*.ndjson shard.
+        path: PathBuf,
+        /// Optional JSON report destination.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Output JSON only.
         #[arg(long)]
         json: bool,
     },
@@ -1301,6 +1316,63 @@ struct BasicMemoryAccountingReport {
     items: Vec<BasicMemoryAccountingItem>,
 }
 
+/// Hosted (or native service) state gathered strictly read-only for
+/// reconciliation. Only GET endpoints are used.
+#[derive(Debug, Default)]
+struct HostedReconcileState {
+    /// `source_path` -> details of the note found by its import title.
+    notes: BTreeMap<String, HostedNoteState>,
+    /// hosted `source_id` -> count of Basic Memory-originated claims.
+    claims_by_source: BTreeMap<String, usize>,
+    total_basic_memory_claims: usize,
+    /// Unresolved relations whose origin is the Basic Memory importer.
+    unresolved_basic_memory_relations: usize,
+}
+
+#[derive(Debug)]
+struct HostedNoteState {
+    source_id: String,
+    content: String,
+    #[allow(dead_code)]
+    fingerprint: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ReconcileNoteReport {
+    source_path: String,
+    present: bool,
+    /// `None` when the note is absent from the service.
+    content_match: Option<bool>,
+    expected_claims: usize,
+    hosted_claims: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct BasicMemoryReconcileReport {
+    schema: &'static str,
+    generated_at: String,
+    service_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snapshot_captured_at: Option<String>,
+    notes_expected: usize,
+    notes_present: usize,
+    notes_missing: Vec<String>,
+    notes_content_mismatch: Vec<String>,
+    expected_claims: usize,
+    hosted_claims: usize,
+    claims_delta: i64,
+    expected_relations: usize,
+    hosted_unresolved_relations: usize,
+    relations_delta: i64,
+    per_note: Vec<ReconcileNoteReport>,
+    /// Service state that has no read-only enumeration path over REST.
+    /// Never silently treated as reconciled.
+    not_enumerable_over_rest: Vec<String>,
+    verdict: String,
+}
+
 fn load_basic_memory_snapshot(path: &Path) -> anyhow::Result<Vec<BasicMemorySnapshotRecord>> {
     let files = if path.is_file() {
         vec![path.to_path_buf()]
@@ -1740,6 +1812,300 @@ fn cmd_basic_memory_accounting(path: &Path, output: &Path, json: bool) -> anyhow
                 .unwrap_or(report.accounted_relations),
         );
         println!("Report: {}", output.display());
+    }
+    Ok(())
+}
+
+/// Gathers the hosted side of a reconciliation with GET requests only.
+/// Notes are located by the exact title the importer creates
+/// (`basic-memory/<source_path>`, kind `markdown`) and verified by exact
+/// content bytes. A missing note (404 or no current revision) is recorded as
+/// absent rather than treated as an error.
+fn fetch_hosted_reconcile_state(
+    client: &HttpClient,
+    records: &[BasicMemorySnapshotRecord],
+) -> anyhow::Result<HostedReconcileState> {
+    let mut state = HostedReconcileState::default();
+    for record in records {
+        let title = format!("basic-memory/{}", record.source_path);
+        let url = format!(
+            "/api/v1/sources/history?kind=markdown&title={}",
+            urlencoding::encode(&title)
+        );
+        let response = client.get(&url).map_err(|error| {
+            anyhow::Error::msg(error).context("is Lighting running? Try: lighting serve")
+        })?;
+        let body = match HttpClient::handle_response(response) {
+            Ok(body) => body,
+            Err(CliError::Api { status: 404, .. }) => continue,
+            Err(error) => return Err(anyhow::Error::msg(error)),
+        };
+        let history: SourceHistoryResponse = serde_json::from_value(body)
+            .map_err(|error| anyhow::Error::msg(format!("unexpected history response: {error}")))?;
+        let Some(current) = history.revisions.iter().find(|revision| revision.current) else {
+            continue;
+        };
+        let response = client
+            .get(&format!("/api/v1/sources/{}", current.source_id))
+            .map_err(|error| {
+                anyhow::Error::msg(error).context("is Lighting running? Try: lighting serve")
+            })?;
+        let body = match HttpClient::handle_response(response) {
+            Ok(body) => body,
+            Err(CliError::Api { status: 404, .. }) => continue,
+            Err(error) => return Err(anyhow::Error::msg(error)),
+        };
+        let source: SourceResponse = serde_json::from_value(body)
+            .map_err(|error| anyhow::Error::msg(format!("unexpected source response: {error}")))?;
+        state.notes.insert(
+            record.source_path.clone(),
+            HostedNoteState {
+                source_id: source.source_id,
+                content: source.content,
+                fingerprint: source.fingerprint,
+            },
+        );
+    }
+
+    let response = client
+        .get("/api/v1/claims?unmapped=false")
+        .map_err(|error| {
+            anyhow::Error::msg(error).context("is Lighting running? Try: lighting serve")
+        })?;
+    let claims_body = HttpClient::handle_response(response)?;
+    for claim in claims_body
+        .get("claims")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if claim.get("extractor").and_then(serde_json::Value::as_str) == Some("basic-memory-import")
+        {
+            state.total_basic_memory_claims += 1;
+            if let Some(source_id) = claim.get("source_id").and_then(serde_json::Value::as_str) {
+                *state
+                    .claims_by_source
+                    .entry(source_id.to_owned())
+                    .or_default() += 1;
+            }
+        }
+    }
+
+    let response = client.get("/api/v1/relations").map_err(|error| {
+        anyhow::Error::msg(error).context("is Lighting running? Try: lighting serve")
+    })?;
+    let relations_body = HttpClient::handle_response(response)?;
+    for relation in relations_body
+        .get("relations")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if relation.get("origin").and_then(serde_json::Value::as_str) == Some("basic-memory-cloud")
+        {
+            state.unresolved_basic_memory_relations += 1;
+        }
+    }
+    Ok(state)
+}
+
+/// Pure comparison of the snapshot side against the fetched hosted state.
+/// Any missing note, content mismatch or count delta fails the verdict;
+/// state with no REST enumeration path is listed explicitly and never
+/// counted as reconciled.
+fn build_basic_memory_reconcile(
+    records: &[BasicMemorySnapshotRecord],
+    accounting: &BasicMemoryAccountingReport,
+    hosted: &HostedReconcileState,
+    service_url: &str,
+    snapshot_captured_at: Option<String>,
+    generated_at: String,
+) -> BasicMemoryReconcileReport {
+    let mut expected_claims_by_source: BTreeMap<String, usize> = BTreeMap::new();
+    let mut expected_claims = 0usize;
+    let mut expected_relations = 0usize;
+    for item in &accounting.items {
+        match item.item_type.as_str() {
+            "observation" if item.outcome == "claim" => {
+                expected_claims += 1;
+                *expected_claims_by_source
+                    .entry(item.source_path.clone())
+                    .or_default() += 1;
+            }
+            "relation" => expected_relations += 1,
+            _ => {}
+        }
+    }
+
+    let mut per_note = Vec::new();
+    let mut notes_missing = Vec::new();
+    let mut notes_content_mismatch = Vec::new();
+    let mut notes_present = 0usize;
+    let mut hosted_claims = 0usize;
+    for record in records {
+        let expected_claims = expected_claims_by_source
+            .get(&record.source_path)
+            .copied()
+            .unwrap_or(0);
+        match hosted.notes.get(&record.source_path) {
+            None => {
+                notes_missing.push(record.source_path.clone());
+                per_note.push(ReconcileNoteReport {
+                    source_path: record.source_path.clone(),
+                    present: false,
+                    content_match: None,
+                    expected_claims,
+                    hosted_claims: 0,
+                    source_id: None,
+                });
+            }
+            Some(note) => {
+                notes_present += 1;
+                let content_match = note.content == record.raw_markdown;
+                if !content_match {
+                    notes_content_mismatch.push(record.source_path.clone());
+                }
+                let claims_for_note = hosted
+                    .claims_by_source
+                    .get(&note.source_id)
+                    .copied()
+                    .unwrap_or(0);
+                hosted_claims += claims_for_note;
+                per_note.push(ReconcileNoteReport {
+                    source_path: record.source_path.clone(),
+                    present: true,
+                    content_match: Some(content_match),
+                    expected_claims,
+                    hosted_claims: claims_for_note,
+                    source_id: Some(note.source_id.clone()),
+                });
+            }
+        }
+    }
+
+    let claims_delta = hosted_claims as i64 - expected_claims as i64;
+    let relations_delta =
+        hosted.unresolved_basic_memory_relations as i64 - expected_relations as i64;
+    let verdict = if notes_missing.is_empty()
+        && notes_content_mismatch.is_empty()
+        && claims_delta == 0
+        && relations_delta == 0
+    {
+        "pass"
+    } else {
+        "fail"
+    };
+
+    BasicMemoryReconcileReport {
+        schema: "basic-memory-reconcile-v1",
+        generated_at,
+        service_url: service_url.to_owned(),
+        snapshot_captured_at,
+        notes_expected: records.len(),
+        notes_present,
+        notes_missing,
+        notes_content_mismatch,
+        expected_claims,
+        hosted_claims,
+        claims_delta,
+        expected_relations,
+        hosted_unresolved_relations: hosted.unresolved_basic_memory_relations,
+        relations_delta,
+        per_note,
+        not_enumerable_over_rest: vec![
+            "soft_memory_items (POST search cannot enumerate; no GET list endpoint)".to_owned(),
+            "ledger_events (ingest-only route; no GET list endpoint)".to_owned(),
+            "resolved_relations (GET /api/v1/relations returns unresolved only)".to_owned(),
+            "episodes (point GET by id only)".to_owned(),
+        ],
+        verdict: verdict.to_owned(),
+    }
+}
+
+fn cmd_basic_memory_reconcile(
+    client: &HttpClient,
+    path: &Path,
+    output: Option<&Path>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let records = load_basic_memory_snapshot(path)?;
+    let manifest =
+        load_basic_memory_snapshot_manifest(path).unwrap_or(BasicMemorySnapshotManifest {
+            captured_at: None,
+            note_count: None,
+            observation_count: None,
+            relation_count: None,
+            export_sha256: None,
+        });
+    let accounting = build_basic_memory_accounting(&records, &manifest);
+    let hosted = fetch_hosted_reconcile_state(client, &records)?;
+    let report = build_basic_memory_reconcile(
+        &records,
+        &accounting,
+        &hosted,
+        &client.base_url,
+        manifest.captured_at,
+        chrono::Utc::now().to_rfc3339(),
+    );
+
+    if let Some(output) = output {
+        let encoded = serde_json::to_vec_pretty(&report)?;
+        if let Some(parent) = output
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create reconcile report directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+        fs::write(output, encoded)
+            .with_context(|| format!("failed to write reconcile report {}", output.display()))?;
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "Basic Memory reconcile (read-only): {}/{} notes present, claims {}/{} (delta {}), relations {}/{} (delta {}), verdict={}",
+            report.notes_present,
+            report.notes_expected,
+            report.hosted_claims,
+            report.expected_claims,
+            report.claims_delta,
+            report.hosted_unresolved_relations,
+            report.expected_relations,
+            report.relations_delta,
+            report.verdict
+        );
+        if !report.notes_missing.is_empty() {
+            println!("Missing notes: {}", report.notes_missing.join(", "));
+        }
+        if !report.notes_content_mismatch.is_empty() {
+            println!(
+                "Content mismatches: {}",
+                report.notes_content_mismatch.join(", ")
+            );
+        }
+        println!(
+            "Not enumerable over REST (not counted as reconciled): {}",
+            report.not_enumerable_over_rest.join("; ")
+        );
+        if let Some(output) = output {
+            println!("Report: {}", output.display());
+        }
+    }
+
+    if report.verdict != "pass" {
+        bail!(
+            "reconciliation verdict=fail (missing={}, content_mismatch={}, claims_delta={}, relations_delta={})",
+            report.notes_missing.len(),
+            report.notes_content_mismatch.len(),
+            report.claims_delta,
+            report.relations_delta
+        );
     }
     Ok(())
 }
@@ -3299,5 +3665,203 @@ mod tests {
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("invalid Project ID"));
         assert!(msg.contains("must be a valid UUID"));
+    }
+
+    // ── Basic Memory reconcile tests (LK-CUTOVER-001 C3) ────────────────────
+
+    fn reconcile_record(path: &str, content: &str) -> BasicMemorySnapshotRecord {
+        BasicMemorySnapshotRecord {
+            source_project: None,
+            source_project_id: None,
+            source_path: path.to_owned(),
+            title: None,
+            permalink: None,
+            external_id: None,
+            entity_id: None,
+            note_type: None,
+            content_type: None,
+            updated_at: None,
+            raw_markdown: content.to_owned(),
+        }
+    }
+
+    fn reconcile_manifest() -> BasicMemorySnapshotManifest {
+        BasicMemorySnapshotManifest {
+            captured_at: Some("2026-11-24".to_owned()),
+            note_count: None,
+            observation_count: None,
+            relation_count: None,
+            export_sha256: None,
+        }
+    }
+
+    fn hosted_note(source_id: &str, content: &str) -> HostedNoteState {
+        HostedNoteState {
+            source_id: source_id.to_owned(),
+            content: content.to_owned(),
+            fingerprint: "sha256:test".to_owned(),
+        }
+    }
+
+    #[test]
+    fn basic_memory_reconcile_command_is_constructed() {
+        let cmd = CliCommand::BasicMemoryReconcile {
+            path: PathBuf::from("snapshot"),
+            output: None,
+            json: true,
+        };
+        match cmd {
+            CliCommand::BasicMemoryReconcile { path, output, json } => {
+                assert_eq!(path, PathBuf::from("snapshot"));
+                assert!(output.is_none());
+                assert!(json);
+            }
+            _ => panic!("expected BasicMemoryReconcile variant"),
+        }
+    }
+
+    #[test]
+    fn reconcile_passes_when_hosted_matches_snapshot() {
+        let note_a = "---\ntitle: A\n---\n\n- [decision] Keep the source intact\n";
+        let note_b = "---\ntitle: B\n---\n\n- related_to [[Lantern Keeper]]\n";
+        let records = vec![
+            reconcile_record("a.md", note_a),
+            reconcile_record("b.md", note_b),
+        ];
+        let accounting = build_basic_memory_accounting(&records, &reconcile_manifest());
+        // a.md carries one truth-bearing decision (claim); b.md one relation.
+        assert_eq!(accounting.accounted_observations, 1);
+        assert_eq!(accounting.accounted_relations, 1);
+
+        let mut notes = BTreeMap::new();
+        notes.insert("a.md".to_owned(), hosted_note("sa", note_a));
+        notes.insert("b.md".to_owned(), hosted_note("sb", note_b));
+        let mut claims_by_source = BTreeMap::new();
+        claims_by_source.insert("sa".to_owned(), 1);
+        let hosted = HostedReconcileState {
+            notes,
+            claims_by_source,
+            total_basic_memory_claims: 1,
+            unresolved_basic_memory_relations: 1,
+        };
+
+        let report = build_basic_memory_reconcile(
+            &records,
+            &accounting,
+            &hosted,
+            "http://127.0.0.1:4317",
+            Some("2026-11-24".to_owned()),
+            "2026-11-24T00:00:00+00:00".to_owned(),
+        );
+
+        assert_eq!(report.verdict, "pass");
+        assert_eq!(report.notes_expected, 2);
+        assert_eq!(report.notes_present, 2);
+        assert!(report.notes_missing.is_empty());
+        assert!(report.notes_content_mismatch.is_empty());
+        assert_eq!(report.expected_claims, 1);
+        assert_eq!(report.hosted_claims, 1);
+        assert_eq!(report.claims_delta, 0);
+        assert_eq!(report.expected_relations, 1);
+        assert_eq!(report.hosted_unresolved_relations, 1);
+        assert_eq!(report.relations_delta, 0);
+        assert!(
+            report
+                .per_note
+                .iter()
+                .all(|note| note.present && note.content_match == Some(true))
+        );
+        assert_eq!(report.not_enumerable_over_rest.len(), 4);
+        assert_eq!(report.schema, "basic-memory-reconcile-v1");
+    }
+
+    #[test]
+    fn reconcile_fails_on_missing_and_content_mismatch() {
+        let note_a = "---\ntitle: A\n---\n\n- [decision] Keep it\n";
+        let note_b = "---\ntitle: B\n---\n\n- [decision] Separate note\n";
+        let records = vec![
+            reconcile_record("a.md", note_a),
+            reconcile_record("b.md", note_b),
+        ];
+        let accounting = build_basic_memory_accounting(&records, &reconcile_manifest());
+
+        // Hosted holds a.md with ALTERED bytes; b.md is absent entirely.
+        let mut notes = BTreeMap::new();
+        notes.insert(
+            "a.md".to_owned(),
+            hosted_note("sa", "---\ntitle: A\n---\n\n- [decision] Tampered\n"),
+        );
+        let hosted = HostedReconcileState {
+            notes,
+            claims_by_source: BTreeMap::new(),
+            total_basic_memory_claims: 0,
+            unresolved_basic_memory_relations: 0,
+        };
+
+        let report = build_basic_memory_reconcile(
+            &records,
+            &accounting,
+            &hosted,
+            "http://127.0.0.1:4317",
+            None,
+            "t".to_owned(),
+        );
+
+        assert_eq!(report.verdict, "fail");
+        assert_eq!(report.notes_present, 1);
+        assert_eq!(report.notes_missing, vec!["b.md".to_owned()]);
+        assert_eq!(report.notes_content_mismatch, vec!["a.md".to_owned()]);
+        let missing = report
+            .per_note
+            .iter()
+            .find(|note| note.source_path == "b.md")
+            .expect("b.md is reported");
+        assert!(!missing.present);
+        assert_eq!(missing.content_match, None);
+        let mismatched = report
+            .per_note
+            .iter()
+            .find(|note| note.source_path == "a.md")
+            .expect("a.md is reported");
+        assert_eq!(mismatched.content_match, Some(false));
+    }
+
+    #[test]
+    fn reconcile_fails_on_count_deltas() {
+        let note_a = "---\ntitle: A\n---\n\n- [decision] One\n- [decision] Two\n";
+        let records = vec![reconcile_record("a.md", note_a)];
+        let accounting = build_basic_memory_accounting(&records, &reconcile_manifest());
+        assert_eq!(accounting.accounted_observations, 2);
+
+        // Hosted has the note and matching content, but only one of the two
+        // expected claims landed, and a relation is missing entirely.
+        let mut notes = BTreeMap::new();
+        notes.insert("a.md".to_owned(), hosted_note("sa", note_a));
+        let mut claims_by_source = BTreeMap::new();
+        claims_by_source.insert("sa".to_owned(), 1);
+        let hosted = HostedReconcileState {
+            notes,
+            claims_by_source,
+            total_basic_memory_claims: 1,
+            unresolved_basic_memory_relations: 0,
+        };
+
+        let report = build_basic_memory_reconcile(
+            &records,
+            &accounting,
+            &hosted,
+            "http://127.0.0.1:4317",
+            None,
+            "t".to_owned(),
+        );
+
+        assert_eq!(report.verdict, "fail");
+        assert_eq!(report.expected_claims, 2);
+        assert_eq!(report.hosted_claims, 1);
+        assert_eq!(report.claims_delta, -1);
+        assert_eq!(report.relations_delta, 0);
+        // Content matched: the failure is purely a count delta.
+        assert!(report.notes_content_mismatch.is_empty());
+        assert!(report.notes_missing.is_empty());
     }
 }
