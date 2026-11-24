@@ -5,20 +5,24 @@ data only**. No live Basic Memory, no production traffic, no secrets in this
 document (names only). Work runs provisioning/deploy; these steps assume the
 candidate is deployed and bound to the empty D1 database.
 
-Baseline revision: the candidate commit SHA on `cutover/d1-seam` as reported
-in the handoff receipt (this doc ships with that commit; a smoke doc that
-cannot be tied to a revision is not evidence).
+Baseline revision: `e9a4d4823c93758d8e76749706dfc0e1e0db637c` on
+`cutover/d1-seam` (re-pin on every adoption push; a smoke doc that cannot
+be tied to a revision is not evidence).
 
 ## 0. Preconditions
 
 - Worker bound to the `lantern-keeper` D1 database (Work).
 - Schema applied from `crates/lighting-store-d1/migrations/` (Work, checked-in
   migration semantics: idempotent DDL + `schema_version` row).
-- Secrets **names** (values from Work's secret store, never in chat or Git) —
-  the existing native remote-adapter contract, reused unchanged by the hosted
-  worker (no new contract, no new issuer):
+- Secrets **names** (values from Work's secret store, never in chat or Git):
   `LIGHTING_MCP_OAUTH_AUDIENCE`, `LIGHTING_MCP_OAUTH_JWKS_URL`,
   `LIGHTING_MCP_OAUTH_SUBJECT`, `LIGHTING_MCP_OAUTH_RESOURCE`.
+  Provenance (honest): these names are defined by the reviewed-but-unmerged
+  OAuth adapter on branch `codex/lantern-chatgpt-read-safety`
+  (`apps/lighting/src/mcp_auth.rs`). **No code on `cutover/d1-seam` reads
+  them yet.** The hosted worker (C2) will either adopt these names as its
+  contract or record its own names here; until then, no reader should look
+  for their definition on this branch.
   Until the Auth0 tenant is verified (separate dependency), smoke runs use a
   static-Bearer dev route **explicitly labelled non-production**; that route
   proves transport and scoping, never production auth.
@@ -90,8 +94,10 @@ as proven until the worker serves it.
 
 ## 7. Budget and failure behaviour
 
-- Candidate fetch is capped (128 total); a query above the cap must return a
-  typed bounded result with truncation flags, never an unbounded scan.
+- Candidate fetch is capped (128 total) by a LIMIT-clamped statement; this
+  crate carries no truncation flag, so an over-cap query is visible as
+  "fewer rows than requested", never as an unbounded scan. If the service
+  layer (C2) adds an explicit truncation flag, this step will assert it.
 - Forced quota/limit error (if reproducible safely): expect a typed
   `quota`/`unavailable` error, no silent partial success, no retry storm.
 
