@@ -4,6 +4,7 @@ members = [
     "crates/lighting-cli",
     "crates/lighting-core",
     "crates/lighting-service",
+    "crates/lighting-store-d1",
     "crates/lighting-store-surreal",
     "crates/parity-harness",
 ]
