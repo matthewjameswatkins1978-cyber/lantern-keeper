@@ -255,6 +255,50 @@ pub fn scoped_belief_candidates(
     }
 }
 
+/// Scoped search: LIKE patterns bound as parameters (never interpolated),
+/// scoped by index, clamped to [`MAX_CANDIDATES`]. Zero-write. Empty
+/// patterns return no rows rather than an unscoped scan.
+pub fn search_beliefs(scope_hash: &str, patterns: &[String], limit: usize) -> SqlStatement {
+    let effective = limit.min(MAX_CANDIDATES);
+    if effective == 0 || patterns.is_empty() {
+        return SqlStatement::new("SELECT id, payload, updated_at FROM belief WHERE 0", vec![]);
+    }
+    let mut sql =
+        String::from("SELECT id, payload, updated_at FROM belief WHERE scope_hash = ? AND (");
+    for index in 0..patterns.len() {
+        if index > 0 {
+            sql.push_str(" OR ");
+        }
+        sql.push_str("(payload LIKE ? COLLATE NOCASE)");
+    }
+    sql.push_str(") ORDER BY updated_at DESC, id ASC LIMIT ?");
+    let mut params = vec![SqlValue::Text(scope_hash.to_owned())];
+    for pattern in patterns {
+        params.push(SqlValue::Text(pattern.clone()));
+    }
+    params.push(SqlValue::Integer(effective as i64));
+    SqlStatement::new(sql, params)
+}
+
+/// Point lookup of one belief inside its scope. Read-only; a missing row is
+/// a typed not-found upstream, never an existence oracle across scopes.
+pub fn belief_detail(belief_id: &str, scope_hash: &str) -> SqlStatement {
+    SqlStatement::new(
+        "SELECT id, scope, scope_hash, holder_key, subject_key, predicate_key, current_value, state, stale, updated_at, payload FROM belief WHERE id = ? AND scope_hash = ? LIMIT 1",
+        vec![belief_id.into(), scope_hash.into()],
+    )
+}
+
+/// Revision lineage for one belief, newest first, clamped (max 64).
+/// `from_updated_at` is the consumed token; `created_at` orders history.
+pub fn belief_revisions(belief_id: &str, limit: usize) -> SqlStatement {
+    let effective = limit.clamp(1, 64);
+    SqlStatement::new(
+        "SELECT from_updated_at, created_at, payload FROM belief_revision WHERE belief_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+        vec![belief_id.into(), (effective as i64).into()],
+    )
+}
+
 /// Replay lookup for a keyed write. Returns the stored result row if this
 /// exact composite key was already accepted.
 pub fn lookup_idempotency(composite_key: &str) -> SqlStatement {

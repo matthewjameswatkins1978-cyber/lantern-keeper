@@ -1,0 +1,22 @@
+[package]
+name = "lighting-worker"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/matthewjameswatkins1978-cyber/lantern-keeper"
+
+# Deliberately its own workspace root: the wasm worker must not join the
+# native workspace or `cargo test --workspace` would build workers-rs natively.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+worker = { version = "0.9.0", features = ["d1"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+lantern-mcp-core = { path = "../../crates/lantern-mcp-core" }
+lighting-store-d1 = { path = "../../crates/lighting-store-d1" }
+lighting-core = { path = "../../crates/lighting-core" }
