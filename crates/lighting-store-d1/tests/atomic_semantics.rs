@@ -347,6 +347,46 @@ fn scoped_reads_clamp_to_max_candidates() {
 }
 
 #[test]
+fn shared_scope_spans_principals_and_denied_scope_fails_closed() {
+    // LK-CUTOVER-001 shared workshop scope: two distinct principals
+    // granted the same scope see the same records and each other's
+    // accepted writes. The storage namespace is scope alone: principal
+    // appears in receipts, attribution and idempotency identity, never
+    // in the read/write partition key.
+    let conn = open_schema().expect("schema");
+    seed_belief(&conn, "b1", "scope-a", "rev-1", false).expect("seed");
+
+    // Principal Codex corrects rev-1 -> rev-2.
+    let mut codex_write = correction("r-codex", "b1", "rev-1", "rev-2", "k-codex");
+    codex_write.principal = "codex".to_owned();
+    codex_write.receipt_id = "receipt-codex".to_owned();
+    run_batch(&conn, &batch_of(&codex_write)).expect("codex accepted");
+
+    // Principal Pi reads the scope and sees Codex's write, then corrects
+    // rev-2 -> rev-3. Same storage namespace, distinct receipt identity.
+    assert_eq!(belief_updated_at(&conn, "b1"), "rev-2");
+    let mut pi_write = correction("r-pi", "b1", "rev-2", "rev-3", "k-pi");
+    pi_write.principal = "pi".to_owned();
+    pi_write.receipt_id = "receipt-pi".to_owned();
+    run_batch(&conn, &batch_of(&pi_write)).expect("pi accepted");
+    assert_eq!(belief_updated_at(&conn, "b1"), "rev-3");
+
+    // Both principals' receipts are attributed separately.
+    assert_eq!(count(&conn, "correction_idempotency"), 2);
+    assert_eq!(count(&conn, "mutation_receipt"), 2);
+
+    // A principal holding only scope-b sees nothing of scope-a.
+    let scoped_b = scoped_belief_candidates("scope-b", true, 128);
+    assert_eq!(
+        rows_for(&conn, &scoped_b),
+        0,
+        "denied scope must fail closed"
+    );
+    let scoped_a = scoped_belief_candidates("scope-a", true, 128);
+    assert_eq!(rows_for(&conn, &scoped_a), 1);
+}
+
+#[test]
 fn builder_refuses_noop_advance_separator_and_bad_timestamp() {
     let base = correction("r1", "b1", "rev-1", "rev-2", "k1");
 
