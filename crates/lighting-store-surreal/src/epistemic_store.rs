@@ -261,13 +261,14 @@ impl EpistemicRepository for SurrealEpistemicRepository {
         Ok(belief)
     }
 
-    async fn apply_belief_transition(
+    async fn apply_belief_transition_guarded(
         &self,
         previous: Option<Belief>,
         current: Option<Belief>,
         revisions: Vec<BeliefRevision>,
         trace: Trace,
         stale_beliefs: Vec<Belief>,
+        expected_token: Option<DateTime<Utc>>,
     ) -> Result<Option<Belief>, EpistemicRepositoryError> {
         // A repeated Claim can intentionally produce a NoChange decision. In
         // that case there is no projection mutation to wrap in a transaction;
@@ -283,10 +284,24 @@ impl EpistemicRepository for SurrealEpistemicRepository {
         }
         let mut statements = vec!["BEGIN TRANSACTION".to_owned()];
 
-        if previous.is_some() {
+        // Q18 gap 3: bind the read token at the write. THROW aborts the whole
+        // batch; a zero-row WHERE predicate alone would silently commit the
+        // rest of the batch and must never masquerade as compare-and-set.
+        if expected_token.is_some() {
             statements.push(
-                "UPDATE belief SET payload = $previous_payload, stale = $previous_stale, state = $previous_state, updated_at = $previous_updated_at WHERE id = type::record('belief', $previous_id)".to_owned(),
+                "IF (SELECT VALUE updated_at FROM type::record('belief', $previous_id))[0] != $expected_token THEN THROW 'revision conflict: belief revision token is no longer current'; END".to_owned(),
             );
+        }
+
+        if previous.is_some() {
+            let cas_predicate = if expected_token.is_some() {
+                " AND updated_at = $expected_token"
+            } else {
+                ""
+            };
+            statements.push(format!(
+                "UPDATE belief SET payload = $previous_payload, stale = $previous_stale, state = $previous_state, updated_at = $previous_updated_at WHERE id = type::record('belief', $previous_id){cas_predicate}"
+            ));
         }
 
         if let Some(current) = current.as_ref() {
@@ -338,6 +353,9 @@ impl EpistemicRepository for SurrealEpistemicRepository {
                 .bind(("previous_stale", previous.stale))
                 .bind(("previous_state", belief_state(previous)))
                 .bind(("previous_updated_at", previous.updated_at));
+        }
+        if let Some(expected) = expected_token {
+            query = query.bind(("expected_token", expected));
         }
         if let Some(current) = current.as_ref() {
             query = query

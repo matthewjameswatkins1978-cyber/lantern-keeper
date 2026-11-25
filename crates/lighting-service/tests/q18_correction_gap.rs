@@ -228,23 +228,25 @@ async fn stale_token_writer_must_not_mutate_the_projection()
     let mut winner = original.clone();
     winner.current_value = "winner".to_owned();
     winner.updated_at = original.updated_at + Duration::seconds(1);
-    repo.apply_belief_transition(
+    repo.apply_belief_transition_guarded(
         Some(original.clone()),
         Some(winner),
         Vec::new(),
         conflict_trace(),
         Vec::new(),
+        Some(original.updated_at),
     )
     .await?;
 
     // The loser now applies with its stale token — this must be refused.
     let outcome = repo
-        .apply_belief_transition(
+        .apply_belief_transition_guarded(
             Some(loser.clone()),
             Some(loser),
             Vec::new(),
             conflict_trace(),
             Vec::new(),
+            Some(original.updated_at),
         )
         .await;
     let stored = repo
@@ -437,16 +439,24 @@ impl EpistemicRepository for FailOnIdempotencyRepo {
     ) -> Result<Belief, EpistemicRepositoryError> {
         self.inner.mark_belief_stale(id, reason, at).await
     }
-    async fn apply_belief_transition(
+    async fn apply_belief_transition_guarded(
         &self,
         previous: Option<Belief>,
         current: Option<Belief>,
         revisions: Vec<BeliefRevision>,
         trace: Trace,
         stale_beliefs: Vec<Belief>,
+        expected_token: Option<chrono::DateTime<Utc>>,
     ) -> Result<Option<Belief>, EpistemicRepositoryError> {
         self.inner
-            .apply_belief_transition(previous, current, revisions, trace, stale_beliefs)
+            .apply_belief_transition_guarded(
+                previous,
+                current,
+                revisions,
+                trace,
+                stale_beliefs,
+                expected_token,
+            )
             .await
     }
     async fn list_belief_revisions(

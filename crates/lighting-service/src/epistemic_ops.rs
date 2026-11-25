@@ -710,9 +710,20 @@ impl EpistemicService {
             details,
             created_at: now,
         };
+        // Q18 gap 3: the token this reconciliation READ is bound at the write,
+        // so a concurrent commit between this read and the batch refuses the
+        // whole transition instead of being overwritten.
+        let expected_token = existing.as_ref().map(|belief| belief.updated_at);
         let belief = self
             .repo
-            .apply_belief_transition(previous, current, revisions, trace, stale_updates)
+            .apply_belief_transition_guarded(
+                previous,
+                current,
+                revisions,
+                trace,
+                stale_updates,
+                expected_token,
+            )
             .await
             .map_err(map_repository_error)?;
         Ok(ReconciliationResult {

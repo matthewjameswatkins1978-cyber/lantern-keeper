@@ -705,6 +705,31 @@ pub trait EpistemicRepository: Send + Sync {
         revisions: Vec<BeliefRevision>,
         trace: Trace,
         stale_beliefs: Vec<Belief>,
+    ) -> Result<Option<Belief>, EpistemicRepositoryError> {
+        self.apply_belief_transition_guarded(
+            previous,
+            current,
+            revisions,
+            trace,
+            stale_beliefs,
+            None,
+        )
+        .await
+    }
+
+    /// Q18 gap 3 — transition with the revision token this writer READ bound
+    /// at the write. `Some(expected_token)` must refuse the whole batch when
+    /// the stored token has moved (consumed by a concurrent winner) or the
+    /// row is gone; `None` preserves the legacy unguarded behaviour for
+    /// create-only writes and existing callers.
+    async fn apply_belief_transition_guarded(
+        &self,
+        previous: Option<Belief>,
+        current: Option<Belief>,
+        revisions: Vec<BeliefRevision>,
+        trace: Trace,
+        stale_beliefs: Vec<Belief>,
+        expected_token: Option<DateTime<Utc>>,
     ) -> Result<Option<Belief>, EpistemicRepositoryError>;
     async fn list_belief_revisions(
         &self,
