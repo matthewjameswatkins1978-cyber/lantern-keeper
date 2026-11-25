@@ -1,6 +1,6 @@
 //! Workload-oriented qualification for the embedded SurrealKV default.
 
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 
 use chrono::Utc;
 use lighting_store_surreal::{StoreConfig, SurrealStore};
@@ -110,8 +110,7 @@ async fn embedded_surrealkv_survives_core_workload() -> Result<(), Box<dyn std::
         .take(0)?;
     assert_eq!(concurrent.len(), 32);
 
-    drop(store);
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    store.shutdown().await?;
 
     let reopened = SurrealStore::connect(&config).await?;
     assert_eq!(value(&reopened).await?, "v2");
@@ -121,6 +120,7 @@ async fn embedded_surrealkv_survives_core_workload() -> Result<(), Box<dyn std::
         .take(0)?;
     assert_eq!(persisted.len(), 32);
 
+    reopened.shutdown().await?;
     let _ = std::fs::remove_dir_all(path);
     Ok(())
 }

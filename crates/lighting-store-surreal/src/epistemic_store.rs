@@ -941,8 +941,9 @@ UPSERT __lighting_schema:bootstrap CONTENT {
 "#;
 
 const SCHEMA_MIGRATION_V10: &str = r#"
-DEFINE FIELD IF NOT EXISTS scope ON belief TYPE object VALUE encoding::json::decode(payload).scope;
-DEFINE FIELD IF NOT EXISTS scope.* ON belief TYPE string;
+-- Allow legacy rows with no scope while the UPDATE below backfills them.
+DEFINE FIELD IF NOT EXISTS scope ON belief TYPE option<object> VALUE encoding::json::decode(payload).scope;
+DEFINE FIELD IF NOT EXISTS scope.* ON belief TYPE option<string>;
 DEFINE INDEX IF NOT EXISTS belief_scope ON belief FIELDS scope;
 
 UPDATE belief SET scope = encoding::json::decode(payload).scope WHERE scope = NONE;

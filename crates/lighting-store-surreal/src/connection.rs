@@ -28,6 +28,8 @@ pub enum StoreError {
         #[source]
         source: Box<surrealdb::Error>,
     },
+    #[error("failed to shut down SurrealDB: {0}")]
+    Shutdown(#[source] Box<surrealdb::Error>),
     #[error("failed to authenticate with SurrealDB: {0}")]
     Authenticate(#[source] Box<surrealdb::Error>),
     #[error("failed to select SurrealDB namespace/database: {0}")]
@@ -87,6 +89,14 @@ impl SurrealStore {
             .map_err(|error| StoreError::Select(Box::new(error)))?;
 
         Ok(Self { db })
+    }
+
+    /// Stops the shared connection. Drop any remaining clones before reopening its store.
+    pub async fn shutdown(self) -> Result<(), StoreError> {
+        self.db
+            .shutdown()
+            .await
+            .map_err(|error| StoreError::Shutdown(Box::new(error)))
     }
 
     pub async fn health_check(&self) -> Result<(), StoreError> {

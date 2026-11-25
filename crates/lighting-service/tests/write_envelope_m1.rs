@@ -458,8 +458,8 @@ async fn envelope_refuses_blank_key_bad_separator_and_tampered_source()
 }
 
 #[tokio::test]
-async fn native_staging_reports_acceptance_it_cannot_guarantee()
--> Result<(), Box<dyn std::error::Error>> {
+async fn native_staging_rejects_a_rolled_back_projection() -> Result<(), Box<dyn std::error::Error>>
+{
     let harness = harness("staging").await?;
     let at = Utc::now();
     let source = source("staging bytes");
@@ -467,9 +467,8 @@ async fn native_staging_reports_acceptance_it_cannot_guarantee()
     let previous = belief("zed", at);
     harness.epistemic.store_belief(previous.clone()).await?;
 
-    // A pre-existing revision id makes the projection stage fail inside its own
-    // BEGIN/COMMIT batch. The native transition call does not inspect statement
-    // results, so it reports Ok while the batch rolls back.
+    // A pre-existing revision ID makes the projection stage fail inside its own
+    // BEGIN/COMMIT batch.
     let mut current = previous.clone();
     current.current_value = "helix".to_owned();
     current.updated_at = Utc::now();
@@ -516,17 +515,14 @@ async fn native_staging_reports_acceptance_it_cannot_guarantee()
         None,
     );
 
-    // Recorded, not endorsed. The native adapter inherits the native
-    // false-acceptance defect, so it cannot report this as a refusal.
-    let receipt = harness
-        .writer
-        .apply_write_envelope(envelope.clone())
-        .await
-        .expect("the native adapter reports acceptance because it cannot detect the rollback");
-    assert_eq!(
-        receipt.outcome,
-        WriteEnvelopeOutcome::Accepted { staged: 3 },
-        "the adapter counts the projection stage as staged although its batch rolled back"
+    let result = harness.writer.apply_write_envelope(envelope.clone()).await;
+    assert!(
+        matches!(
+            result,
+            Err(WriteEnvelopeError::StageRejected { ref stage, .. })
+                if stage == "projection.transition"
+        ),
+        "a rolled-back projection must be reported as a failed stage: {result:?}"
     );
 
     // Earlier stages really are committed: the retained partial-commit risk.
@@ -550,20 +546,32 @@ async fn native_staging_reports_acceptance_it_cannot_guarantee()
         "the rolled-back projection stage must add no revision"
     );
 
-    // Worst of the three: a receipt now claims acceptance of work that is not
-    // in the store, so a retry replays it and never repairs the projection.
-    let stored = harness
-        .epistemic
-        .get_correction_idempotency(&envelope.key())
-        .await?
-        .expect("a receipt exists even though a stage rolled back");
-    let recorded: lighting_core::EnvelopeReceiptRecord = serde_json::from_str(&stored.result_json)?;
-    assert_eq!(recorded.staged, 3);
-    let replay = harness.writer.apply_write_envelope(envelope).await?;
+    let key = envelope.key();
+    assert!(
+        harness
+            .epistemic
+            .get_correction_idempotency(&key)
+            .await?
+            .is_none(),
+        "a failed envelope must leave no success receipt"
+    );
+    assert!(
+        harness.writer.apply_write_envelope(envelope).await.is_err(),
+        "a retry of the failed envelope must still report failure"
+    );
+    assert!(
+        harness
+            .epistemic
+            .get_correction_idempotency(&key)
+            .await?
+            .is_none(),
+        "a failed retry must leave no success receipt"
+    );
     assert_eq!(
-        replay.outcome,
-        WriteEnvelopeOutcome::Replayed,
-        "a retry replays the receipt instead of repairing the missing projection"
+        existing_projection(&harness, &previous)
+            .await?
+            .current_value,
+        "helix"
     );
 
     assert!(
