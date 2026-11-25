@@ -374,6 +374,7 @@ async fn remember(
         principal: principal.principal.clone(),
         scope_hash: scope_hash.clone(),
         content: args.content.clone(),
+        fingerprint: content_hash.clone(),
         payload_hash: hash.clone(),
         receipt_id,
         accepted_at,

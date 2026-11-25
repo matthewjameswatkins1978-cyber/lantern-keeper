@@ -55,6 +55,7 @@ fn remember(id: &str, content: &str, caller_key: &str) -> RememberInput {
         principal: "pi".to_owned(),
         scope_hash: "scope-a".to_owned(),
         content: content.to_owned(),
+        fingerprint: format!("fp-{content}"),
         payload_hash: format!("hash-{caller_key}"),
         receipt_id: format!("receipt-{id}"),
         accepted_at: CANONICAL_T0.to_owned(),
@@ -193,6 +194,37 @@ fn persisted_hash_matches_replay_comparison() {
         stored, "hash-k-replay",
         "fixture hash passes through untouched"
     );
+}
+
+#[test]
+fn fingerprint_is_content_addressed_not_write_addressed() {
+    // Regression for the d91bd09 follow-up: the envelope digest was reused
+    // as the source fingerprint, so the SAME bytes remembered under two
+    // keys got different fingerprints. Fingerprint must depend on content
+    // alone; the replay digest carries the write identity.
+    let conn = open_schema().expect("schema");
+    let mut first = remember("r1", "same bytes", "k-one");
+    first.source_id = "src-same".to_owned();
+    run_batch(&conn, &batch_of(&first)).expect("first accepted");
+    let mut second = remember("r2", "same bytes", "k-two");
+    second.source_id = "src-same".to_owned();
+    second.memory_id = "mem-r2".to_owned();
+    second.receipt_id = "receipt-r2".to_owned();
+    run_batch(&conn, &batch_of(&second)).expect("second accepted");
+
+    // One source row (ON CONFLICT DO NOTHING), one fingerprint.
+    assert_eq!(count(&conn, "source"), 1);
+    let fp: String = conn
+        .query_row(
+            "SELECT fingerprint FROM source WHERE id = 'src-same'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("fingerprint");
+    assert_eq!(fp, "fp-same bytes", "fingerprint follows content only");
+    // But two distinct keyed writes.
+    assert_eq!(count(&conn, "memory_item"), 2);
+    assert_eq!(count(&conn, "remember_idempotency"), 2);
 }
 
 #[test]

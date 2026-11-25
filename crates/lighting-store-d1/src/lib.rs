@@ -338,6 +338,12 @@ pub struct RememberInput {
     pub principal: String,
     pub scope_hash: String,
     pub content: String,
+    /// Raw content fingerprint (sha256 of bytes): identifies WHAT was
+    /// remembered, independent of who/where/with-what-key. Two keys over
+    /// the same bytes MUST yield the same fingerprint.
+    pub fingerprint: String,
+    /// Replay envelope digest (envelope|composite|content): identifies the
+    /// keyed write for idempotency. NEVER reuse as the content fingerprint.
     pub payload_hash: String,
     pub receipt_id: String,
     pub accepted_at: String,
@@ -367,7 +373,7 @@ pub fn build_remember_batch(w: &RememberInput) -> Result<Vec<SqlStatement>, Batc
                 w.source_id.clone().into(),
                 w.receipt_id.clone().into(),
                 w.content.clone().into(),
-                w.payload_hash.clone().into(),
+                w.fingerprint.clone().into(),
                 w.accepted_at.clone().into(),
             ],
         ),
