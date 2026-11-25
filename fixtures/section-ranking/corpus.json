@@ -1,0 +1,100 @@
+{
+  "schema": "lantern-section-ranking-corpus-v1",
+  "description": "Synthetic labeled corpus for section-ranking baselines (LK-Q03). Generated content only; no private workshop data. Labels are references resolved by the runner at seed time.",
+  "notes": [
+    {
+      "title": "bench: guide",
+      "kind": "markdown",
+      "content": "# Bench Guide\n\n## Setup\nInstall the fixture pack.\n\n## Configuration\nEdit the runtime flags.\n\n## Teardown\nStop the helper services.\n\n## Troubleshooting\nCheck the rotation logs.\n",
+      "expected_headings": [[1, "Bench Guide"], [2, "Setup"], [2, "Configuration"], [2, "Teardown"], [2, "Troubleshooting"]],
+      "absent_headings": []
+    },
+    {
+      "title": "bench: pipeline",
+      "kind": "markdown",
+      "content": "# Pipeline Notes\n\n## Inputs\nFeed the batch data.\n\n## Outputs\nEmit the result set.\n\n## Limits\nCap the nightly work.\n\n```markdown\n## Not A Heading\n```\n",
+      "expected_headings": [[1, "Pipeline Notes"], [2, "Inputs"], [2, "Outputs"], [2, "Limits"]],
+      "absent_headings": [[2, "Not A Heading"]]
+    }
+  ],
+  "beliefs": [
+    {"ref": "e-1", "subject_key": "bench.registry", "predicate_key": "status", "current_value": "registry entry rx-1042 ready", "scope": {"project": "bench"}},
+    {"ref": "e-2", "subject_key": "bench.registry", "predicate_key": "status", "current_value": "registry entry rx-2043 ready", "scope": {"project": "bench"}},
+    {"ref": "e-3", "subject_key": "bench.registry", "predicate_key": "status", "current_value": "registry entry rx-3054 ready", "scope": {"project": "bench"}},
+    {"ref": "e-4", "subject_key": "bench.registry", "predicate_key": "status", "current_value": "queue entry tx-7710 ready", "scope": {"project": "bench"}},
+    {"ref": "e-5", "subject_key": "bench.registry", "predicate_key": "status", "current_value": "queue entry tx-8821 ready", "scope": {"project": "bench"}},
+    {"ref": "e-6", "subject_key": "bench.registry", "predicate_key": "status", "current_value": "token uuid-4413 ready", "scope": {"project": "bench"}},
+    {"ref": "e-7", "subject_key": "bench.registry", "predicate_key": "status", "current_value": "cursor seq-5527 ready", "scope": {"project": "bench"}},
+    {"ref": "e-8", "subject_key": "bench.registry", "predicate_key": "status", "current_value": "listener port-6638 ready", "scope": {"project": "bench"}},
+
+    {"ref": "a-1", "subject_key": "bench.editor", "predicate_key": "preferred", "current_value": "current pick alpha pair1", "scope": {"project": "bench"}},
+    {"ref": "o-1", "subject_key": "bench.editor", "predicate_key": "preferred", "current_value": "legacy-entry-old1", "scope": {"project": "bench"}, "state": "Superseded"},
+    {"ref": "a-2", "subject_key": "bench.editor", "predicate_key": "preferred", "current_value": "current pick alpha pair2", "scope": {"project": "bench"}},
+    {"ref": "o-2", "subject_key": "bench.editor", "predicate_key": "preferred", "current_value": "legacy-entry-old2", "scope": {"project": "bench"}, "state": "Superseded"},
+    {"ref": "a-3", "subject_key": "bench.editor", "predicate_key": "preferred", "current_value": "current pick alpha pair3", "scope": {"project": "bench"}},
+    {"ref": "o-3", "subject_key": "bench.editor", "predicate_key": "preferred", "current_value": "legacy-entry-old3", "scope": {"project": "bench"}, "state": "Superseded"},
+    {"ref": "a-4", "subject_key": "bench.editor", "predicate_key": "preferred", "current_value": "current pick alpha pair4", "scope": {"project": "bench"}},
+    {"ref": "o-4", "subject_key": "bench.editor", "predicate_key": "preferred", "current_value": "legacy-entry-old4", "scope": {"project": "bench"}, "state": "Superseded"},
+
+    {"ref": "s-1", "subject_key": "bench.valve", "predicate_key": "state", "current_value": "sapphire valve v1 open", "scope": {"project": "bench-scope"}},
+    {"ref": "x-1", "subject_key": "bench.valve", "predicate_key": "state", "current_value": "sapphire valve v1 open stronger match", "scope": {"project": "bench-other"}},
+    {"ref": "s-2", "subject_key": "bench.valve", "predicate_key": "state", "current_value": "sapphire valve v2 open", "scope": {"project": "bench-scope"}},
+    {"ref": "x-2", "subject_key": "bench.valve", "predicate_key": "state", "current_value": "sapphire valve v2 open stronger match", "scope": {"project": "bench-other"}},
+    {"ref": "s-3", "subject_key": "bench.valve", "predicate_key": "state", "current_value": "sapphire valve v3 open", "scope": {"project": "bench-scope"}},
+    {"ref": "x-3", "subject_key": "bench.valve", "predicate_key": "state", "current_value": "sapphire valve v3 open stronger match", "scope": {"project": "bench-other"}},
+    {"ref": "s-4", "subject_key": "bench.pump", "predicate_key": "state", "current_value": "amber pump p4 running", "scope": {"project": "bench-scope"}},
+    {"ref": "x-4", "subject_key": "bench.pump", "predicate_key": "state", "current_value": "amber pump p4 running stronger match", "scope": {"project": "bench-other"}},
+    {"ref": "s-5", "subject_key": "bench.pump", "predicate_key": "state", "current_value": "amber pump p5 running", "scope": {"project": "bench-scope"}},
+    {"ref": "x-5", "subject_key": "bench.pump", "predicate_key": "state", "current_value": "amber pump p5 running stronger match", "scope": {"project": "bench-other"}},
+    {"ref": "s-6", "subject_key": "bench.pump", "predicate_key": "state", "current_value": "amber pump p6 running", "scope": {"project": "bench-scope"}},
+    {"ref": "x-6", "subject_key": "bench.pump", "predicate_key": "state", "current_value": "amber pump p6 running stronger match", "scope": {"project": "bench-other"}},
+
+    {"ref": "b-1", "subject_key": "bench.cycle", "predicate_key": "phase", "current_value": "config refresh cycle run1", "scope": {"project": "bench"}},
+    {"ref": "b-2", "subject_key": "bench.cycle", "predicate_key": "phase", "current_value": "config refresh cycle run2", "scope": {"project": "bench"}},
+    {"ref": "b-3", "subject_key": "bench.cycle", "predicate_key": "phase", "current_value": "config refresh cycle run3", "scope": {"project": "bench"}},
+    {"ref": "b-4", "subject_key": "bench.cycle", "predicate_key": "phase", "current_value": "config refresh cycle run4", "scope": {"project": "bench"}},
+    {"ref": "b-5", "subject_key": "bench.cycle", "predicate_key": "phase", "current_value": "config cycle run5", "scope": {"project": "bench"}},
+    {"ref": "b-6", "subject_key": "bench.cycle", "predicate_key": "phase", "current_value": "config cycle run6", "scope": {"project": "bench"}},
+    {"ref": "b-7", "subject_key": "bench.cycle", "predicate_key": "phase", "current_value": "config cycle run7", "scope": {"project": "bench"}},
+    {"ref": "b-8", "subject_key": "bench.cycle", "predicate_key": "phase", "current_value": "config cycle run8", "scope": {"project": "bench"}},
+    {"ref": "b-9", "subject_key": "bench.cycle", "predicate_key": "phase", "current_value": "config cycle run9", "scope": {"project": "bench"}},
+    {"ref": "b-10", "subject_key": "bench.cycle", "predicate_key": "phase", "current_value": "config cycle run10", "scope": {"project": "bench"}}
+  ],
+  "queries": [
+    {"id": "q-exact-1", "family": "exact_identifier", "mode": "context", "query": "rx-1042", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["e-1"], "expect_absent": []},
+    {"id": "q-exact-2", "family": "exact_identifier", "mode": "context", "query": "rx-2043", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["e-2"], "expect_absent": []},
+    {"id": "q-exact-3", "family": "exact_identifier", "mode": "context", "query": "rx-3054", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["e-3"], "expect_absent": []},
+    {"id": "q-exact-4", "family": "exact_identifier", "mode": "context", "query": "tx-7710", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["e-4"], "expect_absent": []},
+    {"id": "q-exact-5", "family": "exact_identifier", "mode": "context", "query": "tx-8821", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["e-5"], "expect_absent": []},
+    {"id": "q-exact-6", "family": "exact_identifier", "mode": "context", "query": "uuid-4413", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["e-6"], "expect_absent": []},
+    {"id": "q-exact-7", "family": "exact_identifier", "mode": "context", "query": "seq-5527", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["e-7"], "expect_absent": []},
+    {"id": "q-exact-8", "family": "exact_identifier", "mode": "context", "query": "port-6638", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["e-8"], "expect_absent": []},
+
+    {"id": "q-cvs-1", "family": "current_vs_superseded", "mode": "context", "query": "editor preferred alpha pair1", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["a-1"], "expect_absent": ["o-1"]},
+    {"id": "q-cvs-2", "family": "current_vs_superseded", "mode": "context", "query": "editor preferred alpha pair2", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["a-2"], "expect_absent": ["o-2"]},
+    {"id": "q-cvs-3", "family": "current_vs_superseded", "mode": "context", "query": "editor preferred alpha pair3", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["a-3"], "expect_absent": ["o-3"]},
+    {"id": "q-cvs-4", "family": "current_vs_superseded", "mode": "context", "query": "editor preferred alpha pair4", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["a-4"], "expect_absent": ["o-4"]},
+    {"id": "q-cvs-5", "family": "current_vs_superseded", "mode": "context", "query": "history editor preferred pair1", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["a-1", "o-1"], "expect_absent": []},
+    {"id": "q-cvs-6", "family": "current_vs_superseded", "mode": "context", "query": "history editor preferred pair2", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["a-2", "o-2"], "expect_absent": []},
+    {"id": "q-cvs-7", "family": "current_vs_superseded", "mode": "context", "query": "history editor preferred pair3", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["a-3", "o-3"], "expect_absent": []},
+    {"id": "q-cvs-8", "family": "current_vs_superseded", "mode": "context", "query": "history editor preferred pair4", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["a-4", "o-4"], "expect_absent": []},
+
+    {"id": "q-head-1", "family": "structured_heading", "mode": "outline", "note": "bench: guide", "expect_headings": [[1, "Bench Guide"], [2, "Setup"]], "expect_headings_absent": []},
+    {"id": "q-head-2", "family": "structured_heading", "mode": "outline", "note": "bench: guide", "expect_headings": [[2, "Configuration"], [2, "Teardown"]], "expect_headings_absent": []},
+    {"id": "q-head-3", "family": "structured_heading", "mode": "outline", "note": "bench: guide", "expect_headings": [[2, "Troubleshooting"]], "expect_headings_absent": []},
+    {"id": "q-head-4", "family": "structured_heading", "mode": "outline", "note": "bench: guide", "expect_headings": [[1, "Bench Guide"], [2, "Configuration"]], "expect_headings_absent": []},
+    {"id": "q-head-5", "family": "structured_heading", "mode": "outline", "note": "bench: pipeline", "expect_headings": [[1, "Pipeline Notes"], [2, "Inputs"]], "expect_headings_absent": []},
+    {"id": "q-head-6", "family": "structured_heading", "mode": "outline", "note": "bench: pipeline", "expect_headings": [[2, "Outputs"], [2, "Limits"]], "expect_headings_absent": []},
+    {"id": "q-head-7", "family": "structured_heading", "mode": "outline", "note": "bench: pipeline", "expect_headings": [], "expect_headings_absent": [[2, "Not A Heading"]]},
+    {"id": "q-head-8", "family": "structured_heading", "mode": "outline", "note": "bench: pipeline", "expect_headings": [[2, "Inputs"], [2, "Limits"]], "expect_headings_absent": [[2, "Not A Heading"]]},
+
+    {"id": "q-scope-1", "family": "scope_and_budget", "mode": "scoped_context", "query": "sapphire valve v1 open", "scope": {"project": "bench-scope"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["s-1"], "expect_absent": ["x-1"]},
+    {"id": "q-scope-2", "family": "scope_and_budget", "mode": "scoped_context", "query": "sapphire valve v2 open", "scope": {"project": "bench-scope"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["s-2"], "expect_absent": ["x-2"]},
+    {"id": "q-scope-3", "family": "scope_and_budget", "mode": "scoped_context", "query": "sapphire valve v3 open", "scope": {"project": "bench-scope"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["s-3"], "expect_absent": ["x-3"]},
+    {"id": "q-scope-4", "family": "scope_and_budget", "mode": "scoped_context", "query": "amber pump p4 running", "scope": {"project": "bench-scope"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["s-4"], "expect_absent": ["x-4"]},
+    {"id": "q-scope-5", "family": "scope_and_budget", "mode": "scoped_context", "query": "amber pump p5 running", "scope": {"project": "bench-scope"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["s-5"], "expect_absent": ["x-5"]},
+    {"id": "q-scope-6", "family": "scope_and_budget", "mode": "scoped_context", "query": "amber pump p6 running", "scope": {"project": "bench-scope"}, "item_budget": 8, "token_budget": 2048, "expect_present": ["s-6"], "expect_absent": ["x-6"]},
+    {"id": "q-budget-1", "family": "scope_and_budget", "mode": "context", "query": "config refresh cycle", "scope": {"project": "bench"}, "item_budget": 4, "token_budget": 2048, "expect_present": ["b-1", "b-2", "b-3", "b-4"], "expect_absent": []},
+    {"id": "q-budget-2", "family": "scope_and_budget", "mode": "context", "query": "config refresh cycle", "scope": {"project": "bench"}, "item_budget": 8, "token_budget": 64, "expect_present": ["b-4"], "expect_absent": []}
+  ]
+}
