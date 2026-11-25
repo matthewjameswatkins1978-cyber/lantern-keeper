@@ -27,8 +27,29 @@ mod trust_console;
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 4317;
-const EXPECTED_SURREALDB_VERSION: &str = "3.3.0";
-const EXPECTED_SCHEMA_VERSION: i64 = 10;
+const EXPECTED_SURREALDB_VERSION: &str = "4.0.1";
+// The store records the schema version by migration, not from one constant:
+// each repository's migrate() upserts it, so the highest migration wins
+// (currently bridge_intent_store = 11 after authority/receipt = 10). Doctor must
+// expect that maximum, or every healthy modern store reports WARNING.
+const EXPECTED_SCHEMA_VERSION: i64 = 11;
+
+/// Stack size for runtime worker threads.
+///
+/// Embedded SurrealKV 4.0.1 needs far more stack than the platform default for a
+/// runtime worker: on Windows a service started with default stacks aborts with
+/// `thread 'tokio-rt-worker' has overflowed its stack` while opening an existing
+/// store, which presents as an unexplained 0xC00000FD. One explicit size removes
+/// the whole class, for every command, and keeps it out of the environment.
+const RUNTIME_THREAD_STACK_BYTES: usize = 32 * 1024 * 1024;
+
+fn durable_runtime() -> anyhow::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(RUNTIME_THREAD_STACK_BYTES)
+        .build()
+        .context("failed to create tokio runtime")
+}
 
 fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -38,10 +59,7 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Serve => {
             init_tracing();
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .context("failed to create tokio runtime")?;
+            let rt = durable_runtime()?;
             rt.block_on(async {
                 tokio::spawn(serve())
                     .await
@@ -59,19 +77,26 @@ fn main() -> anyhow::Result<()> {
         Command::McpHttp { host, port } => {
             init_tracing();
             let url = cli.service_url.unwrap_or_else(default_service_url);
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .context("failed to create tokio runtime")?;
+            let rt = durable_runtime()?;
             rt.block_on(mcp_http::run(&url, &host, port))
         }
         Command::Doctor { json } => {
             init_tracing();
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .context("failed to create tokio runtime")?;
-            rt.block_on(async { doctor(json).await })
+            // Doctor opens an existing embedded SurrealKV store and, on Windows,
+            // overflows the main-thread stack when it does (measured: exit
+            // 0xC00000FD on the second run against a store created by a first).
+            // Run it on an explicitly sized thread so the packaged path works
+            // without requiring RUST_MIN_STACK in the environment.
+            std::thread::Builder::new()
+                .name("doctor".to_owned())
+                .stack_size(32 * 1024 * 1024)
+                .spawn(move || -> anyhow::Result<()> {
+                    let rt = durable_runtime()?;
+                    rt.block_on(async { doctor(json).await })
+                })
+                .context("failed to spawn doctor thread")?
+                .join()
+                .map_err(|_| anyhow::anyhow!("doctor thread panicked"))?
         }
         Command::Health { json } => {
             let url = cli.service_url.unwrap_or_else(default_service_url);
@@ -236,10 +261,7 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Export { output } => {
             init_tracing();
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .context("failed to create tokio runtime")?;
+            let rt = durable_runtime()?;
             rt.block_on(async {
                 tokio::spawn(export_data(output))
                     .await
@@ -248,10 +270,7 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Restore { input } => {
             init_tracing();
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .context("failed to create tokio runtime")?;
+            let rt = durable_runtime()?;
             rt.block_on(async {
                 tokio::spawn(restore_data(input))
                     .await
@@ -309,10 +328,7 @@ fn main() -> anyhow::Result<()> {
         Command::Bridge(bridge_github::BridgeSubcommand::Github(subcmd)) => {
             init_tracing();
             let url = cli.service_url.unwrap_or_else(default_service_url);
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .context("failed to create tokio runtime")?;
+            let rt = durable_runtime()?;
             rt.block_on(async {
                 match subcmd {
                     bridge_github::BridgeGithubSubcommand::Once {
@@ -897,10 +913,28 @@ async fn doctor(json_output: bool) -> anyhow::Result<()> {
     let store = match SurrealStore::connect(&config).await {
         Ok(store) => store,
         Err(error) => {
+            let detail = error.to_string();
+            // A locked embedded store is the common local failure, and the raw
+            // OS error ("os error 33") does not name the cause. Say what it is.
+            let locked =
+                detail.contains("os error 33") || detail.contains("another process has locked");
             report["status"] = serde_json::Value::String("UNAVAILABLE".to_owned());
-            report["error"] = serde_json::Value::String(error.to_string());
+            report["error"] = serde_json::Value::String(detail.clone());
+            if locked {
+                let hint = format!(
+                    "the embedded SurrealKV store at {} is locked by another process — \
+                     a running Lighting service or doctor is probably using it; stop that \
+                     process, or point LIGHTING_SURREAL_PATH at a different store",
+                    config.path.display()
+                );
+                report["lock_hint"] = serde_json::Value::String(hint.clone());
+                print_doctor_report(json_output, &report)?;
+                bail!(
+                    "Lighting doctor could not open the embedded store: {hint}. Underlying error: {detail}"
+                );
+            }
             print_doctor_report(json_output, &report)?;
-            bail!("Lighting doctor could not connect to SurrealDB: {error}");
+            bail!("Lighting doctor could not connect to SurrealDB: {detail}");
         }
     };
     report["database_connection"] = serde_json::Value::String("connected".to_owned());
@@ -914,7 +948,30 @@ async fn doctor(json_output: bool) -> anyhow::Result<()> {
     report["health"] = serde_json::Value::String("ok".to_owned());
 
     let server_version = store.server_version().await?;
-    let schema_version = store.schema_version().await?;
+    let schema_version = match store.schema_version().await {
+        Ok(version) => version,
+        Err(error) => {
+            let detail = error.to_string();
+            let uninitialised = detail.contains("'__lighting_schema' does not exist")
+                || detail.contains("__lighting_schema");
+            report["status"] = serde_json::Value::String("UNINITIALISED".to_owned());
+            report["error"] = serde_json::Value::String(detail.clone());
+            if uninitialised {
+                let hint = format!(
+                    "the store at {} has no Lantern schema yet — start `lighting serve` \
+                     once (or the documented migration step) to initialise it, then re-run doctor",
+                    config.path.display()
+                );
+                report["schema_hint"] = serde_json::Value::String(hint.clone());
+                print_doctor_report(json_output, &report)?;
+                bail!(
+                    "Lighting doctor found an uninitialised store: {hint}. Underlying error: {detail}"
+                );
+            }
+            print_doctor_report(json_output, &report)?;
+            bail!("Lighting doctor could not read the schema version: {detail}");
+        }
+    };
     report["server_version"] = server_version
         .clone()
         .map(serde_json::Value::String)

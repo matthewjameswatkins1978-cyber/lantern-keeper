@@ -745,8 +745,8 @@ fn test_status_bridge_json_roundtrip() {
         lantern_version: Some("0.1.0".to_string()),
         datastore_mode: Some("embedded-surrealkv".to_string()),
         datastore_mode_observed: Some("embedded-surrealkv".to_string()),
-        surrealdb_expected_version: Some("3.3.0".to_string()),
-        surrealdb_observed_version: Some("3.3.0".to_string()),
+        surrealdb_expected_version: Some("4.0.1".to_string()),
+        surrealdb_observed_version: Some("4.0.1".to_string()),
         post_repo_valid: true,
         mirror_last_generated_at: Some("2026-10-02T05:00:00Z".to_string()),
     };
@@ -766,7 +766,7 @@ fn test_status_bridge_json_roundtrip() {
     assert!(loaded.tethers_engine_present);
     assert!(loaded.mutation_ready);
     assert_eq!(loaded.datastore_mode.as_deref(), Some("embedded-surrealkv"));
-    assert_eq!(loaded.surrealdb_expected_version.as_deref(), Some("3.3.0"));
+    assert_eq!(loaded.surrealdb_expected_version.as_deref(), Some("4.0.1"));
     assert_eq!(
         loaded.mirror_last_generated_at.as_deref(),
         Some("2026-10-02T05:00:00Z")
@@ -833,8 +833,8 @@ fn test_idle_cycle_writes_status_file_to_disk() {
         lantern_version: Some("0.1.0".to_string()),
         datastore_mode: Some("embedded-surrealkv".to_string()),
         datastore_mode_observed: Some("embedded-surrealkv".to_string()),
-        surrealdb_expected_version: Some("3.3.0".to_string()),
-        surrealdb_observed_version: Some("3.3.0".to_string()),
+        surrealdb_expected_version: Some("4.0.1".to_string()),
+        surrealdb_observed_version: Some("4.0.1".to_string()),
         post_repo_valid: true,
         mirror_last_generated_at: None,
     };
