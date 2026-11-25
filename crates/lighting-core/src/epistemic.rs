@@ -648,6 +648,49 @@ pub struct CorrectionIdempotencyRecord {
     pub created_at: DateTime<Utc>,
 }
 
+/// Everything one native correction writes, resolved and assembled BEFORE
+/// the single transactional apply (Q18 gap 5: staged writes retire here).
+/// Dedupe outcomes are decided by the caller — lookups first — and recorded
+/// so the batch can skip the matching insert.
+#[derive(Debug)]
+pub struct CorrectionWriteBatch {
+    /// The correction evidence source, when the write set includes one.
+    pub source: Option<crate::Source>,
+    /// A source with this fingerprint already exists: skip the insert.
+    pub source_exists: bool,
+    /// `previous_version_id` for the same-title/different-fingerprint
+    /// revision link of the native source ladder.
+    pub source_previous_id: Option<String>,
+    /// The evidence episode, when the write set includes one.
+    pub episode: Option<crate::Episode>,
+    /// An episode for this source range already exists: skip the insert.
+    pub episode_exists: bool,
+    /// The claim, when the write set includes one.
+    pub claim: Option<Claim>,
+    /// A claim with this dedupe key already exists: skip the insert.
+    pub claim_exists: bool,
+    pub previous: Option<Belief>,
+    pub current: Option<Belief>,
+    pub revisions: Vec<BeliefRevision>,
+    pub trace: Trace,
+    pub stale_beliefs: Vec<Belief>,
+    pub expected_token: Option<DateTime<Utc>>,
+    pub receipt: Option<CorrectionIdempotencyRecord>,
+    /// Write the reconciliation trace even when no projection statement is
+    /// present (the correction path always does; the envelope writes a trace
+    /// only alongside a projection transition, as before).
+    pub write_trace: bool,
+}
+
+/// Resolved identities after the correction batch committed.
+#[derive(Debug)]
+pub struct CorrectionWriteOutcome {
+    pub source_id: String,
+    pub episode_id: String,
+    pub claim_id: String,
+    pub belief: Option<Belief>,
+}
+
 #[async_trait]
 pub trait EpistemicRepository: Send + Sync {
     async fn store_claim(&self, claim: Claim) -> Result<Claim, EpistemicRepositoryError>;
@@ -731,6 +774,24 @@ pub trait EpistemicRepository: Send + Sync {
         stale_beliefs: Vec<Belief>,
         expected_token: Option<DateTime<Utc>>,
     ) -> Result<Option<Belief>, EpistemicRepositoryError>;
+
+    /// Q18 gap 5: the whole correction write set in ONE transaction —
+    /// dedupe lookups, source/episode/claim inserts, the CAS-guarded
+    /// projection transition, trace, revisions and the idempotency receipt.
+    /// Any failure rolls back every statement of the batch.
+    async fn apply_correction_batch(
+        &self,
+        batch: CorrectionWriteBatch,
+    ) -> Result<CorrectionWriteOutcome, EpistemicRepositoryError>;
+
+    /// Claim lookup by its dedupe key (`subject|predicate|scope|value`), so
+    /// a replayed correction resolves the recorded claim identity before
+    /// reconciliation runs.
+    async fn get_claim_by_dedupe_key(
+        &self,
+        dedupe_key: &str,
+    ) -> Result<Option<Claim>, EpistemicRepositoryError>;
+
     async fn list_belief_revisions(
         &self,
         belief_id: &BeliefId,

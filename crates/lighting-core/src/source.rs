@@ -219,6 +219,17 @@ pub trait SourceRepository: Send + Sync {
         kind: SourceKind,
         title: &SourceTitle,
     ) -> Result<Vec<Source>, SourceRepositoryError>;
+
+    /// Q18: global fingerprint lookup for correction evidence dedupe.
+    /// Default fails closed; indexed stores override it.
+    async fn get_by_fingerprint(
+        &self,
+        _fingerprint: &str,
+    ) -> Result<Option<SourceId>, SourceRepositoryError> {
+        Err(SourceRepositoryError::Operation(Box::new(
+            std::io::Error::other("fingerprint lookup is not supported by this repository"),
+        )))
+    }
 }
 
 /// Failure categories returned by a Source repository.

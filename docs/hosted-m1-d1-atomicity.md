@@ -6,36 +6,29 @@ satisfy, and why the native path cannot satisfy it as it stands.
 
 ## What the native path does today
 
-The native capture path commits each stage separately:
+**Updated by Q18 (correction-consistency):** the native correction write set is
+now ONE transaction. `record_correction` and `NativeStagedEnvelopeWriter` both
+resolve the dedupe lookups first and then commit Source, Episode, Claim, the
+CAS-guarded projection transition (trace + revisions) and the receipt together
+through `EpistemicRepository::apply_correction_batch` — a single
+`BEGIN … COMMIT` whose every statement is inspected (`refuse_statements`).
 
-| Stage | Native call | Commit boundary |
-|---|---|---|
-| Source | `SourceRepository::store` | its own write |
-| Episode | `MemoryPathRepository::create_episode` | its own write |
-| Claim | `EpistemicRepository::store_claim` | its own write |
-| Projection | `EpistemicRepository::apply_belief_transition` | one `BEGIN … COMMIT` batch |
-| Receipt | `EpistemicRepository::store_correction_idempotency` | its own write |
+The two previously measured consequences of the staged design are retired with
+proof in `crates/lighting-service/tests/write_envelope_m1.rs`:
 
-`NativeStagedEnvelopeWriter` (`crates/lighting-store-surreal/src/envelope_native.rs`)
-maps the keyed write envelope onto exactly that order. `NATIVE_PARTIAL_COMMIT_RISK`
-records the consequence in code.
+1. **Partial commit — retired.** `native_envelope_transaction_rolls_back_every_stage`
+   injects a failing projection statement and asserts the Source, Claim and
+   revisions from the same attempt are all rolled back, with no receipt.
+2. **False receipt — retired.** A rolled-back batch returns `Err` (statement
+   inspection, `c57907f`), and the receipt lives inside the same transaction,
+   so no receipt can describe work that did not commit.
 
-Two measured consequences, both asserted in
-`crates/lighting-service/tests/write_envelope_m1.rs`:
+`NATIVE_PARTIAL_COMMIT_RISK` now reads `RETIRED by Q18 …` so existing
+references notice the change instead of implying the old risk. The direct
+transition path (`apply_belief_transition_guarded`) additionally binds the read
+revision token at the write with a THROW guard (consumed-token CAS, Q18 gap 3).
 
-1. **Partial commit.** A refusal after the Claim is stored leaves Source and Claim
-   committed with no projection and no receipt.
-2. **False receipt.** `apply_belief_transition` issues a `BEGIN … COMMIT` batch
-   without inspecting per-statement results, so a rolled-back batch still returns
-   `Ok`. The envelope therefore reports `Accepted { staged: 3 }`, writes a receipt,
-   and a later retry replays that receipt instead of repairing the missing
-   projection
-   (`native_staging_reports_acceptance_it_cannot_guarantee`).
-
-The native behaviour is retained deliberately, not silently changed:
-`rolled_back_transition_leaves_no_orphan_revision` pins the rollback that does
-work, and `native_store_belief_and_migrate_do_not_check_statement_results`
-records the unchecked statements.
+The D1 requirements below still bind the future hosted adapter.
 
 ## What the D1 adapter must satisfy
 

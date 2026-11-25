@@ -46,13 +46,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use lighting_core::{
-    Belief, BeliefId, BeliefRevision, Claim, ClaimId, ContextPack, ContextPackId,
-    CorrectionIdempotencyRecord, DimensionDefinition, EpistemicRepository,
-    EpistemicRepositoryError, GraphRelation, MemoryItem, MemoryItemSearch, NewBelief,
-    PredicateDefinition, Proposal, ProposalId, Scope, SourceRepository, Trace, TrustClass,
+    Belief, BeliefId, EpistemicRepository, NewBelief, Scope, SourceRepository, Trace, TrustClass,
 };
 use lighting_service::EpistemicService;
 use lighting_service::epistemic_dto::CorrectionRequest;
@@ -338,11 +334,11 @@ async fn failed_correction_leaves_no_partial_writes() -> Result<(), Box<dyn std:
     let claims_before = repo.list_claims(false).await?.len();
     let revisions_before = repo.list_belief_revisions(&belief.id).await?.len();
 
-    let failing = Arc::new(FailOnIdempotencyRepo {
-        inner: Arc::clone(repo),
-    });
-    let svc = EpistemicService::new_with_evidence(failing, parts.1.clone(), parts.2.clone());
-    let outcome = svc
+    // Natural mid-batch failure: the test seam THROWs inside the single
+    // correction transaction AFTER every earlier statement executed, so the
+    // rollback proven below is the transaction's real rollback.
+    lighting_store_surreal::epistemic_store::Q18_FAULT_INJECT.with(|flag| flag.set(true));
+    let outcome = service(&parts)
         .record_correction(request(
             Some(&belief.id),
             None,
@@ -351,9 +347,10 @@ async fn failed_correction_leaves_no_partial_writes() -> Result<(), Box<dyn std:
             Some("q18-rollback"),
         ))
         .await;
+    lighting_store_surreal::epistemic_store::Q18_FAULT_INJECT.with(|flag| flag.set(false));
     assert!(
         outcome.is_err(),
-        "the injected failure must surface to the caller, got: {outcome:?}"
+        "the injected mid-batch failure must surface to the caller, got: {outcome:?}"
     );
 
     let claims_after = repo.list_claims(false).await?.len();
@@ -385,215 +382,4 @@ async fn failed_correction_leaves_no_partial_writes() -> Result<(), Box<dyn std:
         evidence_sources.len()
     );
     Ok(())
-}
-
-/// Repository wrapper that fails exactly at the idempotency receipt — the
-/// last write of `record_correction`, after evidence, claim, projection and
-/// revisions have been written. Everything before it must roll back.
-struct FailOnIdempotencyRepo {
-    inner: Arc<SurrealEpistemicRepository>,
-}
-
-#[async_trait]
-impl EpistemicRepository for FailOnIdempotencyRepo {
-    async fn store_claim(&self, claim: Claim) -> Result<Claim, EpistemicRepositoryError> {
-        self.inner.store_claim(claim).await
-    }
-    async fn get_claim(&self, id: &ClaimId) -> Result<Option<Claim>, EpistemicRepositoryError> {
-        self.inner.get_claim(id).await
-    }
-    async fn list_claims(
-        &self,
-        unmapped_only: bool,
-    ) -> Result<Vec<Claim>, EpistemicRepositoryError> {
-        self.inner.list_claims(unmapped_only).await
-    }
-    async fn store_belief(&self, belief: Belief) -> Result<Belief, EpistemicRepositoryError> {
-        self.inner.store_belief(belief).await
-    }
-    async fn get_belief(&self, id: &BeliefId) -> Result<Option<Belief>, EpistemicRepositoryError> {
-        self.inner.get_belief(id).await
-    }
-    async fn list_beliefs(
-        &self,
-        include_stale: bool,
-    ) -> Result<Vec<Belief>, EpistemicRepositoryError> {
-        self.inner.list_beliefs(include_stale).await
-    }
-    async fn list_beliefs_scoped(
-        &self,
-        scope: &Scope,
-        include_stale: bool,
-        limit: usize,
-    ) -> Result<Vec<Belief>, EpistemicRepositoryError> {
-        self.inner
-            .list_beliefs_scoped(scope, include_stale, limit)
-            .await
-    }
-    async fn store_correction_idempotency(
-        &self,
-        _record: CorrectionIdempotencyRecord,
-    ) -> Result<CorrectionIdempotencyRecord, EpistemicRepositoryError> {
-        Err(EpisodicInjectedFailure.into())
-    }
-    async fn get_correction_idempotency(
-        &self,
-        key: &str,
-    ) -> Result<Option<CorrectionIdempotencyRecord>, EpistemicRepositoryError> {
-        self.inner.get_correction_idempotency(key).await
-    }
-    async fn mark_belief_stale(
-        &self,
-        id: &BeliefId,
-        reason: &str,
-        at: chrono::DateTime<Utc>,
-    ) -> Result<Belief, EpistemicRepositoryError> {
-        self.inner.mark_belief_stale(id, reason, at).await
-    }
-    async fn apply_belief_transition_guarded(
-        &self,
-        previous: Option<Belief>,
-        current: Option<Belief>,
-        revisions: Vec<BeliefRevision>,
-        trace: Trace,
-        stale_beliefs: Vec<Belief>,
-        expected_token: Option<chrono::DateTime<Utc>>,
-    ) -> Result<Option<Belief>, EpistemicRepositoryError> {
-        self.inner
-            .apply_belief_transition_guarded(
-                previous,
-                current,
-                revisions,
-                trace,
-                stale_beliefs,
-                expected_token,
-            )
-            .await
-    }
-    async fn list_belief_revisions(
-        &self,
-        belief_id: &BeliefId,
-    ) -> Result<Vec<BeliefRevision>, EpistemicRepositoryError> {
-        self.inner.list_belief_revisions(belief_id).await
-    }
-    async fn store_context_pack(
-        &self,
-        pack: ContextPack,
-    ) -> Result<ContextPack, EpistemicRepositoryError> {
-        self.inner.store_context_pack(pack).await
-    }
-    async fn get_context_pack(
-        &self,
-        id: &ContextPackId,
-    ) -> Result<Option<ContextPack>, EpistemicRepositoryError> {
-        self.inner.get_context_pack(id).await
-    }
-    async fn store_memory_item(
-        &self,
-        item: MemoryItem,
-    ) -> Result<MemoryItem, EpistemicRepositoryError> {
-        self.inner.store_memory_item(item).await
-    }
-    async fn search_memory_items(
-        &self,
-        query: &MemoryItemSearch,
-    ) -> Result<Vec<MemoryItem>, EpistemicRepositoryError> {
-        self.inner.search_memory_items(query).await
-    }
-    async fn append_trace(&self, trace: Trace) -> Result<Trace, EpistemicRepositoryError> {
-        self.inner.append_trace(trace).await
-    }
-    async fn enqueue_proposal(
-        &self,
-        proposal: Proposal,
-    ) -> Result<Proposal, EpistemicRepositoryError> {
-        self.inner.enqueue_proposal(proposal).await
-    }
-    async fn list_proposals(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<Proposal>, EpistemicRepositoryError> {
-        self.inner.list_proposals(limit).await
-    }
-    async fn get_proposal(
-        &self,
-        id: &ProposalId,
-    ) -> Result<Option<Proposal>, EpistemicRepositoryError> {
-        self.inner.get_proposal(id).await
-    }
-    async fn update_proposal(
-        &self,
-        proposal: Proposal,
-    ) -> Result<Proposal, EpistemicRepositoryError> {
-        self.inner.update_proposal(proposal).await
-    }
-    async fn store_relation(
-        &self,
-        relation: GraphRelation,
-    ) -> Result<GraphRelation, EpistemicRepositoryError> {
-        self.inner.store_relation(relation).await
-    }
-    async fn list_unresolved_relations(
-        &self,
-    ) -> Result<Vec<GraphRelation>, EpistemicRepositoryError> {
-        self.inner.list_unresolved_relations().await
-    }
-    async fn list_relations(&self) -> Result<Vec<GraphRelation>, EpistemicRepositoryError> {
-        self.inner.list_relations().await
-    }
-    async fn store_predicate_definition(
-        &self,
-        definition: PredicateDefinition,
-    ) -> Result<PredicateDefinition, EpistemicRepositoryError> {
-        self.inner.store_predicate_definition(definition).await
-    }
-    async fn get_predicate_definition(
-        &self,
-        key: &str,
-    ) -> Result<Option<PredicateDefinition>, EpistemicRepositoryError> {
-        self.inner.get_predicate_definition(key).await
-    }
-    async fn list_predicate_definitions(
-        &self,
-    ) -> Result<Vec<PredicateDefinition>, EpistemicRepositoryError> {
-        self.inner.list_predicate_definitions().await
-    }
-    async fn store_dimension_definition(
-        &self,
-        definition: DimensionDefinition,
-    ) -> Result<DimensionDefinition, EpistemicRepositoryError> {
-        self.inner.store_dimension_definition(definition).await
-    }
-    async fn get_dimension_definition(
-        &self,
-        key: &str,
-    ) -> Result<Option<DimensionDefinition>, EpistemicRepositoryError> {
-        self.inner.get_dimension_definition(key).await
-    }
-    async fn list_dimension_definitions(
-        &self,
-    ) -> Result<Vec<DimensionDefinition>, EpistemicRepositoryError> {
-        self.inner.list_dimension_definitions().await
-    }
-}
-
-/// The injected rollback-triggering failure.
-#[derive(Debug)]
-struct EpisodicInjectedFailure;
-
-impl std::fmt::Display for EpisodicInjectedFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "Q18 injected failure: idempotency receipt store unavailable"
-        )
-    }
-}
-
-impl std::error::Error for EpisodicInjectedFailure {}
-
-impl From<EpisodicInjectedFailure> for EpistemicRepositoryError {
-    fn from(error: EpisodicInjectedFailure) -> Self {
-        EpistemicRepositoryError::Operation(Box::new(error))
-    }
 }

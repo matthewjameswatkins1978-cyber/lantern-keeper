@@ -4,34 +4,28 @@
 //! staged native calls, in their existing order: Source, Episode, Claim, then the
 //! projection transition, then the idempotency receipt.
 //!
-//! ## Retained native risk — stated, not hidden
+//! ## Atomicity — retired by Q18, loudly
 //!
-//! Each of those stages is its own committed write in the native store. This
-//! adapter therefore cannot offer the hosted contract's all-or-nothing boundary,
-//! and it does not pretend to:
+//! v1.1 retained a staged native risk here (each stage its own committed
+//! write: a failure after the Source left the Source committed, and so on).
+//! Q18 correction-consistency removed it: this adapter now resolves the
+//! dedupe lookups first and applies source, episode, claim, the
+//! CAS-guarded projection transition (trace + revisions) and the receipt as
+//! ONE transaction — a failure rolls every stage back together, proven by
+//! `write_envelope_m1::native_envelope_transaction_rolls_back_every_stage`.
+//! `NATIVE_PARTIAL_COMMIT_RISK` now reads RETIRED so old references notice.
 //!
-//! * a failure after the Source is stored leaves the Source committed;
-//! * a failure after the Claim is stored leaves a Claim with no Belief;
-//! * the receipt is written last, so a crash before it leaves accepted stages
-//!   with no receipt linking them, and a retry re-stages what it can.
-//!
-//! That is the exact partial-commit risk v1.1 names, deliberately retained
-//! natively and recorded here (see `NATIVE_PARTIAL_COMMIT_RISK`) rather than
-//! silently changed. The D1 adapter must close it with one transaction and a
-//! database-enforced precondition; the requirement note lives in
-//! `docs/hosted-m1-d1-atomicity.md`.
-//!
-//! What this adapter *does* guarantee: the key binding, the payload hash, the
-//! version refusal on replay, the revision precondition before the first write,
-//! and a typed refusal for every stage.
+//! What this adapter guarantees: the key binding, the payload hash, the
+//! version refusal on replay, the revision precondition before the first
+//! write, and a single typed refusal for the transaction.
 
 use async_trait::async_trait;
 use chrono::Utc;
 use lighting_core::write_envelope::sha256_hex;
 use lighting_core::{
-    CorrectionIdempotencyRecord, EnvelopeReceiptRecord, EpistemicRepository, MemoryPathRepository,
-    NativeWriteEnvelope, SourceRepository, WRITE_ENVELOPE_VERSION, WriteEnvelope,
-    WriteEnvelopeError, WriteEnvelopeOutcome, WriteEnvelopeReceipt,
+    Claim, CorrectionIdempotencyRecord, CorrectionWriteBatch, EnvelopeReceiptRecord,
+    EpistemicRepository, NativeWriteEnvelope, Source, SourceRepository, WRITE_ENVELOPE_VERSION,
+    WriteEnvelope, WriteEnvelopeError, WriteEnvelopeOutcome, WriteEnvelopeReceipt,
 };
 
 use crate::connection::SurrealStore;
@@ -39,9 +33,11 @@ use crate::epistemic_store::SurrealEpistemicRepository;
 use crate::memory_path_store::SurrealMemoryPathRepository;
 use crate::source_store::SurrealSourceRepository;
 
-/// Recorded verbatim so a reviewer of this adapter cannot miss it.
-pub const NATIVE_PARTIAL_COMMIT_RISK: &str = "stages are separately committed in native order; a failure or crash between them leaves \
-     earlier stages accepted with no receipt, and no rollback is attempted";
+/// RETIRED by Q18 (correction-consistency): the native write set now applies
+/// as ONE transaction. The symbol stays so existing references can be
+/// checked for the retirement, loudly, instead of implying the old risk.
+pub const NATIVE_PARTIAL_COMMIT_RISK: &str = "RETIRED by Q18: stages no longer commit separately — source, episode, claim, \
+     projection and the receipt apply as one transaction and roll back together";
 
 /// Keys a whole write boundary across the native repositories.
 ///
@@ -138,51 +134,76 @@ impl NativeWriteEnvelope for NativeStagedEnvelopeWriter {
             }
         }
 
+        // Q18 gap 5: dedupe lookups first, then the whole write set as ONE
+        // transaction — this retires NATIVE_PARTIAL_COMMIT_RISK: no stage
+        // commits on its own any more, and a failed stage rolls everything
+        // back instead of leaving accepted earlier stages behind.
         let mut staged = 0usize;
 
-        if let Some(source) = envelope.source.clone() {
-            let fingerprint = source.fingerprint().as_str().to_owned();
-            let bytes_hash = sha256_hex(source.content().as_bytes());
+        let mut source: Option<Source> = None;
+        let mut source_exists = false;
+        let mut source_previous_id: Option<String> = None;
+        if let Some(attempted) = envelope.source.clone() {
+            staged += 1;
+            let fingerprint = attempted.fingerprint().as_str().to_owned();
+            let bytes_hash = sha256_hex(attempted.content().as_bytes());
             if fingerprint != bytes_hash {
                 return Err(WriteEnvelopeError::SourceHashMismatch {
                     declared: fingerprint,
                     computed: bytes_hash,
                 });
             }
-            self.sources
-                .store(source)
+            if let Some(existing_id) = self
+                .sources
+                .get_by_fingerprint(&fingerprint)
                 .await
-                .map_err(|error| stage("source.store", error))?;
-            staged += 1;
+                .map_err(|error| stage("source.lookup", error))?
+            {
+                let existing = self
+                    .sources
+                    .get(&existing_id)
+                    .await
+                    .map_err(|error| stage("source.lookup", error))?
+                    .ok_or_else(|| stage("source.lookup", "deduplicated source missing"))?;
+                source = Some(existing);
+                source_exists = true;
+            } else {
+                let title = attempted.title().clone();
+                let same_title = self
+                    .sources
+                    .list_all_by_kind_and_title(attempted.kind(), &title)
+                    .await
+                    .map_err(|error| stage("source.lookup", error))?;
+                source_previous_id = same_title
+                    .last()
+                    .map(|existing| existing.id().as_str().to_owned());
+                source = Some(attempted);
+            }
         }
 
-        if let Some(episode) = envelope.episode.clone() {
-            self.memory_path
-                .create_episode(episode)
-                .await
-                .map_err(|error| stage("episode.create", error))?;
+        let mut claim: Option<Claim> = None;
+        let mut claim_exists = false;
+        if let Some(attempted) = envelope.claim.clone() {
             staged += 1;
+            if let Some(existing) = self
+                .epistemic
+                .get_claim_by_dedupe_key(&attempted.dedupe_key)
+                .await
+                .map_err(|error| stage("claim.lookup", error))?
+            {
+                claim = Some(existing);
+                claim_exists = true;
+            } else {
+                claim = Some(attempted);
+            }
         }
 
-        if let Some(claim) = envelope.claim.clone() {
-            self.epistemic
-                .store_claim(claim)
-                .await
-                .map_err(|error| stage("claim.store", error))?;
+        let episode = envelope.episode.clone();
+        if episode.is_some() {
             staged += 1;
         }
-
-        if envelope.current.is_some() || envelope.previous.is_some() {
-            self.epistemic
-                .apply_belief_transition(
-                    envelope.previous.clone(),
-                    envelope.current.clone(),
-                    envelope.revisions.clone(),
-                    envelope.trace.clone(),
-                    envelope.stale_beliefs.clone(),
-                )
-                .await
-                .map_err(|error| stage("projection.transition", error))?;
+        let has_transition = envelope.current.is_some() || envelope.previous.is_some();
+        if has_transition {
             staged += 1;
         }
 
@@ -196,15 +217,30 @@ impl NativeWriteEnvelope for NativeStagedEnvelopeWriter {
         let result_json =
             serde_json::to_string(&receipt).map_err(|error| stage("receipt.encode", error))?;
         self.epistemic
-            .store_correction_idempotency(CorrectionIdempotencyRecord {
-                key: key.clone(),
-                payload_hash: payload_hash.clone(),
-                result_json,
-                created_at: Utc::now(),
+            .apply_correction_batch(CorrectionWriteBatch {
+                source,
+                source_exists,
+                source_previous_id,
+                episode,
+                episode_exists: false,
+                claim,
+                claim_exists,
+                previous: envelope.previous.clone(),
+                current: envelope.current.clone(),
+                revisions: envelope.revisions.clone(),
+                trace: envelope.trace.clone(),
+                stale_beliefs: envelope.stale_beliefs.clone(),
+                expected_token: None,
+                receipt: Some(CorrectionIdempotencyRecord {
+                    key: key.clone(),
+                    payload_hash: payload_hash.clone(),
+                    result_json,
+                    created_at: Utc::now(),
+                }),
+                write_trace: has_transition,
             })
             .await
-            .map_err(|error| stage("receipt.store", error))?;
-
+            .map_err(|error| stage("envelope.transaction", error))?;
         Ok(WriteEnvelopeReceipt {
             key,
             payload_hash,

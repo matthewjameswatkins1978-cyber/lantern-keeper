@@ -458,8 +458,8 @@ async fn envelope_refuses_blank_key_bad_separator_and_tampered_source()
 }
 
 #[tokio::test]
-async fn native_staging_rejects_a_rolled_back_projection() -> Result<(), Box<dyn std::error::Error>>
-{
+async fn native_envelope_transaction_rolls_back_every_stage()
+-> Result<(), Box<dyn std::error::Error>> {
     let harness = harness("staging").await?;
     let at = Utc::now();
     let source = source("staging bytes");
@@ -467,8 +467,8 @@ async fn native_staging_rejects_a_rolled_back_projection() -> Result<(), Box<dyn
     let previous = belief("zed", at);
     harness.epistemic.store_belief(previous.clone()).await?;
 
-    // A pre-existing revision ID makes the projection stage fail inside its own
-    // BEGIN/COMMIT batch.
+    // A pre-existing revision ID makes the projection statement fail inside
+    // the single correction transaction.
     let mut current = previous.clone();
     current.current_value = "helix".to_owned();
     current.updated_at = Utc::now();
@@ -520,22 +520,22 @@ async fn native_staging_rejects_a_rolled_back_projection() -> Result<(), Box<dyn
         matches!(
             result,
             Err(WriteEnvelopeError::StageRejected { ref stage, .. })
-                if stage == "projection.transition"
+                if stage == "envelope.transaction"
         ),
-        "a rolled-back projection must be reported as a failed stage: {result:?}"
+        "a rolled-back transaction must be reported as a failed stage: {result:?}"
     );
 
-    // Earlier stages really are committed: the retained partial-commit risk.
+    // Q18 retirement proof: NOTHING earlier survived the failed projection —
+    // the retained partial-commit risk is gone, not merely recorded.
     assert!(
-        harness.sources.get(source.id()).await?.is_some(),
-        "native staging leaves the Source committed after a later refusal"
+        harness.sources.get(source.id()).await?.is_none(),
+        "the whole transaction must roll the Source back with everything else"
     );
     assert!(
-        harness.epistemic.get_claim(&claim.id).await?.is_some(),
-        "native staging leaves the Claim committed after a later refusal"
+        harness.epistemic.get_claim(&claim.id).await?.is_none(),
+        "the whole transaction must roll the Claim back with everything else"
     );
 
-    // The projection stage added nothing: the rolled-back batch created no revision.
     assert_eq!(
         harness
             .epistemic
@@ -543,7 +543,7 @@ async fn native_staging_rejects_a_rolled_back_projection() -> Result<(), Box<dyn
             .await?
             .len(),
         baseline_revisions,
-        "the rolled-back projection stage must add no revision"
+        "the rolled-back projection must add no revision"
     );
 
     let key = envelope.key();
@@ -575,8 +575,8 @@ async fn native_staging_rejects_a_rolled_back_projection() -> Result<(), Box<dyn
     );
 
     assert!(
-        NATIVE_PARTIAL_COMMIT_RISK.contains("separately committed"),
-        "the retained risk must be recorded in the adapter, not implied"
+        NATIVE_PARTIAL_COMMIT_RISK.contains("RETIRED"),
+        "the retirement must be recorded in the adapter, loudly"
     );
     Ok(())
 }
