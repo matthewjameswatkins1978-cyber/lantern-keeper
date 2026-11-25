@@ -19,8 +19,9 @@ use lantern_mcp_core::{
     ClientMsg, CoreError, Principal, Tool, advance_token, authenticate,
     canonical_from_millis, classify_d1_error, context_score, deterministic_id, escape_like,
     from_batch_refusal, load_credentials, merge_belief_payload, parse_client_msg, parse_context,
-    parse_correct, parse_search, parse_why, payload_hash, rpc_error, rpc_result, tool_catalog,
-    PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION,
+    parse_correct, parse_get_source, parse_list_notes, parse_remember, parse_search,
+    parse_why, payload_hash, rpc_error, rpc_result, tool_catalog,
+    sha256_hex, PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION,
 };
 use lighting_store_d1 as store;
 use serde_json::{Value, json};
@@ -279,8 +280,133 @@ async fn call_tool(
             lantern_mcp_core::authorize(principal, tool, Some(&args.scope))?;
             correct(env, principal, args).await
         }
+
+        Tool::Remember => {
+            let args = parse_remember(arguments)?;
+            lantern_mcp_core::authorize(principal, tool, Some(&args.scope))?;
+            remember(env, principal, args).await
+        }
+        Tool::GetSource => {
+            let args = parse_get_source(arguments)?;
+            lantern_mcp_core::authorize(principal, tool, Some(&args.scope))?;
+            let scope_hash = lighting_core::scope_hash(&args.scope);
+            let rows =
+                d1_rows(env, &store::source_bytes(&args.source_id, &scope_hash)).await?;
+            let row = rows.first().cloned().ok_or(CoreError::NotFound)?;
+            Ok(json!({
+                "source": {
+                    "source_id": row.get("id"),
+                    "kind": row.get("kind"),
+                    "fingerprint": row.get("fingerprint"),
+                    "created_at": row.get("created_at"),
+                    "content": row.get("content")
+                },
+                "scope_hash": scope_hash
+            }))
+        }
+        Tool::ListNotes => {
+            let args = parse_list_notes(arguments)?;
+            lantern_mcp_core::authorize(principal, tool, Some(&args.scope))?;
+            let scope_hash = lighting_core::scope_hash(&args.scope);
+            let rows = d1_rows(env, &store::memory_note_list(&scope_hash, args.limit)).await?;
+            let notes: Vec<Value> = rows
+                .iter()
+                .map(|row| {
+                    json!({
+                        "note_id": row.get("id"),
+                        "content": row.get("content"),
+                        "created_at": row.get("created_at")
+                    })
+                })
+                .collect();
+            Ok(json!({ "notes": notes, "count": notes.len(), "scope_hash": scope_hash }))
+        }
     }
 }
+
+/* Q17 hosted capture: ordinary remember. Source row is content-addressed
+ * (first 32 hex of the content hash), so identical bytes resolve to one row
+ * across scopes; visibility stays scope-confined through the memory_item
+ * join in source_bytes. The memory row and receipt are per-write identity
+ * (composite key), so replays return the original receipt instead of
+ * duplicating. No claim, episode or belief row is written here by
+ * construction -- a note can never silently become a verified claim. */
+async fn remember(
+    env: &Env,
+    principal: &Principal,
+    args: lantern_mcp_core::RememberArgs,
+) -> std::result::Result<Value, CoreError> {
+    let d1 = env
+        .d1(D1_BINDING)
+        .map_err(|_| CoreError::Storage("D1 binding missing".into()))?;
+    let scope_hash = lighting_core::scope_hash(&args.scope);
+    let composite =
+        store::idempotency_composite_key(&principal.principal, &scope_hash, &args.idempotency_key);
+    let envelope = store::WRITE_ENVELOPE_VERSION;
+    let content_hash = sha256_hex(&args.content);
+    let hash = sha256_hex(&format!("{envelope}|{composite}|{content_hash}"));
+    let source_id: String = content_hash.chars().take(32).collect();
+
+    // 1. Replay check: exact key + same payload -> original receipt back.
+    if let Some(row) = first_row(&d1, &store::lookup_remember(&composite)).await? {
+        return replay_response(row, &hash);
+    }
+
+    // 2. One atomic batch: source (idempotent), note, receipt.
+    let now_ms = Date::now().as_millis() as i64;
+    let accepted_at = canonical_from_millis(now_ms);
+    let memory_id = deterministic_id("memory", &composite, &hash);
+    let receipt_id = deterministic_id("receipt", &composite, &hash);
+    let result_json = json!({
+        "receipt_id": receipt_id,
+        "source_id": source_id,
+        "memory_id": memory_id,
+        "envelope_version": envelope,
+        "accepted_at": accepted_at,
+        "replayed": false
+    })
+    .to_string();
+
+    let remember = store::RememberInput {
+        source_id: source_id.clone(),
+        memory_id,
+        principal: principal.principal.clone(),
+        scope_hash: scope_hash.clone(),
+        content: args.content.clone(),
+        payload_hash: content_hash,
+        receipt_id,
+        accepted_at,
+        result_json: result_json.clone(),
+        idempotency_key: args.idempotency_key.clone(),
+    };
+    let statements = store::build_remember_batch(&remember).map_err(from_batch_refusal)?;
+
+    let mut prepared = Vec::with_capacity(statements.len());
+    for statement in &statements {
+        prepared.push(bind_statement(&d1, statement)?);
+    }
+    match d1.batch(prepared).await {
+        Ok(_) => {
+            let mut payload: Value = serde_json::from_str(&result_json)
+                .map_err(|_| CoreError::Storage("receipt serialization".into()))?;
+            if let Some(object) = payload.as_object_mut() {
+                object.insert("scope_hash".into(), json!(scope_hash));
+            }
+            Ok(payload)
+        }
+        Err(error) => {
+            let classified = classify_any(error);
+            if classified == CoreError::IdempotencyConflict {
+                // Lost a race on the same key: return the winner's receipt.
+                if let Some(row) = first_row(&d1, &store::lookup_remember(&composite)).await? {
+                    return replay_response(row, &hash);
+                }
+            }
+            Err(classified)
+        }
+    }
+}
+
 
 async fn correct(
     env: &Env,

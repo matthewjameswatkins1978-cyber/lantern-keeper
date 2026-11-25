@@ -29,6 +29,10 @@ pub use lighting_core::WRITE_ENVELOPE_VERSION;
 /// The checked-in hosted schema, applied by Work at deployment.
 pub const SCHEMA_SQL: &str = include_str!("../migrations/0001_hosted_schema.sql");
 
+/* LK-Q17: remember-path migration (additive). Tests apply both; Work
+/// applies 0002 after the already-deployed 0001. */
+pub const REMEMBER_SCHEMA_SQL: &str = include_str!("../migrations/0002_hosted_remember.sql");
+
 /// Hard bound on candidates returned by a scoped read (v1.1: <=128 total).
 pub const MAX_CANDIDATES: usize = 128;
 
@@ -131,6 +135,8 @@ pub enum BatchRefusal {
     /// `accepted_at` is not a canonical hosted timestamp; accepting it
     /// would silently break chronological ordering.
     NonCanonicalTimestamp,
+    /// The note content is blank: an empty note must never be stored.
+    BlankContent,
 }
 
 impl std::fmt::Display for BatchRefusal {
@@ -139,6 +145,7 @@ impl std::fmt::Display for BatchRefusal {
             BatchRefusal::NoOpAdvance => write!(f, "new_revision equals expected_revision"),
             BatchRefusal::KeySeparator => write!(f, "key part contains '|'"),
             BatchRefusal::NonCanonicalTimestamp => write!(f, "accepted_at is not canonical"),
+            BatchRefusal::BlankContent => write!(f, "content is blank"),
         }
     }
 }
@@ -305,5 +312,120 @@ pub fn lookup_idempotency(composite_key: &str) -> SqlStatement {
     SqlStatement::new(
         "SELECT key, payload_hash, result_json FROM correction_idempotency WHERE key = ?",
         vec![composite_key.into()],
+    )
+}
+
+/* ---------------------------------------------------------------------------
+ * LK-Q17 hosted capture: ordinary remember (note, not claim).
+ *
+ * A remembered note is a Source row (kind 'note', byte-exact content) plus
+ * a scoped memory_item row pointing at it. It is NEVER an epistemic_claim:
+ * the schema has no claim write here by construction, so ordinary capture
+ * cannot silently promote a note into a verified claim.
+ *
+ * Replay uses remember_idempotency with the same binding rule as
+ * corrections (principal|scope|caller key). Source/memory rows use
+ * deterministic ids so a replayed batch collides benignly instead of
+ * duplicating, but the receipt lookup short-circuits first.
+ * ---------------------------------------------------------------------------
+ */
+
+/// Everything one accepted keyed remember needs, pre-resolved by the worker.
+#[derive(Debug, Clone)]
+pub struct RememberInput {
+    pub source_id: String,
+    pub memory_id: String,
+    pub principal: String,
+    pub scope_hash: String,
+    pub content: String,
+    pub payload_hash: String,
+    pub receipt_id: String,
+    pub accepted_at: String,
+    pub result_json: String,
+    pub idempotency_key: String,
+}
+
+/// Build the single atomic batch for an accepted keyed remember.
+///
+/// Statement 1 (source) uses INSERT ... ON CONFLICT DO NOTHING: the same
+/// bytes re-remembered resolve to the same source row instead of failing.
+/// Statements 2-3 carry the write's identity and abort duplicates.
+pub fn build_remember_batch(w: &RememberInput) -> Result<Vec<SqlStatement>, BatchRefusal> {
+    if w.content.trim().is_empty() {
+        return Err(BatchRefusal::BlankContent);
+    }
+    if w.principal.contains('|') || w.scope_hash.contains('|') || w.idempotency_key.contains('|') {
+        return Err(BatchRefusal::KeySeparator);
+    }
+    if !is_canonical_timestamp(&w.accepted_at) {
+        return Err(BatchRefusal::NonCanonicalTimestamp);
+    }
+    Ok(vec![
+        SqlStatement::new(
+            "INSERT INTO source (id, kind, title, content, fingerprint, created_at) VALUES (?, 'note', ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING",
+            vec![
+                w.source_id.clone().into(),
+                w.receipt_id.clone().into(),
+                w.content.clone().into(),
+                w.payload_hash.clone().into(),
+                w.accepted_at.clone().into(),
+            ],
+        ),
+        SqlStatement::new(
+            "INSERT INTO memory_item (id, scope_hash, content, kind, salience, archived, payload, created_at, source_id) VALUES (?, ?, ?, 'note', 0.0, 0, ?, ?, ?)",
+            vec![
+                w.memory_id.clone().into(),
+                w.scope_hash.clone().into(),
+                w.content.clone().into(),
+                w.content.clone().into(),
+                w.accepted_at.clone().into(),
+                w.source_id.clone().into(),
+            ],
+        ),
+        SqlStatement::new(
+            "INSERT INTO remember_idempotency (key, principal, scope_hash, idempotency_key, payload_hash, result_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            vec![
+                idempotency_composite_key(&w.principal, &w.scope_hash, &w.idempotency_key).into(),
+                w.principal.clone().into(),
+                w.scope_hash.clone().into(),
+                w.idempotency_key.clone().into(),
+                w.payload_hash.clone().into(),
+                w.result_json.clone().into(),
+                w.accepted_at.clone().into(),
+            ],
+        ),
+    ])
+}
+
+/// Replay lookup for a keyed remember. Same shape as corrections.
+pub fn lookup_remember(composite_key: &str) -> SqlStatement {
+    SqlStatement::new(
+        "SELECT key, payload_hash, result_json FROM remember_idempotency WHERE key = ?",
+        vec![composite_key.into()],
+    )
+}
+
+/// Bounded scoped note list, newest first. Zero-write.
+pub fn memory_note_list(scope_hash: &str, limit: usize) -> SqlStatement {
+    let effective = limit.min(MAX_CANDIDATES);
+    if effective == 0 {
+        return SqlStatement::new(
+            "SELECT id, content, created_at FROM memory_item WHERE 0",
+            vec![],
+        );
+    }
+    SqlStatement::new(
+        "SELECT id, content, created_at FROM memory_item WHERE scope_hash = ? AND archived = 0 ORDER BY created_at DESC, id ASC LIMIT ?",
+        vec![scope_hash.into(), (effective as i64).into()],
+    )
+}
+
+/// Exact source-bytes point read, scope-confined through the owning note.
+/// A source with no note in the caller's scope is invisible (no cross-scope
+/// oracle), and a missing row is a typed not-found upstream.
+pub fn source_bytes(source_id: &str, scope_hash: &str) -> SqlStatement {
+    SqlStatement::new(
+        "SELECT s.id, s.content, s.kind, s.fingerprint, s.created_at FROM source s INNER JOIN memory_item m ON m.source_id = s.id WHERE s.id = ? AND m.scope_hash = ? LIMIT 1",
+        vec![source_id.into(), scope_hash.into()],
     )
 }

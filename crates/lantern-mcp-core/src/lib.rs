@@ -136,6 +136,9 @@ pub enum Tool {
     Context,
     Why,
     Correct,
+    Remember,
+    GetSource,
+    ListNotes,
 }
 
 impl Tool {
@@ -146,6 +149,9 @@ impl Tool {
             "lantern_context" => Some(Self::Context),
             "lantern_why" => Some(Self::Why),
             "lantern_correct" => Some(Self::Correct),
+            "lantern_remember" => Some(Self::Remember),
+            "lantern_get_source" => Some(Self::GetSource),
+            "lantern_list_notes" => Some(Self::ListNotes),
             _ => None,
         }
     }
@@ -157,12 +163,15 @@ impl Tool {
             Self::Context => "lantern_context",
             Self::Why => "lantern_why",
             Self::Correct => "lantern_correct",
+            Self::Remember => "lantern_remember",
+            Self::GetSource => "lantern_get_source",
+            Self::ListNotes => "lantern_list_notes",
         }
     }
 
-    /// Writes are exactly the keyed correction; reads persist nothing.
+    /// Writes are keyed mutations (correction, remember); reads persist nothing.
     pub fn is_write(self) -> bool {
-        matches!(self, Self::Correct)
+        matches!(self, Self::Correct | Self::Remember)
     }
 }
 
@@ -233,6 +242,43 @@ pub fn tool_catalog() -> Value {
                         "idempotency_key": { "type": "string" }
                     },
                     "required": ["scope", "belief_id", "expected_revision", "new_value", "idempotency_key"]
+                }
+            },
+            {
+                "name": "lantern_remember",
+                "description": "Save an ordinary note (byte-exact) with idempotency_key. A note is NEVER a verified claim. Write.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "scope": scope_schema,
+                        "content": { "type": "string" },
+                        "idempotency_key": { "type": "string" }
+                    },
+                    "required": ["scope", "content", "idempotency_key"]
+                }
+            },
+            {
+                "name": "lantern_get_source",
+                "description": "Exact source bytes by id, scope-confined. Read-only.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "scope": scope_schema,
+                        "source_id": { "type": "string" }
+                    },
+                    "required": ["scope", "source_id"]
+                }
+            },
+            {
+                "name": "lantern_list_notes",
+                "description": "Bounded scoped note list, newest first. Read-only, zero writes.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "scope": scope_schema,
+                        "limit": { "type": "integer", "minimum": 1, "maximum": 128 }
+                    },
+                    "required": ["scope"]
                 }
             }
         ]
@@ -457,6 +503,68 @@ pub fn parse_correct(params: &Value) -> Result<CorrectArgs, CoreError> {
     })
 }
 
+#[derive(Debug)]
+pub struct RememberArgs {
+    pub scope: Scope,
+    pub content: String,
+    pub idempotency_key: String,
+}
+
+pub fn parse_remember(params: &Value) -> Result<RememberArgs, CoreError> {
+    let key = require_text(params, "idempotency_key")?;
+    if key.len() > 128 || key.contains('|') {
+        return Err(CoreError::Invalid(
+            "idempotency_key max 128 chars, no '|'".into(),
+        ));
+    }
+    let content = require_text(params, "content")?;
+    if content.trim().is_empty() {
+        return Err(CoreError::Invalid("content must not be blank".into()));
+    }
+    if content.len() > 1_048_576 {
+        return Err(CoreError::Invalid("content max 1 MiB".into()));
+    }
+    Ok(RememberArgs {
+        scope: require_scope(params)?,
+        content,
+        idempotency_key: key,
+    })
+}
+
+#[derive(Debug)]
+pub struct GetSourceArgs {
+    pub scope: Scope,
+    pub source_id: String,
+}
+
+#[derive(Debug)]
+pub struct ListNotesArgs {
+    pub scope: Scope,
+    pub limit: usize,
+}
+
+pub fn parse_list_notes(params: &Value) -> Result<ListNotesArgs, CoreError> {
+    let limit = match params.get("limit") {
+        None | Some(Value::Null) => 32,
+        Some(Value::Number(n)) => n.as_u64().unwrap_or(32) as usize,
+        Some(_) => return Err(CoreError::Invalid("limit must be a number".into())),
+    };
+    if limit == 0 || limit > 128 {
+        return Err(CoreError::Invalid("limit must be 1..=128".into()));
+    }
+    Ok(ListNotesArgs {
+        scope: require_scope(params)?,
+        limit,
+    })
+}
+
+pub fn parse_get_source(params: &Value) -> Result<GetSourceArgs, CoreError> {
+    Ok(GetSourceArgs {
+        scope: require_scope(params)?,
+        source_id: require_text(params, "source_id")?,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Errors and HTTP mapping
 // ---------------------------------------------------------------------------
@@ -557,6 +665,11 @@ pub fn classify_d1_error(message: &str) -> CoreError {
     }
     if lower.contains("unique constraint failed")
         && (lower.contains("correction_idempotency") || lower.contains("idempotency_binding"))
+    {
+        return CoreError::IdempotencyConflict;
+    }
+    if lower.contains("unique constraint failed")
+        && (lower.contains("remember_idempotency") || lower.contains("remember_binding"))
     {
         return CoreError::IdempotencyConflict;
     }
@@ -793,10 +906,38 @@ mod tests {
     }
 
     #[test]
-    fn catalog_lists_five_tools() {
+    fn remember_rejects_blank_oversize_and_piped_key() {
+        let scope = json!({"project": "smoke"});
+        let bad_blank = json!({"scope": scope, "content": "  ", "idempotency_key": "k"});
+        assert!(parse_remember(&bad_blank).is_err());
+        let bad_big =
+            json!({"scope": scope, "content": "x".repeat(2_000_000), "idempotency_key": "k"});
+        assert!(parse_remember(&bad_big).is_err());
+        let bad_pipe = json!({"scope": scope, "content": "ok", "idempotency_key": "a|b"});
+        assert!(parse_remember(&bad_pipe).is_err());
+        let good = json!({"scope": scope, "content": "hi", "idempotency_key": "k"});
+        let args = parse_remember(&good).expect("valid remember");
+        assert_eq!(args.content, "hi");
+    }
+
+    #[test]
+    fn get_source_and_list_notes_parse_and_bound() {
+        let scope = json!({"project": "smoke"});
+        let get = json!({"scope": scope, "source_id": "abc"});
+        assert_eq!(parse_get_source(&get).expect("valid").source_id, "abc");
+        let list = json!({"scope": scope});
+        assert_eq!(parse_list_notes(&list).expect("valid").limit, 32);
+        let zero = json!({"scope": scope, "limit": 0});
+        assert!(parse_list_notes(&zero).is_err());
+        let huge = json!({"scope": scope, "limit": 999});
+        assert!(parse_list_notes(&huge).is_err());
+    }
+
+    #[test]
+    fn catalog_lists_eight_tools() {
         let catalog = tool_catalog();
         let tools = catalog["tools"].as_array().expect("tools array");
-        assert_eq!(tools.len(), 5);
+        assert_eq!(tools.len(), 8);
         for tool in tools {
             let name = tool["name"].as_str().expect("name");
             assert!(Tool::from_name(name).is_some(), "unknown tool {name}");
