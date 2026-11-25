@@ -1,0 +1,30 @@
+{
+  "format": "lantern-keeper-logical-export-v1",
+  "generated_at": "2026-10-02T00:00:00.000000000Z",
+  "source_of_truth": "Lantern Keeper SurrealDB logical records",
+  "tables": ["source", "episode", "marker", "ledger_event", "project", "memory", "memory_relation", "trace", "epistemic_claim", "belief", "belief_revision"],
+  "record_count": 16,
+  "record_counts": {
+    "source": 2,
+    "episode": 2,
+    "marker": 1,
+    "ledger_event": 1,
+    "project": 1,
+    "memory": 1,
+    "memory_relation": 1,
+    "trace": 1,
+    "epistemic_claim": 2,
+    "belief": 2,
+    "belief_revision": 2
+  },
+  "schema_version": "native-v11-synthetic",
+  "export_hash": "synthetic-c3-import-fixture-not-a-real-digest",
+  "files": [
+    "manifest.json",
+    "ledger.ndjson",
+    "memories.ndjson",
+    "relations.ndjson",
+    "projects.ndjson",
+    "epistemic.ndjson"
+  ]
+}

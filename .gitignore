@@ -2,6 +2,7 @@
 /.lighting-data/
 /.lighting-runtime/
 /.private-migration/
+/.tm-fragments/
 /.env
 /.local/
 /logs/
@@ -17,3 +18,6 @@
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Cloudflare deployment cache (per-machine, never commit).
+.wrangler/

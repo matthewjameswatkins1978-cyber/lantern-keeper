@@ -3,9 +3,11 @@
 //! Not wired into the service in LK-001.
 
 pub mod authority_store;
+pub mod bounded_store;
 pub mod bridge_intent_store;
 pub mod config;
 pub mod connection;
+pub mod envelope_native;
 pub mod epistemic_store;
 pub mod export;
 pub mod ledger_store;
@@ -16,9 +18,11 @@ pub mod schema;
 pub mod source_store;
 
 pub use authority_store::{AuthorityRepository, SurrealAuthorityError, SurrealAuthorityRepository};
+pub use bounded_store::SurrealBoundedRepository;
 pub use bridge_intent_store::{SurrealBridgeIntentError, SurrealBridgeIntentRepository};
 pub use config::{RedactedStoreConfig, StoreConfig};
 pub use connection::{StoreError, SurrealStore};
+pub use envelope_native::{NATIVE_PARTIAL_COMMIT_RISK, NativeStagedEnvelopeWriter};
 pub use epistemic_store::{SurrealEpistemicError, SurrealEpistemicRepository};
 pub use export::{ExportError, ExportSummary, RestoreSummary};
 pub use ledger_store::SurrealLedgerRepository;

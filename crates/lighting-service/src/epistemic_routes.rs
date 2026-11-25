@@ -19,6 +19,8 @@ fn error_response(error: EpistemicOperationError) -> (StatusCode, Json<serde_jso
         EpistemicOperationError::Invalid(_) => StatusCode::BAD_REQUEST,
         EpistemicOperationError::NotFound => StatusCode::NOT_FOUND,
         EpistemicOperationError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        EpistemicOperationError::RevisionConflict(_) => StatusCode::CONFLICT,
+        EpistemicOperationError::IdempotencyConflict(_) => StatusCode::CONFLICT,
         EpistemicOperationError::Repository(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     let api: crate::source_dto::ApiError = error.into();

@@ -50,6 +50,10 @@ pub struct RestoreSummary {
     pub directory: PathBuf,
     pub tables: Vec<String>,
     pub record_count: usize,
+    /// True when the export manifest records an operator-held write fence.
+    pub fenced: bool,
+    /// Caller-supplied fence id from the manifest, if the export was fenced.
+    pub fence_id: Option<String>,
 }
 
 impl SurrealStore {
@@ -59,6 +63,30 @@ impl SurrealStore {
     pub async fn export_to(
         &self,
         directory: impl AsRef<Path>,
+    ) -> Result<ExportSummary, ExportError> {
+        self.export_inner(directory, None).await
+    }
+
+    /// Export while the caller holds an operator-controlled write fence.
+    ///
+    /// The fence itself lives outside this crate: whoever calls this method
+    /// guarantees no concurrent writers for the duration of the call
+    /// (see the v1.1 hosted contract). The manifest records
+    /// `"fenced": true` plus the caller-supplied `fence_id`; an unfenced
+    /// [`Self::export_to`] export records no `fenced` key at all, so its
+    /// bytes are unchanged by this addition.
+    pub async fn export_fenced_to(
+        &self,
+        directory: impl AsRef<Path>,
+        fence_id: &str,
+    ) -> Result<ExportSummary, ExportError> {
+        self.export_inner(directory, Some(fence_id)).await
+    }
+
+    async fn export_inner(
+        &self,
+        directory: impl AsRef<Path>,
+        fence: Option<&str>,
     ) -> Result<ExportSummary, ExportError> {
         let directory = directory.as_ref().to_path_buf();
         tokio::fs::create_dir_all(&directory)
@@ -162,7 +190,7 @@ impl SurrealStore {
             .await
             .map_err(|error| ExportError::InvalidManifest(error.to_string()))?;
 
-        let manifest = serde_json::json!({
+        let mut manifest = serde_json::json!({
             "format": EXPORT_FORMAT,
             "generated_at": Utc::now(),
             "source_of_truth": "Lantern Keeper SurrealDB logical records",
@@ -180,6 +208,10 @@ impl SurrealStore {
                 "epistemic.ndjson"
             ]
         });
+        if let Some(fence_id) = fence {
+            manifest["fenced"] = serde_json::json!(true);
+            manifest["fence_id"] = serde_json::json!(fence_id);
+        }
         let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(ExportError::Json)?;
         tokio::fs::write(directory.join("manifest.json"), manifest_bytes)
             .await
@@ -209,6 +241,12 @@ impl SurrealStore {
 
     /// Restore a logical export into a schema-initialised store.
     ///
+    /// The manifest content hash is recomputed in export order and the
+    /// restore is refused before any write on mismatch, so truncated or
+    /// corrupt exports fail closed instead of restoring partial state.
+    /// A recorded fence is reported in the summary; it is not enforced
+    /// here (enforcement belongs to the hosted write path).
+    ///
     /// Records are UPSERTed by their exported Surreal record ID, so replaying
     /// the same directory is idempotent. The caller owns the choice of target
     /// store; normal restore drills must use a fresh isolated database.
@@ -226,6 +264,44 @@ impl SurrealStore {
             return Err(ExportError::InvalidManifest(format!(
                 "expected format {EXPORT_FORMAT}"
             )));
+        }
+        let fenced = manifest
+            .get("fenced")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let fence_id = manifest
+            .get("fence_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        // Verify-then-restore: recompute the export content hash in the exact
+        // order export_to hashed it, and refuse to write anything on mismatch.
+        {
+            let mut verifier = Sha256::new();
+            for file_name in [
+                "ledger.ndjson",
+                "projects.ndjson",
+                "relations.ndjson",
+                "epistemic.ndjson",
+                "memories.ndjson",
+            ] {
+                let bytes = tokio::fs::read(&directory.join(file_name))
+                    .await
+                    .map_err(ExportError::Filesystem)?;
+                verifier.update(&bytes);
+            }
+            let actual = format!("{:x}", verifier.finalize());
+            let expected = manifest
+                .get("export_hash")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    ExportError::InvalidManifest("manifest has no export_hash".to_owned())
+                })?;
+            if actual != expected {
+                return Err(ExportError::InvalidManifest(
+                    "export content hash mismatch: directory contents do not match manifest export_hash (truncated or corrupt export)"
+                        .to_owned(),
+                ));
+            }
         }
         let files = manifest
             .get("files")
@@ -319,6 +395,8 @@ impl SurrealStore {
             directory,
             tables,
             record_count,
+            fenced,
+            fence_id,
         })
     }
 }

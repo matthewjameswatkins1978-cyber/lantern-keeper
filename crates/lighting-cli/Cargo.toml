@@ -9,12 +9,21 @@ license.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
+lighting-core = { path = "../lighting-core" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
 urlencoding.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+lighting-service = { path = "../lighting-service" }
+lighting-store-d1 = { path = "../lighting-store-d1" }
+lighting-store-surreal = { path = "../lighting-store-surreal" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+tokio.workspace = true
 
 [lib]
 name = "lighting_cli"

@@ -1,0 +1,12 @@
+[package]
+name = "lighting-store-d1"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+lighting-core = { path = "../lighting-core" }
+
+[dev-dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }

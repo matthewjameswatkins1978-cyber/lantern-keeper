@@ -3,14 +3,15 @@ use std::{collections::BTreeMap, sync::Arc};
 use chrono::Utc;
 use lighting_core::{
     Belief, BeliefId, BeliefLineage, BeliefRevision, BeliefRevisionId, BeliefState, Claim, ClaimId,
-    ContextPack, ContextPackId, ContextTrace, DimensionDefinition, Episode, EpisodeTitle,
-    EpistemicError, EpistemicRepository, EpistemicRepositoryError, MemoryItem, MemoryItemSearch,
-    MemoryPathRepository, NewBelief, NewClaim, NewGraphRelation, NewMemoryItem, NewSource,
-    PredicateDefinition, PredicateStatus, Proposal, ProposalId, ReconciliationAction,
-    ReconciliationDecision, SourceContent, SourceKind, SourceRepository, SourceTitle, Stance,
-    StoreSourceResult, Trace, TraceId, TrustClass, normalize_registry_key, propagate_stale_beliefs,
-    reconcile_claim,
+    ContextPack, ContextPackId, ContextTrace, CorrectionIdempotencyRecord, DimensionDefinition,
+    Episode, EpisodeTitle, EpistemicError, EpistemicRepository, EpistemicRepositoryError,
+    MemoryItem, MemoryItemSearch, MemoryPathRepository, NewBelief, NewClaim, NewGraphRelation,
+    NewMemoryItem, NewSource, PredicateDefinition, PredicateStatus, Proposal, ProposalId,
+    ReconciliationAction, ReconciliationDecision, SourceContent, SourceKind, SourceRepository,
+    SourceTitle, Stance, StoreSourceResult, Trace, TraceId, TrustClass, normalize_registry_key,
+    propagate_stale_beliefs, reconcile_claim,
 };
+use sha2::{Digest, Sha256};
 
 use crate::epistemic_dto::{
     BeliefRequest, ClaimRequest, ContextCompileRequest, CorrectionRequest,
@@ -27,18 +28,22 @@ pub enum EpistemicOperationError {
     Invalid(String),
     #[error("epistemic record was not found")]
     NotFound,
+    #[error("correction target revision does not match the expected current revision: {0}")]
+    RevisionConflict(String),
+    #[error("idempotency key was already used with a different correction payload: {0}")]
+    IdempotencyConflict(String),
     #[error("epistemic repository operation failed")]
     Repository(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct ReconciliationResult {
     pub claim: Claim,
     pub decision: ReconciliationDecision,
     pub belief: Option<Belief>,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct CorrectionResult {
     pub source_id: String,
     pub episode_id: String,
@@ -55,6 +60,23 @@ pub struct LiveClaimResult {
     pub claim: Claim,
     pub reconciliation: ReconciliationResult,
 }
+
+/// Hard cap on candidates fetched by `compile_context_scoped`.
+///
+/// LK-HOST-001 v1.1: <=128 total candidates across authorised lanes; the
+/// hosted scoped path has a single typed-belief lane today.
+const SCOPED_CANDIDATE_LIMIT: usize = 128;
+/// Hard cap on unique lineage claim IDs hydrated per scoped context call.
+/// Bounded point lookups; typed nonaccepted beyond. D1 batched hydration is
+/// an M2 concern.
+const MAX_LINEAGE_HYDRATION_IDS: usize = 512;
+/// Response-size ceiling for hosted context packs (256 KiB, aligned with
+/// `docs/mcp.md`).
+const HOSTED_CONTEXT_PACK_MAX_BYTES: usize = 256 * 1024;
+/// Principal bound into correction idempotency keys (delta-2). Matches the
+/// existing correction originator; M3 replaces this with the authenticated
+/// principal.
+pub const CORRECTION_IDEMPOTENCY_PRINCIPAL: &str = "matthew";
 
 struct TextEvidence {
     source_id: String,
@@ -81,6 +103,14 @@ impl From<EpistemicOperationError> for ApiError {
             EpistemicOperationError::NotFound => ApiError {
                 code: "epistemic_record_not_found".to_owned(),
                 message: "The requested epistemic record does not exist".to_owned(),
+            },
+            EpistemicOperationError::RevisionConflict(message) => ApiError {
+                code: "revision_conflict".to_owned(),
+                message,
+            },
+            EpistemicOperationError::IdempotencyConflict(message) => ApiError {
+                code: "idempotency_conflict".to_owned(),
+                message,
             },
             EpistemicOperationError::Repository(_) => ApiError::internal_error(),
         }
@@ -269,6 +299,46 @@ impl EpistemicService {
         &self,
         request: CorrectionRequest,
     ) -> Result<CorrectionResult, EpistemicOperationError> {
+        // Keyed idempotency envelope (LK-HOST-001 delta-2). With no key this
+        // block is skipped entirely and the legacy path runs unchanged.
+        let idempotency = match request.idempotency_key.as_deref() {
+            None => None,
+            Some(raw) => {
+                let caller_key = raw.trim();
+                if caller_key.is_empty() {
+                    return Err(EpistemicOperationError::Invalid(
+                        "idempotency key cannot be blank".to_owned(),
+                    ));
+                }
+                if caller_key.contains('|') {
+                    return Err(EpistemicOperationError::Invalid(
+                        "idempotency key must not contain '|'".to_owned(),
+                    ));
+                }
+                let composite = format!(
+                    "{CORRECTION_IDEMPOTENCY_PRINCIPAL}|{}|{caller_key}",
+                    lighting_core::scope_hash(&request.scope)
+                );
+                let payload_hash = correction_payload_hash(&request)?;
+                if let Some(record) = self
+                    .repo
+                    .get_correction_idempotency(&composite)
+                    .await
+                    .map_err(map_repository_error)?
+                {
+                    if record.payload_hash != payload_hash {
+                        return Err(EpistemicOperationError::IdempotencyConflict(
+                            "idempotency key was already used with a different correction payload"
+                                .to_owned(),
+                        ));
+                    }
+                    let original: CorrectionResult = serde_json::from_str(&record.result_json)
+                        .map_err(|error| EpistemicOperationError::Repository(Box::new(error)))?;
+                    return Ok(original);
+                }
+                Some((composite, payload_hash))
+            }
+        };
         let target_id = match (
             request
                 .target_belief_id
@@ -344,6 +414,25 @@ impl EpistemicService {
                 ));
             }
         }
+        // Expected-revision precondition (delta-2): verified after target
+        // resolution and strictly before the first write, so a mismatch
+        // persists nothing.
+        if let Some(expected) = request.expected_revision.as_deref() {
+            let actual = serde_json::to_value(target.updated_at)
+                .map_err(|error| {
+                    EpistemicOperationError::Invalid(format!(
+                        "target revision could not be serialised: {error}"
+                    ))
+                })?
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_default();
+            if actual != expected {
+                return Err(EpistemicOperationError::RevisionConflict(format!(
+                    "expected revision {expected}, stored revision is {actual}"
+                )));
+            }
+        }
         let correction_text = request.correction_text;
         if correction_text.trim().is_empty() {
             return Err(EpistemicOperationError::Invalid(
@@ -398,13 +487,30 @@ impl EpistemicService {
                 },
             )
             .await?;
-        Ok(CorrectionResult {
+        let result = CorrectionResult {
             source_id: evidence.source_id,
             episode_id: evidence.episode_id,
             context_pack_id: context_pack_id.map(|id| id.to_string()),
             claim,
             reconciliation,
-        })
+        };
+        if let Some((key, payload_hash)) = idempotency {
+            let record = CorrectionIdempotencyRecord {
+                key,
+                payload_hash,
+                result_json: serde_json::to_string(&result).map_err(|error| {
+                    EpistemicOperationError::Invalid(format!(
+                        "correction result could not be serialised: {error}"
+                    ))
+                })?,
+                created_at: Utc::now(),
+            };
+            self.repo
+                .store_correction_idempotency(record)
+                .await
+                .map_err(map_repository_error)?;
+        }
+        Ok(result)
     }
 
     pub async fn reconcile_claim(
@@ -975,240 +1081,30 @@ impl EpistemicService {
             })
             .await
             .map_err(map_repository_error)?;
-        let mut searchable_query = query.clone();
-        for hint in &request.project_hints {
-            searchable_query.push(' ');
-            searchable_query.push_str(hint);
-        }
-        let query_tokens = context_tokens(&searchable_query);
-        let mut belief_candidates: Vec<(i32, Vec<String>, Belief)> = all_beliefs
-            .into_iter()
-            .map(|belief| {
-                let state_bonus = if belief.state == BeliefState::Active {
-                    2
-                } else {
-                    0
-                };
-                let (relevance, mut reasons) =
-                    belief_relevance_details(&belief, &query_tokens, &scope);
-                if state_bonus > 0 {
-                    reasons.push("active-current-projection".to_owned());
-                } else {
-                    reasons.push("historical-or-inactive-projection".to_owned());
-                }
-                (relevance + state_bonus, reasons, belief)
-            })
-            .filter(|(score, _, belief)| {
-                belief.stale
-                    || (belief.state == BeliefState::Active && *score > 2)
-                    || (belief.state != BeliefState::Active && *score > 0)
-            })
-            .collect();
-        belief_candidates.sort_by(|(left_score, _, left), (right_score, _, right)| {
-            right_score
-                .cmp(left_score)
-                .then_with(|| right.updated_at.cmp(&left.updated_at))
-                .then_with(|| left.id.to_string().cmp(&right.id.to_string()))
-        });
-        let mut memory_candidates: Vec<(i32, Vec<String>, MemoryItem)> = all_memories
-            .into_iter()
-            .map(|memory| {
-                let (score, reasons) = memory_relevance_details(&memory, &query_tokens);
-                (score, reasons, memory)
-            })
-            .filter(|(score, _, _)| *score > 0)
-            .collect();
-        memory_candidates.sort_by(|(left_score, _, left), (right_score, _, right)| {
-            right_score
-                .cmp(left_score)
-                .then_with(|| right.created_at.cmp(&left.created_at))
-                .then_with(|| left.id.to_string().cmp(&right.id.to_string()))
-        });
-
-        let candidate_belief_ids = belief_candidates
-            .iter()
-            .map(|(_, _, belief)| belief.id.to_string())
-            .collect::<Vec<_>>();
-        let candidate_memory_ids = memory_candidates
-            .iter()
-            .map(|(_, _, memory)| memory.id.to_string())
-            .collect::<Vec<_>>();
-        let mut candidate_scores = std::collections::BTreeMap::new();
-        let mut candidate_reasons = std::collections::BTreeMap::new();
-        for (score, reasons, belief) in &belief_candidates {
-            candidate_scores.insert(belief.id.to_string(), *score);
-            candidate_reasons.insert(belief.id.to_string(), reasons.clone());
-        }
-        for (score, reasons, memory) in &memory_candidates {
-            candidate_scores.insert(memory.id.to_string(), *score);
-            candidate_reasons.insert(memory.id.to_string(), reasons.clone());
-        }
-        let omitted_stale_ids = belief_candidates
-            .iter()
-            .filter(|(_, _, belief)| belief.stale)
-            .map(|(_, _, belief)| belief.id.to_string())
-            .collect::<Vec<_>>();
-
-        let mut selected_beliefs = Vec::new();
-        let mut selected_memories = Vec::new();
-        let mut estimated_token_usage =
-            estimate_tokens(&format!("# Lantern Context\n\nQuery: {query}\n"));
-        let history_requested = history_requested(&query_tokens);
-        for (_, _, belief) in belief_candidates {
-            if selected_beliefs.len() + selected_memories.len() >= item_budget {
-                break;
-            }
-            let item_tokens = estimate_belief_tokens(&belief);
-            let eligible = belief.state == BeliefState::Active
-                || history_requested
-                || historical_value_requested(&belief, &query_tokens);
-            if eligible
-                && !belief.stale
-                && estimated_token_usage.saturating_add(item_tokens) <= token_budget
-            {
-                selected_beliefs.push(belief);
-                estimated_token_usage = estimated_token_usage.saturating_add(item_tokens);
-            }
-        }
-        for (_, _, memory) in memory_candidates {
-            if selected_beliefs.len() + selected_memories.len() >= item_budget {
-                break;
-            }
-            let item_tokens = estimate_memory_tokens(&memory);
-            if estimated_token_usage.saturating_add(item_tokens) <= token_budget {
-                selected_memories.push(memory);
-                estimated_token_usage = estimated_token_usage.saturating_add(item_tokens);
-            }
-        }
-
-        let pack_id = ContextPackId::new(uuid::Uuid::new_v4().to_string()).map_err(|_| {
-            EpistemicOperationError::Invalid("context ID could not be created".to_owned())
-        })?;
-        let selected_ids = selected_beliefs
-            .iter()
-            .map(|belief| belief.id.to_string())
-            .chain(selected_memories.iter().map(|memory| memory.id.to_string()))
-            .collect::<Vec<_>>();
-        let retrieval_trace = ContextTrace {
-            compiler_version: "deterministic-v1".to_owned(),
-            candidate_belief_ids,
-            candidate_memory_ids,
-            selected_ids: selected_ids.clone(),
-            excluded_stale_ids: omitted_stale_ids.clone(),
-            lanes: {
-                let mut lanes = vec!["typed-belief".to_owned(), "lexical-soft-memory".to_owned()];
-                if !request.project_hints.is_empty() {
-                    lanes.push("project-hint".to_owned());
-                }
-                if history_requested {
-                    lanes.push("temporal-history".to_owned());
-                }
-                lanes
-            },
-            candidate_scores,
-            candidate_reasons,
-            item_budget,
-            token_budget,
-            estimated_token_usage,
-        };
-        let current_beliefs = selected_beliefs
-            .iter()
-            .filter(|belief| belief.state == BeliefState::Active && belief.holder_key == "matthew")
-            .cloned()
-            .collect::<Vec<_>>();
-        let historical_beliefs = selected_beliefs
-            .iter()
-            .filter(|belief| belief.state != BeliefState::Active)
-            .cloned()
-            .collect::<Vec<_>>();
-        let lucy_beliefs = selected_beliefs
-            .iter()
-            .filter(|belief| belief.state == BeliefState::Active && belief.holder_key == "lucy")
-            .cloned()
-            .collect::<Vec<_>>();
-        let shared_beliefs = selected_beliefs
-            .iter()
-            .filter(|belief| {
-                belief.state == BeliefState::Active && belief.holder_key.starts_with("shared:")
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let legacy_beliefs = selected_beliefs
-            .iter()
-            .filter(|belief| {
-                belief.state == BeliefState::Active && belief.holder_key.starts_with("legacy:")
-            })
-            .cloned()
-            .collect::<Vec<_>>();
         let claims = self
             .repo
             .list_claims(false)
             .await
             .map_err(map_repository_error)?;
-        let mut source_refs = Vec::new();
-        let mut episode_refs = Vec::new();
-        for memory in &selected_memories {
-            if let Some(source_id) = &memory.source_id {
-                push_unique(&mut source_refs, source_id.clone());
-            }
-            if let Some(episode_id) = &memory.episode_id {
-                push_unique(&mut episode_refs, episode_id.clone());
-            }
-        }
-        for belief in &selected_beliefs {
-            for claim_id in belief
-                .lineage
-                .supporting_claim_ids
-                .iter()
-                .chain(belief.lineage.contradictory_claim_ids.iter())
-            {
-                if let Some(claim) = claims.iter().find(|claim| claim.id.as_str() == claim_id) {
-                    if let Some(source_id) = &claim.source_id {
-                        push_unique(&mut source_refs, source_id.clone());
-                    }
-                    if let Some(episode_id) = &claim.episode_id {
-                        push_unique(&mut episode_refs, episode_id.clone());
-                    }
-                }
-            }
-        }
-        let mut generated_context = render_context(
-            &query,
-            &current_beliefs,
-            &lucy_beliefs,
-            &shared_beliefs,
-            &legacy_beliefs,
-            &selected_memories,
-            &omitted_stale_ids,
-        );
-        insert_historical_beliefs(&mut generated_context, &historical_beliefs);
-        if let Some(intent) = request
-            .intent
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-        {
-            generated_context.insert_str(0, &format!("Intent: {}\n\n", intent.trim()));
-        }
+        let pack_id = ContextPackId::new(uuid::Uuid::new_v4().to_string()).map_err(|_| {
+            EpistemicOperationError::Invalid("context ID could not be created".to_owned())
+        })?;
         let created_at = Utc::now();
-        let pack = ContextPack {
-            id: pack_id,
-            query: query.clone(),
-            selected_ids,
-            omitted_stale_ids: omitted_stale_ids.clone(),
-            generated_context,
-            created_at,
+        let selection = compile_select(CompileSelectInput {
+            query,
+            intent: request.intent,
             actor: request.actor,
             scope,
-            current_beliefs,
-            historical_beliefs,
-            lucy_beliefs,
-            shared_beliefs,
-            legacy_beliefs,
-            soft_memories: selected_memories,
-            source_refs,
-            episode_refs,
-            retrieval_trace,
-        };
+            project_hints: request.project_hints,
+            item_budget,
+            token_budget,
+            pack_id,
+            created_at,
+            beliefs: all_beliefs,
+            memories: all_memories,
+            claims,
+        });
+        let pack = selection.pack;
         self.repo
             .store_context_pack(pack.clone())
             .await
@@ -1222,16 +1118,7 @@ impl EpistemicService {
             subject_id: Some(pack.id.to_string()),
             input_ids: pack.selected_ids.clone(),
             output_ids: vec![pack.id.to_string()],
-            details: BTreeMap::from([
-                ("compiler_version".to_owned(), "deterministic-v1".to_owned()),
-                ("item_budget".to_owned(), item_budget.to_string()),
-                ("token_budget".to_owned(), token_budget.to_string()),
-                (
-                    "estimated_token_usage".to_owned(),
-                    estimated_token_usage.to_string(),
-                ),
-                ("query".to_owned(), query),
-            ]),
+            details: selection.trace_details,
             created_at,
         };
         self.repo
@@ -1239,6 +1126,115 @@ impl EpistemicService {
             .await
             .map_err(map_repository_error)?;
         Ok(pack)
+    }
+
+    /// Compiles a bounded, zero-persistence context pack for the hosted
+    /// profile (LK-HOST-001 M0 delta item 1, representative scoped call).
+    ///
+    /// Explicit, versioned differences from [`Self::compile_context`]:
+    /// * candidates come from an indexed exact-scope-equality query capped at
+    ///   `SCOPED_CANDIDATE_LIMIT` — never a fetch-all;
+    /// * the soft-memory lane contributes no candidates: `MemoryItem` carries
+    ///   no scope, so this path fails closed until M2 adds scoped soft memory;
+    /// * lineage evidence for candidates is hydrated through bounded point
+    ///   lookups, capped at `MAX_LINEAGE_HYDRATION_IDS` (typed nonaccepted beyond);
+    /// * hosted budget caps apply: 32 items / 8,000 estimated tokens (v1.1 §5);
+    /// * the pack is rejected above `HOSTED_CONTEXT_PACK_MAX_BYTES`;
+    /// * **nothing is persisted** — no Context Pack row and no Trace (v1.1
+    ///   zero-write read contract). Native `compile_context` keeps its
+    ///   fetch-all and persistence behaviour unchanged.
+    ///
+    /// Exact scope equality fails closed: a broader authorised scope does not
+    /// observe narrower-scoped records (M2 owns richer containment semantics).
+    /// `request.scope` must be the authenticated principal's authorised
+    /// scope; principal wiring is an M3 concern.
+    pub async fn compile_context_scoped(
+        &self,
+        request: ContextCompileRequest,
+    ) -> Result<ContextPack, EpistemicOperationError> {
+        let query = required_text(request.query, "context query")?;
+        let item_budget = request.item_budget.clamp(1, 32);
+        let token_budget = request.token_budget.clamp(128, 8_000);
+        let scope = lighting_core::normalize_scope(&request.scope).map_err(map_domain_error)?;
+        let beliefs = self
+            .repo
+            .list_beliefs_scoped(&scope, true, SCOPED_CANDIDATE_LIMIT)
+            .await
+            .map_err(map_repository_error)?;
+        let claims = self.hydrate_lineage_claims(&beliefs).await?;
+        let pack_id = ContextPackId::new(uuid::Uuid::new_v4().to_string()).map_err(|_| {
+            EpistemicOperationError::Invalid("context ID could not be created".to_owned())
+        })?;
+        let pack = compile_select(CompileSelectInput {
+            query,
+            intent: request.intent,
+            actor: request.actor,
+            scope,
+            project_hints: request.project_hints,
+            item_budget,
+            token_budget,
+            pack_id,
+            created_at: Utc::now(),
+            beliefs,
+            memories: Vec::new(),
+            claims,
+        })
+        .pack;
+        let encoded = serde_json::to_string(&pack).map_err(|error| {
+            EpistemicOperationError::Invalid(format!(
+                "context pack could not be serialized: {error}"
+            ))
+        })?;
+        if encoded.len() > HOSTED_CONTEXT_PACK_MAX_BYTES {
+            return Err(EpistemicOperationError::Invalid(format!(
+                "context pack exceeds the hosted serialization cap of {HOSTED_CONTEXT_PACK_MAX_BYTES} bytes"
+            )));
+        }
+        Ok(pack)
+    }
+
+    /// Point-lookup hydration of the unique lineage claim IDs referenced by
+    /// `beliefs`, bounded by `MAX_LINEAGE_HYDRATION_IDS` and failing closed
+    /// beyond it. Missing claim records are tolerated, mirroring the native
+    /// fetch-all path, which silently skips lineage it cannot find.
+    async fn hydrate_lineage_claims(
+        &self,
+        beliefs: &[Belief],
+    ) -> Result<Vec<Claim>, EpistemicOperationError> {
+        let mut ids: Vec<ClaimId> = Vec::new();
+        for belief in beliefs {
+            for claim_id in belief
+                .lineage
+                .supporting_claim_ids
+                .iter()
+                .chain(belief.lineage.contradictory_claim_ids.iter())
+            {
+                let Ok(id) = ClaimId::new(claim_id.clone()) else {
+                    continue;
+                };
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
+        if ids.len() > MAX_LINEAGE_HYDRATION_IDS {
+            return Err(EpistemicOperationError::Invalid(format!(
+                "lineage hydration budget exceeded: {} unique claim ids (cap {MAX_LINEAGE_HYDRATION_IDS})",
+                ids.len()
+            )));
+        }
+        let mut claims = Vec::with_capacity(ids.len());
+        for id in &ids {
+            if let Some(claim) = self
+                .repo
+                .get_claim(id)
+                .await
+                .map_err(map_repository_error)?
+            {
+                claims.push(claim);
+            }
+        }
+        Ok(claims)
     }
 
     pub async fn store_relation(
@@ -1512,6 +1508,285 @@ impl EpistemicService {
     }
 }
 
+/// Pure selection phase of context compilation: candidates in, pack out.
+///
+/// This is the portable seam half of [`EpistemicService::compile_context`]
+/// (LK-HOST-001 v1.1 zero-write read contract). It performs no repository
+/// access, no clock reads and no random ID generation: `pack_id` and
+/// `created_at` are supplied by the caller, and persistence of the pack and
+/// its Trace stays with the native caller.
+struct CompileSelectInput {
+    query: String,
+    intent: Option<String>,
+    actor: Option<String>,
+    scope: lighting_core::Scope,
+    project_hints: Vec<String>,
+    item_budget: usize,
+    token_budget: usize,
+    pack_id: ContextPackId,
+    created_at: chrono::DateTime<Utc>,
+    beliefs: Vec<Belief>,
+    memories: Vec<MemoryItem>,
+    claims: Vec<Claim>,
+}
+
+struct CompileSelectOutput {
+    pack: ContextPack,
+    /// Exact `Trace.details` payload for the native caller to persist.
+    trace_details: BTreeMap<String, String>,
+}
+
+fn compile_select(input: CompileSelectInput) -> CompileSelectOutput {
+    let CompileSelectInput {
+        query,
+        intent,
+        actor,
+        scope,
+        project_hints,
+        item_budget,
+        token_budget,
+        pack_id,
+        created_at,
+        beliefs: all_beliefs,
+        memories: all_memories,
+        claims,
+    } = input;
+    let mut searchable_query = query.clone();
+    for hint in &project_hints {
+        searchable_query.push(' ');
+        searchable_query.push_str(hint);
+    }
+    let query_tokens = context_tokens(&searchable_query);
+    let mut belief_candidates: Vec<(i32, Vec<String>, Belief)> = all_beliefs
+        .into_iter()
+        .map(|belief| {
+            let state_bonus = if belief.state == BeliefState::Active {
+                2
+            } else {
+                0
+            };
+            let (relevance, mut reasons) = belief_relevance_details(&belief, &query_tokens, &scope);
+            if state_bonus > 0 {
+                reasons.push("active-current-projection".to_owned());
+            } else {
+                reasons.push("historical-or-inactive-projection".to_owned());
+            }
+            (relevance + state_bonus, reasons, belief)
+        })
+        .filter(|(score, _, belief)| {
+            belief.stale
+                || (belief.state == BeliefState::Active && *score > 2)
+                || (belief.state != BeliefState::Active && *score > 0)
+        })
+        .collect();
+    belief_candidates.sort_by(|(left_score, _, left), (right_score, _, right)| {
+        right_score
+            .cmp(left_score)
+            .then_with(|| right.updated_at.cmp(&left.updated_at))
+            .then_with(|| left.id.to_string().cmp(&right.id.to_string()))
+    });
+    let mut memory_candidates: Vec<(i32, Vec<String>, MemoryItem)> = all_memories
+        .into_iter()
+        .map(|memory| {
+            let (score, reasons) = memory_relevance_details(&memory, &query_tokens);
+            (score, reasons, memory)
+        })
+        .filter(|(score, _, _)| *score > 0)
+        .collect();
+    memory_candidates.sort_by(|(left_score, _, left), (right_score, _, right)| {
+        right_score
+            .cmp(left_score)
+            .then_with(|| right.created_at.cmp(&left.created_at))
+            .then_with(|| left.id.to_string().cmp(&right.id.to_string()))
+    });
+
+    let candidate_belief_ids = belief_candidates
+        .iter()
+        .map(|(_, _, belief)| belief.id.to_string())
+        .collect::<Vec<_>>();
+    let candidate_memory_ids = memory_candidates
+        .iter()
+        .map(|(_, _, memory)| memory.id.to_string())
+        .collect::<Vec<_>>();
+    let mut candidate_scores = std::collections::BTreeMap::new();
+    let mut candidate_reasons = std::collections::BTreeMap::new();
+    for (score, reasons, belief) in &belief_candidates {
+        candidate_scores.insert(belief.id.to_string(), *score);
+        candidate_reasons.insert(belief.id.to_string(), reasons.clone());
+    }
+    for (score, reasons, memory) in &memory_candidates {
+        candidate_scores.insert(memory.id.to_string(), *score);
+        candidate_reasons.insert(memory.id.to_string(), reasons.clone());
+    }
+    let omitted_stale_ids = belief_candidates
+        .iter()
+        .filter(|(_, _, belief)| belief.stale)
+        .map(|(_, _, belief)| belief.id.to_string())
+        .collect::<Vec<_>>();
+
+    let mut selected_beliefs = Vec::new();
+    let mut selected_memories = Vec::new();
+    let mut estimated_token_usage =
+        estimate_tokens(&format!("# Lantern Context\n\nQuery: {query}\n"));
+    let history_requested = history_requested(&query_tokens);
+    for (_, _, belief) in belief_candidates {
+        if selected_beliefs.len() + selected_memories.len() >= item_budget {
+            break;
+        }
+        let item_tokens = estimate_belief_tokens(&belief);
+        let eligible = belief.state == BeliefState::Active
+            || history_requested
+            || historical_value_requested(&belief, &query_tokens);
+        if eligible
+            && !belief.stale
+            && estimated_token_usage.saturating_add(item_tokens) <= token_budget
+        {
+            selected_beliefs.push(belief);
+            estimated_token_usage = estimated_token_usage.saturating_add(item_tokens);
+        }
+    }
+    for (_, _, memory) in memory_candidates {
+        if selected_beliefs.len() + selected_memories.len() >= item_budget {
+            break;
+        }
+        let item_tokens = estimate_memory_tokens(&memory);
+        if estimated_token_usage.saturating_add(item_tokens) <= token_budget {
+            selected_memories.push(memory);
+            estimated_token_usage = estimated_token_usage.saturating_add(item_tokens);
+        }
+    }
+
+    let selected_ids = selected_beliefs
+        .iter()
+        .map(|belief| belief.id.to_string())
+        .chain(selected_memories.iter().map(|memory| memory.id.to_string()))
+        .collect::<Vec<_>>();
+    let retrieval_trace = ContextTrace {
+        compiler_version: "deterministic-v1".to_owned(),
+        candidate_belief_ids,
+        candidate_memory_ids,
+        selected_ids: selected_ids.clone(),
+        excluded_stale_ids: omitted_stale_ids.clone(),
+        lanes: {
+            let mut lanes = vec!["typed-belief".to_owned(), "lexical-soft-memory".to_owned()];
+            if !project_hints.is_empty() {
+                lanes.push("project-hint".to_owned());
+            }
+            if history_requested {
+                lanes.push("temporal-history".to_owned());
+            }
+            lanes
+        },
+        candidate_scores,
+        candidate_reasons,
+        item_budget,
+        token_budget,
+        estimated_token_usage,
+    };
+    let current_beliefs = selected_beliefs
+        .iter()
+        .filter(|belief| belief.state == BeliefState::Active && belief.holder_key == "matthew")
+        .cloned()
+        .collect::<Vec<_>>();
+    let historical_beliefs = selected_beliefs
+        .iter()
+        .filter(|belief| belief.state != BeliefState::Active)
+        .cloned()
+        .collect::<Vec<_>>();
+    let lucy_beliefs = selected_beliefs
+        .iter()
+        .filter(|belief| belief.state == BeliefState::Active && belief.holder_key == "lucy")
+        .cloned()
+        .collect::<Vec<_>>();
+    let shared_beliefs = selected_beliefs
+        .iter()
+        .filter(|belief| {
+            belief.state == BeliefState::Active && belief.holder_key.starts_with("shared:")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let legacy_beliefs = selected_beliefs
+        .iter()
+        .filter(|belief| {
+            belief.state == BeliefState::Active && belief.holder_key.starts_with("legacy:")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut source_refs = Vec::new();
+    let mut episode_refs = Vec::new();
+    for memory in &selected_memories {
+        if let Some(source_id) = &memory.source_id {
+            push_unique(&mut source_refs, source_id.clone());
+        }
+        if let Some(episode_id) = &memory.episode_id {
+            push_unique(&mut episode_refs, episode_id.clone());
+        }
+    }
+    for belief in &selected_beliefs {
+        for claim_id in belief
+            .lineage
+            .supporting_claim_ids
+            .iter()
+            .chain(belief.lineage.contradictory_claim_ids.iter())
+        {
+            if let Some(claim) = claims.iter().find(|claim| claim.id.as_str() == claim_id) {
+                if let Some(source_id) = &claim.source_id {
+                    push_unique(&mut source_refs, source_id.clone());
+                }
+                if let Some(episode_id) = &claim.episode_id {
+                    push_unique(&mut episode_refs, episode_id.clone());
+                }
+            }
+        }
+    }
+    let mut generated_context = render_context(
+        &query,
+        &current_beliefs,
+        &lucy_beliefs,
+        &shared_beliefs,
+        &legacy_beliefs,
+        &selected_memories,
+        &omitted_stale_ids,
+    );
+    insert_historical_beliefs(&mut generated_context, &historical_beliefs);
+    if let Some(intent) = intent.as_deref().filter(|value| !value.trim().is_empty()) {
+        generated_context.insert_str(0, &format!("Intent: {}\n\n", intent.trim()));
+    }
+    let pack = ContextPack {
+        id: pack_id,
+        query: query.clone(),
+        selected_ids,
+        omitted_stale_ids: omitted_stale_ids.clone(),
+        generated_context,
+        created_at,
+        actor,
+        scope,
+        current_beliefs,
+        historical_beliefs,
+        lucy_beliefs,
+        shared_beliefs,
+        legacy_beliefs,
+        soft_memories: selected_memories,
+        source_refs,
+        episode_refs,
+        retrieval_trace,
+    };
+    let trace_details = BTreeMap::from([
+        ("compiler_version".to_owned(), "deterministic-v1".to_owned()),
+        ("item_budget".to_owned(), item_budget.to_string()),
+        ("token_budget".to_owned(), token_budget.to_string()),
+        (
+            "estimated_token_usage".to_owned(),
+            estimated_token_usage.to_string(),
+        ),
+        ("query".to_owned(), query),
+    ]);
+    CompileSelectOutput {
+        pack,
+        trace_details,
+    }
+}
+
 fn belief_from_claim(
     claim: &Claim,
     now: chrono::DateTime<Utc>,
@@ -1548,6 +1823,30 @@ fn belief_from_claim(
         derived_from_belief_ids: Vec::new(),
     };
     Ok(belief)
+}
+
+/// Canonical payload hash for a keyed correction envelope (delta-2): binds
+/// the request's target selection, text, value, scope, pack and expected
+/// revision so a reused key with a changed envelope conflicts instead of
+/// replaying. `serde_json` object maps are sorted, so the encoding is
+/// deterministic.
+fn correction_payload_hash(request: &CorrectionRequest) -> Result<String, EpistemicOperationError> {
+    let canonical = serde_json::to_vec(&serde_json::json!({
+        "target_belief_id": request.target_belief_id,
+        "target_query": request.target_query,
+        "correction_text": request.correction_text,
+        "replacement_value": request.replacement_value,
+        "scope": request.scope,
+        "context_pack_id": request.context_pack_id,
+        "expected_revision": request.expected_revision,
+    }))
+    .map_err(|error| {
+        EpistemicOperationError::Invalid(format!(
+            "correction payload could not be canonicalised: {error}"
+        ))
+    })?;
+    let digest = Sha256::digest(canonical);
+    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 fn context_tokens(query: &str) -> Vec<String> {

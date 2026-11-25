@@ -4,7 +4,7 @@
 //! so that the unified `lighting` binary can use them directly.  The standalone
 //! `lighting-cli` binary still works via a thin `main.rs` shim.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -118,6 +118,15 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
         CliCommand::BasicMemoryAccounting { path, output, json } => {
             cmd_basic_memory_accounting(&path, &output, json)
         }
+        CliCommand::BasicMemoryReconcile { path, output, json } => {
+            cmd_basic_memory_reconcile(&client, &path, output.as_deref(), json)
+        }
+        CliCommand::HostedSeedSql {
+            export,
+            output,
+            json,
+            strict,
+        } => cmd_hosted_seed_sql(&export, &output, json, strict),
         CliCommand::Predicate { command } => match command {
             PredicateCommand::List { json } => cmd_predicate_list(&client, json),
             PredicateCommand::Get { key, json } => cmd_predicate_get(&client, &key, json),
@@ -334,6 +343,37 @@ pub enum CliCommand {
         /// Also print the report as JSON.
         #[arg(long)]
         json: bool,
+    },
+    /// Reconcile a Basic Memory snapshot against the running service, read-only:
+    /// counts, per-note content and relationship coverage (LK-CUTOVER-001 C3).
+    BasicMemoryReconcile {
+        /// Validated snapshot directory or one notes-*.ndjson shard.
+        path: PathBuf,
+        /// Optional JSON report destination.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Build idempotent hosted D1 seed SQL from a Lantern logical export
+    /// (LK-CUTOVER-001 C3-IMPORT). Work applies the output with
+    /// `wrangler d1 execute ... --file`.
+    HostedSeedSql {
+        /// Lantern logical export directory (manifest.json + *.ndjson).
+        export: PathBuf,
+        /// Seed SQL destination file.
+        #[arg(long)]
+        output: PathBuf,
+        /// Output JSON only.
+        #[arg(long)]
+        json: bool,
+        /// Production path: abort on the first malformed or missing row,
+        /// missing reference, NUL byte or token hazard — before any artifact
+        /// is written. Default (synthetic path) warns and still writes the
+        /// SQL + report for inspection.
+        #[arg(long)]
+        strict: bool,
     },
     /// Inspect the canonical predicate registry and unmapped claim queue.
     Predicate {
@@ -1301,6 +1341,63 @@ struct BasicMemoryAccountingReport {
     items: Vec<BasicMemoryAccountingItem>,
 }
 
+/// Hosted (or native service) state gathered strictly read-only for
+/// reconciliation. Only GET endpoints are used.
+#[derive(Debug, Default)]
+struct HostedReconcileState {
+    /// `source_path` -> details of the note found by its import title.
+    notes: BTreeMap<String, HostedNoteState>,
+    /// hosted `source_id` -> count of Basic Memory-originated claims.
+    claims_by_source: BTreeMap<String, usize>,
+    total_basic_memory_claims: usize,
+    /// Unresolved relations whose origin is the Basic Memory importer.
+    unresolved_basic_memory_relations: usize,
+}
+
+#[derive(Debug)]
+struct HostedNoteState {
+    source_id: String,
+    content: String,
+    #[allow(dead_code)]
+    fingerprint: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ReconcileNoteReport {
+    source_path: String,
+    present: bool,
+    /// `None` when the note is absent from the service.
+    content_match: Option<bool>,
+    expected_claims: usize,
+    hosted_claims: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct BasicMemoryReconcileReport {
+    schema: &'static str,
+    generated_at: String,
+    service_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snapshot_captured_at: Option<String>,
+    notes_expected: usize,
+    notes_present: usize,
+    notes_missing: Vec<String>,
+    notes_content_mismatch: Vec<String>,
+    expected_claims: usize,
+    hosted_claims: usize,
+    claims_delta: i64,
+    expected_relations: usize,
+    hosted_unresolved_relations: usize,
+    relations_delta: i64,
+    per_note: Vec<ReconcileNoteReport>,
+    /// Service state that has no read-only enumeration path over REST.
+    /// Never silently treated as reconciled.
+    not_enumerable_over_rest: Vec<String>,
+    verdict: String,
+}
+
 fn load_basic_memory_snapshot(path: &Path) -> anyhow::Result<Vec<BasicMemorySnapshotRecord>> {
     let files = if path.is_file() {
         vec![path.to_path_buf()]
@@ -1740,6 +1837,1094 @@ fn cmd_basic_memory_accounting(path: &Path, output: &Path, json: bool) -> anyhow
                 .unwrap_or(report.accounted_relations),
         );
         println!("Report: {}", output.display());
+    }
+    Ok(())
+}
+
+/// Gathers the hosted side of a reconciliation with GET requests only.
+/// Notes are located by the exact title the importer creates
+/// (`basic-memory/<source_path>`, kind `markdown`) and verified by exact
+/// content bytes. A missing note (404 or no current revision) is recorded as
+/// absent rather than treated as an error.
+fn fetch_hosted_reconcile_state(
+    client: &HttpClient,
+    records: &[BasicMemorySnapshotRecord],
+) -> anyhow::Result<HostedReconcileState> {
+    let mut state = HostedReconcileState::default();
+    for record in records {
+        let title = format!("basic-memory/{}", record.source_path);
+        let url = format!(
+            "/api/v1/sources/history?kind=markdown&title={}",
+            urlencoding::encode(&title)
+        );
+        let response = client.get(&url).map_err(|error| {
+            anyhow::Error::msg(error).context("is Lighting running? Try: lighting serve")
+        })?;
+        let body = match HttpClient::handle_response(response) {
+            Ok(body) => body,
+            Err(CliError::Api { status: 404, .. }) => continue,
+            Err(error) => return Err(anyhow::Error::msg(error)),
+        };
+        let history: SourceHistoryResponse = serde_json::from_value(body)
+            .map_err(|error| anyhow::Error::msg(format!("unexpected history response: {error}")))?;
+        let Some(current) = history.revisions.iter().find(|revision| revision.current) else {
+            continue;
+        };
+        let response = client
+            .get(&format!("/api/v1/sources/{}", current.source_id))
+            .map_err(|error| {
+                anyhow::Error::msg(error).context("is Lighting running? Try: lighting serve")
+            })?;
+        let body = match HttpClient::handle_response(response) {
+            Ok(body) => body,
+            Err(CliError::Api { status: 404, .. }) => continue,
+            Err(error) => return Err(anyhow::Error::msg(error)),
+        };
+        let source: SourceResponse = serde_json::from_value(body)
+            .map_err(|error| anyhow::Error::msg(format!("unexpected source response: {error}")))?;
+        state.notes.insert(
+            record.source_path.clone(),
+            HostedNoteState {
+                source_id: source.source_id,
+                content: source.content,
+                fingerprint: source.fingerprint,
+            },
+        );
+    }
+
+    let response = client
+        .get("/api/v1/claims?unmapped=false")
+        .map_err(|error| {
+            anyhow::Error::msg(error).context("is Lighting running? Try: lighting serve")
+        })?;
+    let claims_body = HttpClient::handle_response(response)?;
+    for claim in claims_body
+        .get("claims")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if claim.get("extractor").and_then(serde_json::Value::as_str) == Some("basic-memory-import")
+        {
+            state.total_basic_memory_claims += 1;
+            if let Some(source_id) = claim.get("source_id").and_then(serde_json::Value::as_str) {
+                *state
+                    .claims_by_source
+                    .entry(source_id.to_owned())
+                    .or_default() += 1;
+            }
+        }
+    }
+
+    let response = client.get("/api/v1/relations").map_err(|error| {
+        anyhow::Error::msg(error).context("is Lighting running? Try: lighting serve")
+    })?;
+    let relations_body = HttpClient::handle_response(response)?;
+    for relation in relations_body
+        .get("relations")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if relation.get("origin").and_then(serde_json::Value::as_str) == Some("basic-memory-cloud")
+        {
+            state.unresolved_basic_memory_relations += 1;
+        }
+    }
+    Ok(state)
+}
+
+/// Pure comparison of the snapshot side against the fetched hosted state.
+/// Any missing note, content mismatch or count delta fails the verdict;
+/// state with no REST enumeration path is listed explicitly and never
+/// counted as reconciled.
+fn build_basic_memory_reconcile(
+    records: &[BasicMemorySnapshotRecord],
+    accounting: &BasicMemoryAccountingReport,
+    hosted: &HostedReconcileState,
+    service_url: &str,
+    snapshot_captured_at: Option<String>,
+    generated_at: String,
+) -> BasicMemoryReconcileReport {
+    let mut expected_claims_by_source: BTreeMap<String, usize> = BTreeMap::new();
+    let mut expected_claims = 0usize;
+    let mut expected_relations = 0usize;
+    for item in &accounting.items {
+        match item.item_type.as_str() {
+            "observation" if item.outcome == "claim" => {
+                expected_claims += 1;
+                *expected_claims_by_source
+                    .entry(item.source_path.clone())
+                    .or_default() += 1;
+            }
+            "relation" => expected_relations += 1,
+            _ => {}
+        }
+    }
+
+    let mut per_note = Vec::new();
+    let mut notes_missing = Vec::new();
+    let mut notes_content_mismatch = Vec::new();
+    let mut notes_present = 0usize;
+    let mut hosted_claims = 0usize;
+    for record in records {
+        let expected_claims = expected_claims_by_source
+            .get(&record.source_path)
+            .copied()
+            .unwrap_or(0);
+        match hosted.notes.get(&record.source_path) {
+            None => {
+                notes_missing.push(record.source_path.clone());
+                per_note.push(ReconcileNoteReport {
+                    source_path: record.source_path.clone(),
+                    present: false,
+                    content_match: None,
+                    expected_claims,
+                    hosted_claims: 0,
+                    source_id: None,
+                });
+            }
+            Some(note) => {
+                notes_present += 1;
+                let content_match = note.content == record.raw_markdown;
+                if !content_match {
+                    notes_content_mismatch.push(record.source_path.clone());
+                }
+                let claims_for_note = hosted
+                    .claims_by_source
+                    .get(&note.source_id)
+                    .copied()
+                    .unwrap_or(0);
+                hosted_claims += claims_for_note;
+                per_note.push(ReconcileNoteReport {
+                    source_path: record.source_path.clone(),
+                    present: true,
+                    content_match: Some(content_match),
+                    expected_claims,
+                    hosted_claims: claims_for_note,
+                    source_id: Some(note.source_id.clone()),
+                });
+            }
+        }
+    }
+
+    let claims_delta = hosted_claims as i64 - expected_claims as i64;
+    let relations_delta =
+        hosted.unresolved_basic_memory_relations as i64 - expected_relations as i64;
+    let verdict = if notes_missing.is_empty()
+        && notes_content_mismatch.is_empty()
+        && claims_delta == 0
+        && relations_delta == 0
+    {
+        "pass"
+    } else {
+        "fail"
+    };
+
+    BasicMemoryReconcileReport {
+        schema: "basic-memory-reconcile-v1",
+        generated_at,
+        service_url: service_url.to_owned(),
+        snapshot_captured_at,
+        notes_expected: records.len(),
+        notes_present,
+        notes_missing,
+        notes_content_mismatch,
+        expected_claims,
+        hosted_claims,
+        claims_delta,
+        expected_relations,
+        hosted_unresolved_relations: hosted.unresolved_basic_memory_relations,
+        relations_delta,
+        per_note,
+        not_enumerable_over_rest: vec![
+            "soft_memory_items (POST search cannot enumerate; no GET list endpoint)".to_owned(),
+            "ledger_events (ingest-only route; no GET list endpoint)".to_owned(),
+            "resolved_relations (GET /api/v1/relations returns unresolved only)".to_owned(),
+            "episodes (point GET by id only)".to_owned(),
+        ],
+        verdict: verdict.to_owned(),
+    }
+}
+
+fn cmd_basic_memory_reconcile(
+    client: &HttpClient,
+    path: &Path,
+    output: Option<&Path>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let records = load_basic_memory_snapshot(path)?;
+    let manifest =
+        load_basic_memory_snapshot_manifest(path).unwrap_or(BasicMemorySnapshotManifest {
+            captured_at: None,
+            note_count: None,
+            observation_count: None,
+            relation_count: None,
+            export_sha256: None,
+        });
+    let accounting = build_basic_memory_accounting(&records, &manifest);
+    let hosted = fetch_hosted_reconcile_state(client, &records)?;
+    let report = build_basic_memory_reconcile(
+        &records,
+        &accounting,
+        &hosted,
+        &client.base_url,
+        manifest.captured_at,
+        chrono::Utc::now().to_rfc3339(),
+    );
+
+    if let Some(output) = output {
+        let encoded = serde_json::to_vec_pretty(&report)?;
+        if let Some(parent) = output
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create reconcile report directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+        fs::write(output, encoded)
+            .with_context(|| format!("failed to write reconcile report {}", output.display()))?;
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "Basic Memory reconcile (read-only): {}/{} notes present, claims {}/{} (delta {}), relations {}/{} (delta {}), verdict={}",
+            report.notes_present,
+            report.notes_expected,
+            report.hosted_claims,
+            report.expected_claims,
+            report.claims_delta,
+            report.hosted_unresolved_relations,
+            report.expected_relations,
+            report.relations_delta,
+            report.verdict
+        );
+        if !report.notes_missing.is_empty() {
+            println!("Missing notes: {}", report.notes_missing.join(", "));
+        }
+        if !report.notes_content_mismatch.is_empty() {
+            println!(
+                "Content mismatches: {}",
+                report.notes_content_mismatch.join(", ")
+            );
+        }
+        println!(
+            "Not enumerable over REST (not counted as reconciled): {}",
+            report.not_enumerable_over_rest.join("; ")
+        );
+        if let Some(output) = output {
+            println!("Report: {}", output.display());
+        }
+    }
+
+    if report.verdict != "pass" {
+        bail!(
+            "reconciliation verdict=fail (missing={}, content_mismatch={}, claims_delta={}, relations_delta={})",
+            report.notes_missing.len(),
+            report.notes_content_mismatch.len(),
+            report.claims_delta,
+            report.relations_delta
+        );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Hosted seed SQL builder (LK-CUTOVER-001 C3-IMPORT)
+//
+// Maps a Lantern logical export (manifest.json + *.ndjson) to idempotent
+// INSERT statements for the hosted D1 schema. Narrow on purpose: only the
+// tables the hosted memory surface reads (source, episode, epistemic_claim,
+// belief) are mapped; every other export table is counted as `skipped`, never
+// silently dropped, and a record among the mapped tables that cannot be
+// mapped is reported as a warning AND fails the command after the artifacts
+// are written (no unexplained loss).
+//
+// Native `belief_revision` rows are deliberately skipped: their shape is not
+// the hosted `(belief_id, from_updated_at)` token contract, and the hosted
+// correction batch inserts its own CAS guard row before it advances the
+// projection. A bare seeded belief therefore accepts the first correction
+// with NO genesis row (proven by lighting-store-d1 `tests/atomic_semantics.rs`);
+// a colliding genesis row would block that first correction.
+// ---------------------------------------------------------------------------
+
+const HOSTED_SEED_SQL_VERSION: &str = "hosted-seed-sql-v1";
+
+/// What the builder wrote, skipped and could not map.
+#[derive(Debug, Serialize)]
+pub struct HostedSeedSqlReport {
+    pub schema: &'static str,
+    pub export_dir: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest_record_count: Option<usize>,
+    pub emitted: BTreeMap<String, usize>,
+    pub skipped: BTreeMap<String, usize>,
+    pub warnings: Vec<String>,
+    pub sql_statements: usize,
+}
+
+/// Normalise an RFC3339 UTC timestamp to the hosted canonical form
+/// (`YYYY-MM-DDTHH:MM:SS.fffffffffZ`, exactly 30 chars) — the hosted schema
+/// orders keyset reads by string comparison, so mixed precision silently
+/// breaks chronological order. Returns `None` when the input cannot be
+/// normalised honestly (non-`Z` offsets, malformed heads).
+pub fn canonical_hosted_timestamp(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    let without_zone = trimmed.strip_suffix('Z')?;
+    let (head, fraction) = match without_zone.split_once('.') {
+        Some((head, fraction)) => (head, fraction),
+        None => (without_zone, ""),
+    };
+    if head.len() != 19 {
+        return None;
+    }
+    let mut fraction = fraction.to_owned();
+    fraction.truncate(9);
+    while fraction.len() < 9 {
+        fraction.push('0');
+    }
+    Some(format!("{head}.{fraction}Z"))
+}
+
+fn sql_text(value: &str) -> String {
+    format!("'{}'", value.replace('\u{0}', "").replace('\'', "''"))
+}
+
+fn sql_opt(value: Option<&str>) -> String {
+    match value {
+        Some(value) => sql_text(value),
+        None => "NULL".to_owned(),
+    }
+}
+
+/// Normalises record identifiers from either side: SurrealDB 3.3 serialises
+/// exported record keys backtick-quoted (`table:`key``), while native payload
+/// ids are plain — strip the table prefix AND any surrounding backticks.
+fn strip_table_prefix<'a>(id: &'a str, table: &str) -> &'a str {
+    let stripped = id.strip_prefix(&format!("{table}:")).unwrap_or(id);
+    stripped.trim_matches('`')
+}
+
+fn payload_map(
+    record: &serde_json::Map<String, serde_json::Value>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let text = record.get("payload")?.as_str()?;
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    value.as_object().cloned()
+}
+
+fn payload_scope(
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> Option<BTreeMap<String, String>> {
+    serde_json::from_value(payload.get("scope")?.clone()).ok()
+}
+
+fn record_text<'a>(
+    record: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<&'a str> {
+    record.get(key).and_then(serde_json::Value::as_str)
+}
+
+fn payload_text<'a>(
+    payload: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<&'a str> {
+    payload.get(key).and_then(serde_json::Value::as_str)
+}
+
+fn canonical_record_or_payload_timestamp(
+    record: &serde_json::Map<String, serde_json::Value>,
+    payload: &serde_json::Map<String, serde_json::Value>,
+    record_key: &str,
+    payload_key: &str,
+) -> Option<String> {
+    record_text(record, record_key)
+        .and_then(canonical_hosted_timestamp)
+        .or_else(|| payload_text(payload, payload_key).and_then(canonical_hosted_timestamp))
+}
+
+fn seed_source_statement(record: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    let id = strip_table_prefix(record_text(record, "id")?, "source");
+    let kind = record_text(record, "kind")?;
+    let title = record_text(record, "title")?;
+    let content = record_text(record, "content")?;
+    let fingerprint = record_text(record, "fingerprint")?;
+    let created_at = canonical_hosted_timestamp(record_text(record, "created_at")?)?;
+    Some(format!(
+        "INSERT INTO source (id, kind, title, content, fingerprint, created_at) VALUES ({}, {}, {}, {}, {}, {}) ON CONFLICT(id) DO NOTHING;",
+        sql_text(id),
+        sql_text(kind),
+        sql_text(title),
+        sql_text(content),
+        sql_text(fingerprint),
+        sql_text(&created_at),
+    ))
+}
+
+fn seed_episode_statement(record: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    let id = strip_table_prefix(record_text(record, "id")?, "episode");
+    let title = record_text(record, "title")?;
+    let source_id = strip_table_prefix(record_text(record, "source_id")?, "source");
+    let start_byte = record
+        .get("start_byte")
+        .and_then(|value| value.as_u64().or_else(|| value.as_i64().map(|v| v as u64)))?;
+    let end_byte = record
+        .get("end_byte")
+        .and_then(|value| value.as_u64().or_else(|| value.as_i64().map(|v| v as u64)))?;
+    let created_at = canonical_hosted_timestamp(record_text(record, "created_at")?)?;
+    let project_id = record_text(record, "project_id")
+        .map(|value| strip_table_prefix(value, "project").to_owned());
+    Some(format!(
+        "INSERT INTO episode (id, project_id, title, source_id, start_byte, end_byte, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}) ON CONFLICT(id) DO NOTHING;",
+        sql_text(id),
+        sql_opt(project_id.as_deref()),
+        sql_text(title),
+        sql_text(source_id),
+        start_byte,
+        end_byte,
+        sql_text(&created_at),
+    ))
+}
+
+fn seed_claim_statement(
+    record: &serde_json::Map<String, serde_json::Value>,
+    warnings: &mut Vec<String>,
+) -> Option<String> {
+    let payload = payload_map(record)?;
+    let id = payload_text(&payload, "id")
+        .map(str::to_owned)
+        .or_else(|| {
+            record_text(record, "id")
+                .map(|raw| strip_table_prefix(raw, "epistemic_claim").to_owned())
+        })?;
+    let scope: BTreeMap<String, String> = match payload_scope(&payload) {
+        Some(scope) => scope,
+        None => {
+            warnings.push(format!("claim {id}: payload has no usable scope; skipped"));
+            return None;
+        }
+    };
+    let scope_hash = lighting_core::scope_hash(&scope);
+    let subject_key = payload_text(&payload, "subject_key")?;
+    let predicate_status = payload_text(&payload, "predicate_status")?;
+    let value = payload_text(&payload, "value")?;
+    let speaker = payload_text(&payload, "speaker_actor_id")?;
+    let dedupe_key = record_text(record, "dedupe_key")?;
+    let known_at = canonical_hosted_timestamp(payload_text(&payload, "known_at")?)?;
+    let created_at = canonical_hosted_timestamp(record_text(record, "created_at")?)?;
+    let polarity = match payload.get("polarity") {
+        Some(serde_json::Value::Bool(value)) => i64::from(*value),
+        Some(serde_json::Value::Number(number)) => number.as_i64()?,
+        None => {
+            warnings.push(format!("claim {id}: payload has no polarity; skipped"));
+            return None;
+        }
+        Some(other) => {
+            warnings.push(format!(
+                "claim {id}: payload polarity is not boolean ({other}); skipped"
+            ));
+            return None;
+        }
+    };
+    let episode_id = payload_text(&payload, "episode_id")
+        .map(|raw| strip_table_prefix(raw, "episode").to_owned());
+    let source_id =
+        payload_text(&payload, "source_id").map(|raw| strip_table_prefix(raw, "source").to_owned());
+    Some(format!(
+        "INSERT INTO epistemic_claim (id, scope_hash, subject_key, predicate_key, predicate_candidate, predicate_status, value, polarity, speaker_actor_id, holder_actor_id, dedupe_key, episode_id, source_id, payload, known_at, created_at) VALUES ({id}, {scope_hash}, {subject_key}, {predicate_key}, {candidate}, {status}, {value}, {polarity}, {speaker}, {holder}, {dedupe}, {episode}, {source}, {payload}, {known_at}, {created_at}) ON CONFLICT(id) DO NOTHING;",
+        id = sql_text(&id),
+        scope_hash = sql_text(&scope_hash),
+        subject_key = sql_text(subject_key),
+        predicate_key = sql_opt(payload_text(&payload, "predicate_key")),
+        candidate = sql_opt(payload_text(&payload, "predicate_candidate")),
+        status = sql_text(predicate_status),
+        value = sql_text(value),
+        polarity = polarity,
+        speaker = sql_text(speaker),
+        holder = sql_opt(payload_text(&payload, "holder_actor_id")),
+        dedupe = sql_text(dedupe_key),
+        episode = sql_opt(episode_id.as_deref()),
+        source = sql_opt(source_id.as_deref()),
+        payload = sql_text(record_text(record, "payload")?),
+        known_at = sql_text(&known_at),
+        created_at = sql_text(&created_at),
+    ))
+}
+
+fn seed_belief_statement(
+    record: &serde_json::Map<String, serde_json::Value>,
+    warnings: &mut Vec<String>,
+) -> Option<String> {
+    let payload = payload_map(record)?;
+    let id = payload_text(&payload, "id")
+        .map(str::to_owned)
+        .or_else(|| {
+            record_text(record, "id").map(|raw| strip_table_prefix(raw, "belief").to_owned())
+        })?;
+    let scope = match payload_scope(&payload) {
+        Some(scope) => scope,
+        None => {
+            warnings.push(format!("belief {id}: payload has no usable scope; skipped"));
+            return None;
+        }
+    };
+    let scope_hash = payload_text(&payload, "scope_hash")
+        .map(str::to_owned)
+        .unwrap_or_else(|| lighting_core::scope_hash(&scope));
+    let scope_column = serde_json::to_string(&scope).ok()?;
+    let holder = payload_text(&payload, "holder_key")?;
+    let subject = payload_text(&payload, "subject_key")?;
+    let predicate = payload_text(&payload, "predicate_key")?;
+    let current_value = payload_text(&payload, "current_value")?;
+    let state = record_text(record, "state")
+        .map(str::to_owned)
+        .or_else(|| payload_text(&payload, "state").map(|value| value.to_ascii_lowercase()))?;
+    let stale = record
+        .get("stale")
+        .and_then(serde_json::Value::as_bool)
+        .or_else(|| payload.get("stale").and_then(serde_json::Value::as_bool))
+        .unwrap_or(false);
+    let dependency_generation = payload
+        .get("dependency_generation")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0) as i64;
+    let updated_at =
+        match canonical_record_or_payload_timestamp(record, &payload, "updated_at", "updated_at") {
+            Some(value) => value,
+            None => {
+                warnings.push(format!(
+                    "belief {id}: no usable updated_at timestamp; skipped"
+                ));
+                return None;
+            }
+        };
+    Some(format!(
+        "INSERT INTO belief (id, scope_hash, scope, holder_key, subject_key, predicate_key, current_value, state, stale, stale_since, stale_reason, dependency_generation, updated_at, payload) VALUES ({id}, {scope_hash}, {scope}, {holder}, {subject}, {predicate}, {value}, {state}, {stale}, {stale_since}, {stale_reason}, {generation}, {updated_at}, {payload}) ON CONFLICT(id) DO NOTHING;",
+        id = sql_text(&id),
+        scope_hash = sql_text(&scope_hash),
+        scope = sql_text(&scope_column),
+        holder = sql_text(holder),
+        subject = sql_text(subject),
+        predicate = sql_text(predicate),
+        value = sql_text(current_value),
+        state = sql_text(&state),
+        stale = i64::from(stale),
+        stale_since = sql_opt(payload_text(&payload, "stale_since")),
+        stale_reason = sql_opt(payload_text(&payload, "stale_reason")),
+        generation = dependency_generation,
+        updated_at = sql_text(&updated_at),
+        payload = sql_text(record_text(record, "payload")?),
+    ))
+}
+
+/// Read every `*.ndjson` in an export directory and emit hosted seed SQL.
+/// A pending `belief_revision` row: (file, line, record, canonical
+/// `created_at`), queued during the scan and resolved after it.
+type PendingRevisionRow = (
+    String,
+    usize,
+    serde_json::Map<String, serde_json::Value>,
+    String,
+);
+
+/// Zero token (C3-RELATIONS): a belief's creation transition consumed no
+/// prior hosted token, so its first revision records this sentinel.
+/// Canonical (30 chars) and never equal to a real `updated_at`, so it can
+/// never collide with the first post-seed correction's CAS insert.
+const ZERO_TOKEN: &str = "0001-01-01T00:00:00.000000000Z";
+
+/// A warning that aborts the build under `--strict` (production path)
+/// before any artifact is written, and is collected otherwise (synthetic
+/// path: SQL + report still written for inspection).
+fn record_warning(warnings: &mut Vec<String>, strict: bool, message: String) -> anyhow::Result<()> {
+    if strict {
+        bail!("strict seed build aborted: {message}");
+    }
+    warnings.push(message);
+    Ok(())
+}
+
+/// Belief chain anchors needed to derive revision `from_updated_at` tokens.
+struct BeliefAnchors {
+    created: Option<String>,
+    updated: Option<String>,
+}
+
+/// The belief id the seed row will use: payload id first (mirrors
+/// `seed_belief_statement`), then the normalised record id.
+fn belief_seed_id(record: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    if let Some(payload) = payload_map(record)
+        && let Some(id) = payload_text(&payload, "id")
+    {
+        return Some(id.to_owned());
+    }
+    record_text(record, "id").map(|raw| strip_table_prefix(raw, "belief").to_owned())
+}
+
+/// `memory_relation` → `epistemic_claim`: a Basic Memory relation is a
+/// subject/predicate/value triple (see `docs/c3-relations-mapping.md` for
+/// every fixed mapping choice). Returns `None` when the record cannot be
+/// mapped honestly; the caller records the warning.
+fn seed_relation_statement(
+    record: &serde_json::Map<String, serde_json::Value>,
+    warnings: &mut Vec<String>,
+) -> Option<String> {
+    let id = strip_table_prefix(record_text(record, "id")?, "memory_relation");
+    let dedupe = record_text(record, "dedupe_key")?;
+    let in_id = record_text(record, "in_id")?;
+    let out_id = record_text(record, "out_id")?;
+    // Native persists `origin` inside the relation payload, not as a record
+    // column; the synthetic fixture carries it at record level.
+    let origin = if let Some(origin) = record_text(record, "origin") {
+        origin.to_owned()
+    } else {
+        let payload = payload_map(record);
+        match payload
+            .as_ref()
+            .and_then(|payload| payload_text(payload, "origin"))
+        {
+            Some(origin) => origin.to_owned(),
+            None => {
+                warnings.push(format!(
+                    "relation {id}: no origin on record or payload; skipped"
+                ));
+                return None;
+            }
+        }
+    };
+    let created_at = canonical_hosted_timestamp(record_text(record, "created_at")?)?;
+    let predicate = dedupe.split('|').next().unwrap_or("").trim();
+    if predicate.is_empty() {
+        warnings.push(format!(
+            "relation {id}: dedupe_key carries no relation type; skipped"
+        ));
+        return None;
+    }
+    let episode_endpoint = [in_id, out_id]
+        .iter()
+        .find(|endpoint| endpoint.starts_with("episode:"))
+        .map(|endpoint| strip_table_prefix(endpoint, "episode").to_owned());
+    // Native persists the relation's own payload string; copy it byte-exact
+    // like claim and belief payloads (docs/c3-relations-mapping.md).
+    let payload = record_text(record, "payload")?;
+    let scope_hash = lighting_core::scope_hash(&BTreeMap::new());
+    Some(format!(
+        "INSERT INTO epistemic_claim (id, scope_hash, subject_key, predicate_key, predicate_candidate, predicate_status, value, polarity, speaker_actor_id, holder_actor_id, dedupe_key, episode_id, source_id, payload, known_at, created_at) VALUES ({id}, {scope_hash}, {subject}, {predicate}, NULL, 'resolved', {value}, 1, {speaker}, NULL, {dedupe_key}, {episode}, NULL, {payload}, {known_at}, {created_at}) ON CONFLICT(id) DO NOTHING;",
+        id = sql_text(id),
+        scope_hash = sql_text(&scope_hash),
+        subject = sql_text(in_id),
+        predicate = sql_text(predicate),
+        value = sql_text(out_id),
+        speaker = sql_text(&origin),
+        dedupe_key = sql_text(&format!("relation|{dedupe}")),
+        episode = sql_opt(episode_endpoint.as_deref()),
+        payload = sql_text(payload),
+        known_at = sql_text(&created_at),
+        created_at = sql_text(&created_at),
+    ))
+}
+
+/// `belief_revision` → `belief_revision` with the derived CAS token
+/// (`from_updated_at`); `payload` is the native payload string, byte-exact.
+fn seed_revision_statement(
+    id: &str,
+    belief_id: &str,
+    from_updated_at: &str,
+    payload: &str,
+    created_at: &str,
+) -> String {
+    format!(
+        "INSERT INTO belief_revision (id, belief_id, from_updated_at, payload, created_at) VALUES ({}, {}, {}, {}, {}) ON CONFLICT(id) DO NOTHING;",
+        sql_text(id),
+        sql_text(belief_id),
+        sql_text(from_updated_at),
+        sql_text(payload),
+        sql_text(created_at),
+    )
+}
+
+pub fn build_hosted_seed_sql(
+    export_dir: &Path,
+    strict: bool,
+) -> anyhow::Result<(String, HostedSeedSqlReport)> {
+    let manifest_text = fs::read_to_string(export_dir.join("manifest.json")).ok();
+    let manifest_record_count = manifest_text
+        .as_deref()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+        .and_then(|manifest| {
+            manifest
+                .get("record_count")
+                .and_then(serde_json::Value::as_u64)
+        })
+        .map(|count| count as usize);
+
+    let mut ndjson_files: Vec<PathBuf> = fs::read_dir(export_dir)
+        .with_context(|| format!("failed to list export directory {}", export_dir.display()))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("ndjson"))
+        .collect();
+    ndjson_files.sort();
+    if ndjson_files.is_empty() {
+        bail!(
+            "export directory {} contains no *.ndjson files",
+            export_dir.display()
+        );
+    }
+
+    // Emission order follows the evidence chain (source -> episode -> claim
+    // -> belief -> belief_revision) regardless of file order: the hosted
+    // executor enforces the declared foreign keys, so claims must never
+    // precede their sources and revisions never precede their beliefs.
+    let mut by_table: Vec<Vec<String>> =
+        vec![Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    let mut emitted: BTreeMap<String, usize> = BTreeMap::new();
+    let mut skipped: BTreeMap<String, usize> = BTreeMap::new();
+    let mut warnings: Vec<String> = Vec::new();
+    // C3-RELATIONS: belief chain anchors captured during the scan, and
+    // pending belief_revision rows resolved after it (chain derivation needs
+    // every belief's anchors first, so file order never matters).
+    let mut belief_tokens: BTreeMap<String, BeliefAnchors> = BTreeMap::new();
+    let mut pending_revisions: Vec<(String, usize, serde_json::Map<String, serde_json::Value>)> =
+        Vec::new();
+
+    for file in &ndjson_files {
+        let text = fs::read_to_string(file)
+            .with_context(|| format!("failed to read export shard {}", file.display()))?;
+        for (index, line) in text.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let parsed: serde_json::Value = match serde_json::from_str(line) {
+                Ok(value) => value,
+                Err(error) => {
+                    record_warning(
+                        &mut warnings,
+                        strict,
+                        format!(
+                            "{} line {}: not valid JSON ({error}); skipped",
+                            file.display(),
+                            index + 1
+                        ),
+                    )?;
+                    continue;
+                }
+            };
+            let Some(table) = parsed.get("table").and_then(serde_json::Value::as_str) else {
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!(
+                        "{} line {}: missing table field; skipped",
+                        file.display(),
+                        index + 1
+                    ),
+                )?;
+                continue;
+            };
+            let Some(record) = parsed.get("record").and_then(serde_json::Value::as_object) else {
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!(
+                        "{} line {}: missing record object; skipped",
+                        file.display(),
+                        index + 1
+                    ),
+                )?;
+                continue;
+            };
+            // Bytes (C3-RELATIONS): NUL cannot survive SQL TEXT; never strip
+            // it silently.
+            if table == "source"
+                && record
+                    .get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|content| content.contains('\u{0}'))
+            {
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!(
+                        "{} line {}: source content contains a NUL byte, which the seed SQL cannot preserve; skipped",
+                        file.display(),
+                        index + 1
+                    ),
+                )?;
+                continue;
+            }
+            if table == "belief_revision" {
+                pending_revisions.push((file.display().to_string(), index + 1, record.clone()));
+                continue;
+            }
+            let bucket = match table {
+                "source" => 0,
+                "episode" => 1,
+                "epistemic_claim" | "memory_relation" => 2,
+                "belief" => 3,
+                other => {
+                    *skipped.entry(other.to_owned()).or_default() += 1;
+                    continue;
+                }
+            };
+            if table == "belief"
+                && let (Some(id), Some(payload)) = (belief_seed_id(record), payload_map(record))
+            {
+                let created =
+                    payload_text(&payload, "created_at").and_then(canonical_hosted_timestamp);
+                let updated = canonical_record_or_payload_timestamp(
+                    record,
+                    &payload,
+                    "updated_at",
+                    "updated_at",
+                );
+                belief_tokens.insert(id, BeliefAnchors { created, updated });
+            }
+            let statement = match table {
+                "source" => seed_source_statement(record),
+                "episode" => seed_episode_statement(record),
+                "epistemic_claim" => seed_claim_statement(record, &mut warnings),
+                "memory_relation" => seed_relation_statement(record, &mut warnings),
+                _ => seed_belief_statement(record, &mut warnings),
+            };
+            match statement {
+                Some(statement) => {
+                    by_table[bucket].push(statement);
+                    *emitted.entry(table.to_owned()).or_default() += 1;
+                }
+                None => {
+                    record_warning(
+                        &mut warnings,
+                        strict,
+                        format!(
+                            "{} line {}: {table} record could not be mapped honestly; skipped",
+                            file.display(),
+                            index + 1
+                        ),
+                    )?;
+                }
+            }
+        }
+    }
+
+    // C3-RELATIONS: resolve belief_revision rows into hosted CAS history
+    // after the scan (docs/c3-relations-mapping.md). Chain rule: from[0] is
+    // the zero token for the belief's own creation, otherwise the belief's
+    // initial token; from[k] = revision[k-1].created_at. Any derived token
+    // equal to the belief's current updated_at would block the first
+    // post-seed correction and is refused here.
+    let mut revisions_by_belief: BTreeMap<String, Vec<PendingRevisionRow>> = BTreeMap::new();
+    for (file, line, record) in pending_revisions {
+        let Some(belief_ref) = record_text(&record, "belief_id") else {
+            record_warning(
+                &mut warnings,
+                strict,
+                format!("{file} line {line}: belief_revision record has no belief_id; skipped"),
+            )?;
+            continue;
+        };
+        let belief_id = strip_table_prefix(belief_ref, "belief").to_owned();
+        let Some(created_at) =
+            record_text(&record, "created_at").and_then(canonical_hosted_timestamp)
+        else {
+            record_warning(
+                &mut warnings,
+                strict,
+                format!(
+                    "{file} line {line}: belief_revision record has no usable created_at; skipped"
+                ),
+            )?;
+            continue;
+        };
+        revisions_by_belief
+            .entry(belief_id)
+            .or_default()
+            .push((file, line, record, created_at));
+    }
+    let mut seen_tokens: BTreeSet<(String, String)> = BTreeSet::new();
+    for (belief_id, mut rows) in revisions_by_belief {
+        // Canonical created_at strings sort chronologically (fixed width).
+        rows.sort_by(|left, right| {
+            let left_id = record_text(&left.2, "id").unwrap_or_default();
+            let right_id = record_text(&right.2, "id").unwrap_or_default();
+            left.3.cmp(&right.3).then_with(|| left_id.cmp(right_id))
+        });
+        let anchors = belief_tokens.get(&belief_id);
+        let mut previous_created: Option<String> = None;
+        for (file, line, record, created_at) in rows {
+            let Some(id) = record_text(&record, "id")
+                .map(|raw| strip_table_prefix(raw, "belief_revision").to_owned())
+            else {
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!("{file} line {line}: belief_revision record has no id; skipped"),
+                )?;
+                continue;
+            };
+            let Some(payload) = record_text(&record, "payload") else {
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!("{file} line {line}: belief_revision {id} has no payload; skipped"),
+                )?;
+                continue;
+            };
+            let from = match &previous_created {
+                Some(previous) => previous.clone(),
+                None => match anchors.and_then(|anchors| anchors.created.as_ref()) {
+                    Some(belief_created) if *belief_created == created_at => ZERO_TOKEN.to_owned(),
+                    Some(belief_created) => belief_created.clone(),
+                    None => {
+                        record_warning(
+                            &mut warnings,
+                            strict,
+                            format!(
+                                "{file} line {line}: belief {belief_id} has no usable created_at; using the zero token for its creation transition"
+                            ),
+                        )?;
+                        ZERO_TOKEN.to_owned()
+                    }
+                },
+            };
+            // The chain advances even when a row is omitted below, so later
+            // revisions keep deriving from the native timeline.
+            previous_created = Some(created_at.clone());
+            if anchors.is_none() {
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!(
+                        "{file} line {line}: belief_revision {id} references belief {belief_id}, which is absent from the export; the apply will abort on the foreign key"
+                    ),
+                )?;
+            }
+            if anchors.and_then(|anchors| anchors.updated.as_ref()) == Some(&from) {
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!(
+                        "{file} line {line}: belief_revision {id} derives from_updated_at {from}, which equals the belief's current updated_at and would block the first post-seed correction; row omitted"
+                    ),
+                )?;
+                continue;
+            }
+            if !seen_tokens.insert((belief_id.clone(), from.clone())) {
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!(
+                        "{file} line {line}: duplicate belief_revision token ({belief_id}, {from}); row omitted"
+                    ),
+                )?;
+                continue;
+            }
+            by_table[4].push(seed_revision_statement(
+                &id,
+                &belief_id,
+                &from,
+                payload,
+                &created_at,
+            ));
+            *emitted.entry("belief_revision".to_owned()).or_default() += 1;
+        }
+    }
+    let statements: Vec<String> = by_table.into_iter().flatten().collect();
+
+    let mut header = format!(
+        "-- {HOSTED_SEED_SQL_VERSION}: hosted D1 seed from Lantern logical export\n-- export: {}\n-- manifest record_count: {}\n-- emitted: {}\n-- skipped (not part of the hosted memory surface): {}\n-- idempotent: ON CONFLICT(id) DO NOTHING never overwrites post-seed corrections.\n-- mapping: memory_relation->epistemic_claim, belief_revision->belief_revision (docs/c3-relations-mapping.md)\n-- apply: wrangler d1 execute lantern-keeper --remote --config wrangler.jsonc --file <this>\n\n",
+        export_dir.display(),
+        manifest_record_count
+            .map(|count| count.to_string())
+            .unwrap_or_else(|| "unknown".to_owned()),
+        emitted
+            .iter()
+            .map(|(table, count)| format!("{table}={count}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        skipped
+            .iter()
+            .map(|(table, count)| format!("{table}={count}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    for statement in &statements {
+        header.push_str(statement);
+        header.push('\n');
+    }
+
+    let report = HostedSeedSqlReport {
+        schema: HOSTED_SEED_SQL_VERSION,
+        export_dir: export_dir.display().to_string(),
+        manifest_record_count,
+        emitted,
+        skipped,
+        warnings,
+        sql_statements: statements.len(),
+    };
+    Ok((header, report))
+}
+
+fn cmd_hosted_seed_sql(
+    export: &Path,
+    output: &Path,
+    json: bool,
+    strict: bool,
+) -> anyhow::Result<()> {
+    if !export.is_dir() {
+        bail!("export path is not a directory: {}", export.display());
+    }
+    // Under --strict the build itself aborts on the first problem, so this
+    // path never reaches the artifact write with a strict failure.
+    let (sql, report) = build_hosted_seed_sql(export, strict)?;
+
+    if let Some(parent) = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create seed SQL directory {}", parent.display()))?;
+    }
+    fs::write(output, sql.as_bytes())
+        .with_context(|| format!("failed to write seed SQL {}", output.display()))?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "Hosted seed SQL: {} statement(s) from {} (emitted: {}, skipped: {})",
+            report.sql_statements,
+            report.export_dir,
+            report
+                .emitted
+                .iter()
+                .map(|(table, count)| format!("{table}={count}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            report
+                .skipped
+                .iter()
+                .map(|(table, count)| format!("{table}={count}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        println!("Seed SQL: {}", output.display());
+        for warning in &report.warnings {
+            println!("warning: {warning}");
+        }
+    }
+
+    if !report.warnings.is_empty() {
+        bail!(
+            "{} export record(s) among the mapped tables could not be mapped honestly; seed SQL and report were written for inspection, but this is unexplained loss and must not be applied as-is",
+            report.warnings.len()
+        );
     }
     Ok(())
 }
@@ -2845,6 +4030,13 @@ fn normalize_path_for_title(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    use lighting_store_surreal::{
+        StoreConfig, SurrealEpistemicRepository, SurrealLedgerRepository,
+        SurrealMemoryPathRepository, SurrealMemoryRepository, SurrealSourceRepository,
+        SurrealStore,
+    };
 
     #[test]
     fn infer_kind_markdown_from_md() {
@@ -3299,5 +4491,802 @@ mod tests {
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("invalid Project ID"));
         assert!(msg.contains("must be a valid UUID"));
+    }
+
+    // ── Basic Memory reconcile tests (LK-CUTOVER-001 C3) ────────────────────
+
+    fn reconcile_record(path: &str, content: &str) -> BasicMemorySnapshotRecord {
+        BasicMemorySnapshotRecord {
+            source_project: None,
+            source_project_id: None,
+            source_path: path.to_owned(),
+            title: None,
+            permalink: None,
+            external_id: None,
+            entity_id: None,
+            note_type: None,
+            content_type: None,
+            updated_at: None,
+            raw_markdown: content.to_owned(),
+        }
+    }
+
+    fn reconcile_manifest() -> BasicMemorySnapshotManifest {
+        BasicMemorySnapshotManifest {
+            captured_at: Some("2026-11-24".to_owned()),
+            note_count: None,
+            observation_count: None,
+            relation_count: None,
+            export_sha256: None,
+        }
+    }
+
+    fn hosted_note(source_id: &str, content: &str) -> HostedNoteState {
+        HostedNoteState {
+            source_id: source_id.to_owned(),
+            content: content.to_owned(),
+            fingerprint: "sha256:test".to_owned(),
+        }
+    }
+
+    #[test]
+    fn basic_memory_reconcile_command_is_constructed() {
+        let cmd = CliCommand::BasicMemoryReconcile {
+            path: PathBuf::from("snapshot"),
+            output: None,
+            json: true,
+        };
+        match cmd {
+            CliCommand::BasicMemoryReconcile { path, output, json } => {
+                assert_eq!(path, PathBuf::from("snapshot"));
+                assert!(output.is_none());
+                assert!(json);
+            }
+            _ => panic!("expected BasicMemoryReconcile variant"),
+        }
+    }
+
+    #[test]
+    fn reconcile_passes_when_hosted_matches_snapshot() {
+        let note_a = "---\ntitle: A\n---\n\n- [decision] Keep the source intact\n";
+        let note_b = "---\ntitle: B\n---\n\n- related_to [[Lantern Keeper]]\n";
+        let records = vec![
+            reconcile_record("a.md", note_a),
+            reconcile_record("b.md", note_b),
+        ];
+        let accounting = build_basic_memory_accounting(&records, &reconcile_manifest());
+        // a.md carries one truth-bearing decision (claim); b.md one relation.
+        assert_eq!(accounting.accounted_observations, 1);
+        assert_eq!(accounting.accounted_relations, 1);
+
+        let mut notes = BTreeMap::new();
+        notes.insert("a.md".to_owned(), hosted_note("sa", note_a));
+        notes.insert("b.md".to_owned(), hosted_note("sb", note_b));
+        let mut claims_by_source = BTreeMap::new();
+        claims_by_source.insert("sa".to_owned(), 1);
+        let hosted = HostedReconcileState {
+            notes,
+            claims_by_source,
+            total_basic_memory_claims: 1,
+            unresolved_basic_memory_relations: 1,
+        };
+
+        let report = build_basic_memory_reconcile(
+            &records,
+            &accounting,
+            &hosted,
+            "http://127.0.0.1:4317",
+            Some("2026-11-24".to_owned()),
+            "2026-11-24T00:00:00+00:00".to_owned(),
+        );
+
+        assert_eq!(report.verdict, "pass");
+        assert_eq!(report.notes_expected, 2);
+        assert_eq!(report.notes_present, 2);
+        assert!(report.notes_missing.is_empty());
+        assert!(report.notes_content_mismatch.is_empty());
+        assert_eq!(report.expected_claims, 1);
+        assert_eq!(report.hosted_claims, 1);
+        assert_eq!(report.claims_delta, 0);
+        assert_eq!(report.expected_relations, 1);
+        assert_eq!(report.hosted_unresolved_relations, 1);
+        assert_eq!(report.relations_delta, 0);
+        assert!(
+            report
+                .per_note
+                .iter()
+                .all(|note| note.present && note.content_match == Some(true))
+        );
+        assert_eq!(report.not_enumerable_over_rest.len(), 4);
+        assert_eq!(report.schema, "basic-memory-reconcile-v1");
+    }
+
+    #[test]
+    fn reconcile_fails_on_missing_and_content_mismatch() {
+        let note_a = "---\ntitle: A\n---\n\n- [decision] Keep it\n";
+        let note_b = "---\ntitle: B\n---\n\n- [decision] Separate note\n";
+        let records = vec![
+            reconcile_record("a.md", note_a),
+            reconcile_record("b.md", note_b),
+        ];
+        let accounting = build_basic_memory_accounting(&records, &reconcile_manifest());
+
+        // Hosted holds a.md with ALTERED bytes; b.md is absent entirely.
+        let mut notes = BTreeMap::new();
+        notes.insert(
+            "a.md".to_owned(),
+            hosted_note("sa", "---\ntitle: A\n---\n\n- [decision] Tampered\n"),
+        );
+        let hosted = HostedReconcileState {
+            notes,
+            claims_by_source: BTreeMap::new(),
+            total_basic_memory_claims: 0,
+            unresolved_basic_memory_relations: 0,
+        };
+
+        let report = build_basic_memory_reconcile(
+            &records,
+            &accounting,
+            &hosted,
+            "http://127.0.0.1:4317",
+            None,
+            "t".to_owned(),
+        );
+
+        assert_eq!(report.verdict, "fail");
+        assert_eq!(report.notes_present, 1);
+        assert_eq!(report.notes_missing, vec!["b.md".to_owned()]);
+        assert_eq!(report.notes_content_mismatch, vec!["a.md".to_owned()]);
+        let missing = report
+            .per_note
+            .iter()
+            .find(|note| note.source_path == "b.md")
+            .expect("b.md is reported");
+        assert!(!missing.present);
+        assert_eq!(missing.content_match, None);
+        let mismatched = report
+            .per_note
+            .iter()
+            .find(|note| note.source_path == "a.md")
+            .expect("a.md is reported");
+        assert_eq!(mismatched.content_match, Some(false));
+    }
+
+    #[test]
+    fn reconcile_fails_on_count_deltas() {
+        let note_a = "---\ntitle: A\n---\n\n- [decision] One\n- [decision] Two\n";
+        let records = vec![reconcile_record("a.md", note_a)];
+        let accounting = build_basic_memory_accounting(&records, &reconcile_manifest());
+        assert_eq!(accounting.accounted_observations, 2);
+
+        // Hosted has the note and matching content, but only one of the two
+        // expected claims landed, and a relation is missing entirely.
+        let mut notes = BTreeMap::new();
+        notes.insert("a.md".to_owned(), hosted_note("sa", note_a));
+        let mut claims_by_source = BTreeMap::new();
+        claims_by_source.insert("sa".to_owned(), 1);
+        let hosted = HostedReconcileState {
+            notes,
+            claims_by_source,
+            total_basic_memory_claims: 1,
+            unresolved_basic_memory_relations: 0,
+        };
+
+        let report = build_basic_memory_reconcile(
+            &records,
+            &accounting,
+            &hosted,
+            "http://127.0.0.1:4317",
+            None,
+            "t".to_owned(),
+        );
+
+        assert_eq!(report.verdict, "fail");
+        assert_eq!(report.expected_claims, 2);
+        assert_eq!(report.hosted_claims, 1);
+        assert_eq!(report.claims_delta, -1);
+        assert_eq!(report.relations_delta, 0);
+        // Content matched: the failure is purely a count delta.
+        assert!(report.notes_content_mismatch.is_empty());
+        assert!(report.notes_missing.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // C3-IMPORT: hosted seed SQL builder + three-way reconcile
+    // -----------------------------------------------------------------------
+
+    fn c3_fixture(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/c3-import")
+            .join(name)
+    }
+
+    fn c3_temp_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "lantern-keeper-c3-import-{label}-{}",
+            uuid::Uuid::new_v4().simple()
+        ))
+    }
+
+    /// Mirrors D1 `batch()`: one transaction, fully rolled back on error
+    /// (same semantics as lighting-store-d1 tests/atomic_semantics.rs).
+    fn c3_run_batch(
+        conn: &rusqlite::Connection,
+        statements: &[lighting_store_d1::SqlStatement],
+    ) -> rusqlite::Result<()> {
+        conn.execute_batch("BEGIN")?;
+        let outcome = (|| {
+            for statement in statements {
+                let params: Vec<rusqlite::types::Value> = statement
+                    .params
+                    .iter()
+                    .map(|param| match param {
+                        lighting_store_d1::SqlValue::Text(text) => {
+                            rusqlite::types::Value::Text(text.clone())
+                        }
+                        lighting_store_d1::SqlValue::Integer(int) => {
+                            rusqlite::types::Value::Integer(*int)
+                        }
+                        lighting_store_d1::SqlValue::Real(real) => {
+                            rusqlite::types::Value::Real(*real)
+                        }
+                        lighting_store_d1::SqlValue::Null => rusqlite::types::Value::Null,
+                    })
+                    .collect();
+                let mut prepared = conn.prepare(&statement.sql)?;
+                prepared.execute(rusqlite::params_from_iter(params))?;
+            }
+            Ok(())
+        })();
+        match outcome {
+            Ok(()) => conn.execute_batch("COMMIT"),
+            Err(error) => {
+                conn.execute_batch("ROLLBACK")?;
+                Err(error)
+            }
+        }
+    }
+
+    fn c3_count(conn: &rusqlite::Connection, table: &str) -> i64 {
+        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+            row.get(0)
+        })
+        .expect("count query")
+    }
+
+    #[test]
+    fn hosted_seed_maps_relations_history_and_bytes() {
+        let (sql, report) = build_hosted_seed_sql(&c3_fixture("synthetic-export"), false)
+            .expect("builder must run");
+        assert!(
+            report.warnings.is_empty(),
+            "warnings: {:?}",
+            report.warnings
+        );
+
+        // memory_relation -> epistemic_claim (docs/c3-relations-mapping.md).
+        assert_eq!(report.emitted.get("memory_relation"), Some(&1));
+        assert!(sql.contains("'relation|related_to|c3-seed-ep-alpha|Beta'"));
+        assert!(
+            sql.contains("'episode:c3-seed-ep-alpha'"),
+            "subject = in_id"
+        );
+        assert!(sql.contains("'basic-memory:Beta'"), "value = out_id");
+        assert!(
+            sql.contains("'related_to'"),
+            "predicate = dedupe first segment"
+        );
+        assert!(sql.contains("'resolved'"), "predicate_status = resolved");
+        let empty_hash = lighting_core::scope_hash(&BTreeMap::new());
+        assert!(
+            sql.contains(&format!("'{empty_hash}'")),
+            "relations seed the empty-scope hash"
+        );
+
+        // belief_revision -> belief_revision with the derived CAS chain.
+        assert_eq!(report.emitted.get("belief_revision"), Some(&2));
+        assert!(
+            sql.contains("'0001-01-01T00:00:00.000000000Z'"),
+            "creation transition records the zero token"
+        );
+        let rev2 = sql
+            .lines()
+            .find(|line| {
+                line.starts_with("INSERT INTO belief_revision") && line.contains("'c3-seed-rev-2'")
+            })
+            .expect("rev-2 statement");
+        assert!(
+            rev2.contains("'2026-10-01T10:00:00.000000000Z'"),
+            "second transition derives from the first revision's created_at: {rev2}"
+        );
+        // Byte-exact native payload strings survive into the seed.
+        assert!(
+            sql.contains("\"transition_type\":\"reinforce\""),
+            "revision payload preserved verbatim"
+        );
+    }
+
+    #[test]
+    fn hosted_seed_strict_aborts_before_writing_artifacts() {
+        let dir = c3_temp_path("strict-malformed");
+        fs::create_dir_all(&dir).expect("temp dir");
+        fs::write(dir.join("manifest.json"), "{}").expect("manifest");
+        fs::write(
+            dir.join("broken.ndjson"),
+            "{\"table\": \"source\"\nnot json at all\n",
+        )
+        .expect("shard");
+        let output = dir.join("seed.sql");
+
+        let strict = cmd_hosted_seed_sql(&dir, &output, false, true);
+        assert!(strict.is_err(), "strict must abort on a malformed row");
+        assert!(
+            !output.exists(),
+            "strict must abort before any artifact is written"
+        );
+
+        let default = cmd_hosted_seed_sql(&dir, &output, false, false);
+        assert!(
+            default.is_err(),
+            "default must still report unexplained loss"
+        );
+        assert!(
+            output.exists(),
+            "default writes the SQL + report for inspection"
+        );
+    }
+
+    #[test]
+    fn hosted_seed_strict_refuses_missing_belief_references() {
+        let dir = c3_temp_path("strict-referential");
+        fs::create_dir_all(&dir).expect("temp dir");
+        fs::write(dir.join("manifest.json"), "{}").expect("manifest");
+        fs::write(
+            dir.join("epistemic.ndjson"),
+            "{\"table\": \"belief_revision\", \"record\": {\"id\": \"belief_revision:orphan\", \"belief_id\": \"belief:absent\", \"payload\": \"{}\", \"created_at\": \"2026-10-01T10:00:00.000000000Z\"}}\n",
+        )
+        .expect("shard");
+        let output = dir.join("seed.sql");
+
+        assert!(
+            cmd_hosted_seed_sql(&dir, &output, false, true).is_err(),
+            "strict must abort on a revision whose belief is absent"
+        );
+        assert!(!output.exists(), "strict writes nothing");
+
+        // Default warns (the apply would fail closed on the foreign key) and
+        // still produces the artifact for inspection.
+        let _ = cmd_hosted_seed_sql(&dir, &output, false, false);
+        assert!(output.exists(), "default writes the artifact");
+    }
+
+    #[test]
+    fn hosted_seed_refuses_token_hazards() {
+        // A corrupt export where a derived from_updated_at equals the
+        // belief's current updated_at would block the first post-seed
+        // correction: strict aborts, default omits the row with a warning.
+        let dir = c3_temp_path("strict-hazard");
+        fs::create_dir_all(&dir).expect("temp dir");
+        fs::write(dir.join("manifest.json"), "{}").expect("manifest");
+        let belief = serde_json::json!({
+            "table": "belief",
+            "record": {
+                "id": "belief:hazard-1",
+                "payload": serde_json::to_string(&serde_json::json!({
+                    "id": "hazard-1",
+                    "holder_key": "matthew",
+                    "subject_key": "s",
+                    "predicate_key": "p",
+                    "current_value": "v",
+                    "scope": {},
+                    "state": "Active",
+                    "created_at": "2026-10-01T10:00:00.000000000Z",
+                    "updated_at": "2026-10-01T11:00:00.000000000Z"
+                })).expect("payload"),
+                "updated_at": "2026-10-01T11:00:00.000000000Z"
+            }
+        });
+        let revisions = [
+            ("r1", "2026-10-01T10:00:00.000000000Z"),
+            ("r2", "2026-10-01T11:00:00.000000000Z"),
+            ("r3", "2026-10-01T12:00:00.000000000Z"),
+        ];
+        let mut shard = format!("{}\n", belief);
+        for (id, created_at) in revisions {
+            shard.push_str(&format!(
+                "{{\"table\": \"belief_revision\", \"record\": {{\"id\": \"belief_revision:{id}\", \"belief_id\": \"belief:hazard-1\", \"payload\": \"{{}}\", \"created_at\": \"{created_at}\"}}}}\n"
+            ));
+        }
+        fs::write(dir.join("epistemic.ndjson"), shard).expect("shard");
+        let output = dir.join("seed.sql");
+
+        // r3 derives from = r2.created_at (11:00) == belief.updated_at.
+        assert!(
+            cmd_hosted_seed_sql(&dir, &output, false, true).is_err(),
+            "strict must abort on a token hazard"
+        );
+        assert!(!output.exists(), "strict writes nothing");
+
+        let (sql, report) = build_hosted_seed_sql(&dir, false).expect("default must build");
+        assert_eq!(
+            report.emitted.get("belief_revision"),
+            Some(&2),
+            "default omits the hazardous row"
+        );
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("would block the first post-seed correction")),
+            "warnings: {:?}",
+            report.warnings
+        );
+        assert!(!sql.contains("belief_revision:r3") && !sql.contains("'r3'"));
+    }
+
+    #[test]
+    fn hosted_seed_builder_maps_the_synthetic_export() {
+        let (sql, report) = build_hosted_seed_sql(&c3_fixture("synthetic-export"), false)
+            .expect("builder must run");
+        assert_eq!(report.schema, "hosted-seed-sql-v1");
+        assert_eq!(report.manifest_record_count, Some(16));
+        assert!(
+            report.warnings.is_empty(),
+            "warnings: {:?}",
+            report.warnings
+        );
+        assert_eq!(report.emitted.get("source"), Some(&2));
+        assert_eq!(report.emitted.get("episode"), Some(&2));
+        assert_eq!(report.emitted.get("epistemic_claim"), Some(&2));
+        assert_eq!(report.emitted.get("belief"), Some(&2));
+        assert_eq!(report.emitted.get("memory_relation"), Some(&1));
+        assert_eq!(report.emitted.get("belief_revision"), Some(&2));
+        assert_eq!(report.sql_statements, 11);
+        for unmapped in ["marker", "ledger_event", "project", "memory", "trace"] {
+            assert_eq!(
+                report.skipped.get(unmapped),
+                Some(&1),
+                "unmapped table {unmapped} must be reported as skipped"
+            );
+        }
+
+        // Non-canonical input timestamps are normalised to the hosted
+        // 30-char canonical form; raw non-canonical forms never leak into SQL.
+        assert!(sql.contains("'2026-10-01T09:05:00.000000000Z'"));
+        assert!(sql.contains("'2026-10-01T10:30:00.000000000Z'"));
+        assert!(sql.contains("'2026-10-01T12:00:00.000000000Z'"));
+        assert!(!sql.contains("'2026-10-01T09:05:00Z'"));
+        assert!(!sql.contains("'2026-10-01T12:00:00Z'"));
+
+        // Idempotent upserts, never overwrites — one per INSERT statement.
+        // The semicolon matters: statements whose stored content contains
+        // real newlines span multiple lines, and the header's idempotency
+        // note has no trailing semicolon.
+        assert_eq!(sql.matches("ON CONFLICT(id) DO NOTHING;").count(), 11);
+
+        // Surreal-style backticks from exported record ids must never leak
+        // into the seed SQL.
+        assert!(
+            !sql.contains('\u{60}'),
+            "backticked record ids must be normalised away"
+        );
+
+        // Fixture scope_hash matches the runtime authority.
+        let scope: BTreeMap<String, String> =
+            BTreeMap::from([("project".to_owned(), "c3-import".to_owned())]);
+        let expected_hash = lighting_core::scope_hash(&scope);
+        assert_eq!(
+            expected_hash,
+            "ed329c9a475d9fca0a1dd8a40c38743677edf7267c5e74d1d1c35f5184561a84"
+        );
+        assert!(sql.contains(&format!("'{expected_hash}'")));
+    }
+
+    #[test]
+    fn hosted_seed_applies_to_empty_sqlite_and_corrections_flow() {
+        let (sql, _report) = build_hosted_seed_sql(&c3_fixture("synthetic-export"), false)
+            .expect("builder must run");
+
+        let conn = rusqlite::Connection::open_in_memory().expect("sqlite");
+        conn.execute_batch(lighting_store_d1::SCHEMA_SQL)
+            .expect("hosted schema on empty sqlite");
+        conn.execute_batch(&sql)
+            .expect("seed must apply to empty sqlite");
+
+        assert_eq!(c3_count(&conn, "source"), 2);
+        assert_eq!(c3_count(&conn, "episode"), 2);
+        assert_eq!(
+            c3_count(&conn, "epistemic_claim"),
+            3,
+            "2 claims + 1 relation-as-claim"
+        );
+        assert_eq!(c3_count(&conn, "belief"), 2);
+        assert_eq!(
+            c3_count(&conn, "belief_revision"),
+            2,
+            "seeded history chain"
+        );
+        // No seeded revision may occupy the belief's current token: that row
+        // would collide with the first post-seed correction's CAS insert.
+        let hazard: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM belief_revision WHERE belief_id = 'c3-seed-bel-1' AND from_updated_at = '2026-10-01T11:00:00.000000000Z'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("hazard query");
+        assert_eq!(
+            hazard, 0,
+            "seeded history must not block the first correction"
+        );
+        // The creation transition records the derived zero token.
+        let zero: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM belief_revision WHERE from_updated_at = '0001-01-01T00:00:00.000000000Z'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("zero token query");
+        assert_eq!(zero, 1, "creation transition must record the zero token");
+
+        // Byte-exact Markdown round trip: CRLF and non-ASCII survive seeding.
+        let ledger = fs::read_to_string(c3_fixture("synthetic-export").join("ledger.ndjson"))
+            .expect("fixture ledger");
+        let exported_content: String = ledger
+            .lines()
+            .find(|line| line.contains("\"source:`c3-seed-src-alpha`\""))
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("fixture line"))
+            .and_then(|parsed| {
+                parsed
+                    .get("record")
+                    .and_then(|record| record.get("content"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .expect("alpha content in export");
+        let stored_content: String = conn
+            .query_row(
+                "SELECT content FROM source WHERE id = 'c3-seed-src-alpha'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("seeded content");
+        assert_eq!(
+            stored_content.as_bytes(),
+            exported_content.as_bytes(),
+            "source bytes must round-trip exactly (CRLF + non-ASCII)"
+        );
+        assert!(exported_content.contains("\r\n"));
+        assert!(exported_content.contains("café"));
+
+        let seeded_token: String = conn
+            .query_row(
+                "SELECT updated_at FROM belief WHERE id = 'c3-seed-bel-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("seeded belief");
+        assert_eq!(seeded_token, "2026-10-01T11:00:00.000000000Z");
+
+        // Corrections flow after seeding with NO genesis row: the batch
+        // inserts its own CAS guard (proven shape: atomic_semantics.rs).
+        let scope: BTreeMap<String, String> =
+            BTreeMap::from([("project".to_owned(), "c3-import".to_owned())]);
+        let correction = lighting_store_d1::KeyedCorrection {
+            revision_id: "c3-rev-1".to_owned(),
+            target_belief_id: "c3-seed-bel-1".to_owned(),
+            expected_revision: seeded_token.clone(),
+            new_revision: "2026-10-01T14:00:00.000000000Z".to_owned(),
+            revision_payload: "{\"actor\":\"c3-test\"}".to_owned(),
+            belief_payload: "{\"id\":\"c3-seed-bel-1\",\"current_value\":\"corrected by c3 test\"}"
+                .to_owned(),
+            principal: "pi".to_owned(),
+            scope_hash: lighting_core::scope_hash(&scope),
+            idempotency_key: "c3-correction-1".to_owned(),
+            payload_hash: "hash-c3-correction-1".to_owned(),
+            receipt_id: "receipt-c3-correction-1".to_owned(),
+            accepted_at: "2026-10-01T15:00:00.000000000Z".to_owned(),
+            result_json: "{\"receipt_id\":\"receipt-c3-correction-1\"}".to_owned(),
+        };
+        let batch = lighting_store_d1::build_correction_batch(&correction)
+            .expect("first correction after seed must build");
+        c3_run_batch(&conn, &batch)
+            .expect("first correction after seed must flow (no genesis row)");
+
+        let moved: String = conn
+            .query_row(
+                "SELECT updated_at FROM belief WHERE id = 'c3-seed-bel-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("corrected belief");
+        assert_eq!(moved, correction.new_revision);
+        // 2 seeded history rows + the correction's own CAS guard row.
+        assert_eq!(c3_count(&conn, "belief_revision"), 3);
+        assert_eq!(c3_count(&conn, "correction_idempotency"), 1);
+        assert_eq!(c3_count(&conn, "mutation_receipt"), 1);
+
+        // Re-applying the seed is idempotent and never clobbers corrections.
+        conn.execute_batch(&sql).expect("re-apply must not fail");
+        assert_eq!(c3_count(&conn, "belief"), 2);
+        assert_eq!(c3_count(&conn, "epistemic_claim"), 3);
+        let still_moved: String = conn
+            .query_row(
+                "SELECT updated_at FROM belief WHERE id = 'c3-seed-bel-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("belief after re-seed");
+        assert_eq!(
+            still_moved, correction.new_revision,
+            "re-seeding must never overwrite a post-seed correction"
+        );
+        assert_eq!(
+            c3_count(&conn, "belief_revision"),
+            3,
+            "re-seeding must not duplicate the seeded chain or the correction guard"
+        );
+    }
+
+    #[tokio::test]
+    async fn three_way_reconcile_export_native_and_seed_counts_match()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // Synthetic BM snapshot -> native service over real HTTP -> the
+        // read-only reconcile command passes -> native logical export ->
+        // hosted seed builder emits every exported row of the mapped tables.
+        let store_config = {
+            let mut config = StoreConfig::from_env();
+            config.storage = "embedded-surrealkv".to_owned();
+            config.path = c3_temp_path("three-way");
+            config.namespace = "c3_import".to_owned();
+            config.database = "integration".to_owned();
+            config.username.clear();
+            config.password.clear();
+            config
+        };
+        let store = SurrealStore::connect(&store_config).await?;
+        store.initialise_schema().await?;
+        let epi = Arc::new(SurrealEpistemicRepository::new(store.clone()));
+        epi.migrate().await?;
+        let src = Arc::new(SurrealSourceRepository::new(store.clone()));
+        src.migrate().await?;
+        let mp = Arc::new(SurrealMemoryPathRepository::new(store.clone()));
+        mp.migrate().await?;
+        let ledger = Arc::new(SurrealLedgerRepository::new(store.clone()));
+        ledger.migrate().await?;
+        let memory = Arc::new(SurrealMemoryRepository::new(store.clone()));
+        memory.migrate().await?;
+
+        let state = lighting_service::state::AppState {
+            ready: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            source_service: Some(lighting_service::source_ops::SourceService::new(
+                src.clone(),
+            )),
+            episode_service: Some(lighting_service::episode_ops::EpisodeService::new(
+                src.clone(),
+                mp.clone(),
+            )),
+            memory_service: Some(lighting_service::memory_ops::MemoryService::new(
+                memory.clone(),
+            )),
+            ledger_service: Some(lighting_service::ledger_ops::LedgerService::new(
+                ledger.clone(),
+            )),
+            epistemic_service: Some(lighting_service::EpistemicService::new_with_evidence(
+                epi.clone(),
+                src.clone(),
+                mp.clone(),
+            )),
+            project_service: Some(lighting_service::project_ops::ProjectService::new(
+                mp.clone(),
+                src.clone(),
+            )),
+            ..lighting_service::state::AppState::default()
+        };
+        let router = lighting_service::build_router(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let base_url = format!("http://{address}");
+
+        // All blocking HTTP (and its runtimes) lives inside the blocking
+        // thread: creating or dropping reqwest::blocking inside the async
+        // context panics ("Cannot drop a runtime in a context where blocking
+        // is not allowed").
+        let bm_snapshot = c3_fixture("synthetic-bm");
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let client = HttpClient::new(&base_url);
+            cmd_basic_memory_import(&client, &bm_snapshot, false, false)?;
+            cmd_basic_memory_reconcile(&client, &bm_snapshot, None, false)?;
+            Ok(())
+        })
+        .await
+        .expect("blocking import+reconcile task")?;
+
+        // Native logical export of the same state, then the builder over it.
+        let export_dir = c3_temp_path("three-way-export");
+        let summary = store.export_to(&export_dir).await?;
+        let (seed_sql, report) = build_hosted_seed_sql(&export_dir, false)?;
+        assert!(
+            report.warnings.is_empty(),
+            "builder warnings on a clean native export: {:?}",
+            report.warnings
+        );
+        for table in [
+            "source",
+            "episode",
+            "epistemic_claim",
+            "belief",
+            "memory_relation",
+            "belief_revision",
+        ] {
+            let exported = summary.record_counts.get(table).copied().unwrap_or(0);
+            let built = report.emitted.get(table).copied().unwrap_or(0);
+            assert_eq!(
+                built, exported,
+                "builder must emit every exported {table} row (three-way count match)"
+            );
+        }
+        assert!(!seed_sql.is_empty());
+
+        // And the seed still applies to a fresh empty SQLite.
+        let conn = rusqlite::Connection::open_in_memory()?;
+        conn.execute_batch(lighting_store_d1::SCHEMA_SQL)?;
+        conn.execute_batch(&seed_sql)?;
+        // Claims in the database = native claims + relation-as-claim rows.
+        assert_eq!(
+            c3_count(&conn, "epistemic_claim"),
+            (report.emitted.get("epistemic_claim").copied().unwrap_or(0)
+                + report.emitted.get("memory_relation").copied().unwrap_or(0)) as i64
+        );
+
+        // D1-direct style content reconciliation: per-table payload byte
+        // sums from the export's raw bytes must equal the sums read back
+        // from the seeded database (the same SELECT wrangler d1 execute
+        // runs against the hosted database in the workflow probe).
+        let mut export_payload_bytes: BTreeMap<String, usize> = BTreeMap::new();
+        for line in fs::read_to_string(export_dir.join("epistemic.ndjson"))?.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let parsed: serde_json::Value = serde_json::from_str(line)?;
+            let table = parsed
+                .get("table")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if table != "epistemic_claim" && table != "belief" && table != "memory_relation" {
+                continue;
+            }
+            let payload = parsed
+                .get("record")
+                .and_then(|record| record.get("payload"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            *export_payload_bytes.entry(table.to_owned()).or_default() += payload.len();
+        }
+        for table in ["epistemic_claim", "belief"] {
+            let mut from_export = export_payload_bytes.get(table).copied().unwrap_or(0);
+            if table == "epistemic_claim" {
+                // Relation rows seed INTO the claim table, so their payloads
+                // are part of the claim table's fingerprint.
+                from_export += export_payload_bytes
+                    .get("memory_relation")
+                    .copied()
+                    .unwrap_or(0);
+            }
+            let from_db: i64 = conn.query_row(
+                &format!("SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM {table}"),
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(
+                from_db as usize, from_export,
+                "seeded {table} payload bytes must equal the export bytes (D1-direct fingerprint)"
+            );
+        }
+        Ok(())
     }
 }

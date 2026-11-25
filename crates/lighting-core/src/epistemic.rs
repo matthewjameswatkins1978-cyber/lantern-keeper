@@ -620,6 +620,18 @@ pub struct MemoryItemSearch {
     pub limit: usize,
 }
 
+/// Durable idempotency receipt for a keyed `record_correction` call
+/// (LK-HOST-001 delta-2). `key` binds principal, normalised scope hash and
+/// the caller-supplied key; `payload_hash` binds the request envelope so a
+/// reused key with a changed envelope conflicts instead of replaying.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CorrectionIdempotencyRecord {
+    pub key: String,
+    pub payload_hash: String,
+    pub result_json: String,
+    pub created_at: DateTime<Utc>,
+}
+
 #[async_trait]
 pub trait EpistemicRepository: Send + Sync {
     async fn store_claim(&self, claim: Claim) -> Result<Claim, EpistemicRepositoryError>;
@@ -634,6 +646,36 @@ pub trait EpistemicRepository: Send + Sync {
         &self,
         include_stale: bool,
     ) -> Result<Vec<Belief>, EpistemicRepositoryError>;
+
+    /// Returns beliefs whose stored scope is **exactly equal** to `scope`
+    /// (both sides in canonical normalised form), newest first, capped at
+    /// `limit`.
+    ///
+    /// `limit` is a hard bound: `0` returns no rows and the query is never
+    /// unbounded. Exact equality is the LK-HOST-001 delta-1 representative
+    /// rule and deliberately fails closed — a broader authorised scope does
+    /// not observe records stored under a narrower scope (richer containment
+    /// semantics are an M2 concern).
+    async fn list_beliefs_scoped(
+        &self,
+        scope: &Scope,
+        include_stale: bool,
+        limit: usize,
+    ) -> Result<Vec<Belief>, EpistemicRepositoryError>;
+
+    /// Stores a keyed correction idempotency receipt. The composite key is
+    /// unique; a duplicate insert is rejected by the store rather than
+    /// silently overwriting the original receipt.
+    async fn store_correction_idempotency(
+        &self,
+        record: CorrectionIdempotencyRecord,
+    ) -> Result<CorrectionIdempotencyRecord, EpistemicRepositoryError>;
+
+    /// Returns the stored receipt for an exact composite key, if any.
+    async fn get_correction_idempotency(
+        &self,
+        key: &str,
+    ) -> Result<Option<CorrectionIdempotencyRecord>, EpistemicRepositoryError>;
     async fn mark_belief_stale(
         &self,
         id: &BeliefId,

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod authority;
+pub mod bounded;
 pub mod bridge_intent;
 pub mod dreamer;
 pub mod epistemic;
@@ -20,11 +21,17 @@ pub mod memory_path;
 pub mod receipt;
 pub mod source;
 pub mod source_outline;
+pub mod write_envelope;
 
 pub use authority::{
     AuthenticationClass, AuthorityCheck, AuthorityDecision, AuthorityError, AuthorityGrant,
     AuthorityLedger, AuthorityRequest, AuthorityRevocation, AuthorityScope, DenyReason, Principal,
     PrincipalKind,
+};
+pub use bounded::{
+    BoundedEpistemicRepository, BoundedError, DEFAULT_PAGE_LIMIT, IdempotentTransition,
+    MAX_PAGE_LIMIT, MAX_TRAVERSAL_DEPTH, MAX_TRAVERSAL_FANOUT, Page, PageCursor, PageRequest,
+    TraversalBounds, TraversalClosure, WriteOutcome, WriteReceipt,
 };
 pub use bridge_intent::{
     BridgeClaimResult, BridgeIntentRecord, BridgeIntentRepository, BridgeIntentRepositoryError,
@@ -32,12 +39,12 @@ pub use bridge_intent::{
 pub use dreamer::{CandidateKind, DreamerCandidate, DreamerCandidateError, EvidenceReference};
 pub use epistemic::{
     Actor, Belief, BeliefLineage, BeliefRevision, BeliefState, Claim, ContextPack, ContextTrace,
-    DimensionDefinition, EpistemicError, EpistemicRepository, EpistemicRepositoryError, Frame,
-    FrameAction, GraphRelation, MemoryItem, MemoryItemKind, MemoryItemSearch, NewBelief, NewClaim,
-    NewGraphRelation, NewMemoryItem, PredicateDefinition, PredicateDefinitionStatus,
-    PredicateStatus, Proposal, ReconciliationAction, ReconciliationDecision, RelationKind, Scope,
-    Stance, Trace, TrustClass, normalize_registry_key, normalize_scope, propagate_stale_beliefs,
-    reconcile_claim, scope_hash, scopes_overlap,
+    CorrectionIdempotencyRecord, DimensionDefinition, EpistemicError, EpistemicRepository,
+    EpistemicRepositoryError, Frame, FrameAction, GraphRelation, MemoryItem, MemoryItemKind,
+    MemoryItemSearch, NewBelief, NewClaim, NewGraphRelation, NewMemoryItem, PredicateDefinition,
+    PredicateDefinitionStatus, PredicateStatus, Proposal, ReconciliationAction,
+    ReconciliationDecision, RelationKind, Scope, Stance, Trace, TrustClass, normalize_registry_key,
+    normalize_scope, propagate_stale_beliefs, reconcile_claim, scope_hash, scopes_overlap,
 };
 pub use ledger::{
     LedgerEvent, LedgerEventError, LedgerEventRepository, LedgerIngestResult,
@@ -58,6 +65,10 @@ pub use source::{
     SourceRepository, SourceRepositoryError, SourceTitle, StoreSourceResult, find_all_matches,
 };
 pub use source_outline::{Heading, MarkdownOutline, parse_outline};
+pub use write_envelope::{
+    EnvelopeReceiptRecord, NativeWriteEnvelope, WRITE_ENVELOPE_VERSION, WriteEnvelope,
+    WriteEnvelopeError, WriteEnvelopeOutcome, WriteEnvelopeReceipt, write_envelope_key,
+};
 
 /// Lighting service version.
 pub const LIGHTING_VERSION: &str = env!("CARGO_PKG_VERSION");

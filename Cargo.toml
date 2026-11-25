@@ -2,9 +2,12 @@
 members = [
     "apps/lighting",
     "crates/lighting-cli",
+    "crates/lantern-mcp-core",
     "crates/lighting-core",
     "crates/lighting-service",
+    "crates/lighting-store-d1",
     "crates/lighting-store-surreal",
+    "crates/parity-harness",
 ]
 resolver = "3"
 

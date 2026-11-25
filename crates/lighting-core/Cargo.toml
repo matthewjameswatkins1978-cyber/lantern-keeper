@@ -15,3 +15,7 @@ thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+chrono = { workspace = true, features = ["wasmbind"] }
+uuid = { workspace = true, features = ["js"] }
