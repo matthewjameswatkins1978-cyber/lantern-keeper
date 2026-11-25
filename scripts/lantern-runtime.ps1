@@ -433,7 +433,7 @@ function Get-Runtime-Status {
             datastore_mode_observed = $datastoreModeObserved
             datastore_mode_configured = "embedded-surrealkv"
             datastore_path_configured = $DataDir
-            surrealdb_expected_version = if ($surrealdbExpectedVersion) { $surrealdbExpectedVersion } else { "3.3.0" }
+            surrealdb_expected_version = if ($surrealdbExpectedVersion) { $surrealdbExpectedVersion } else { "4.0.1" }
             surrealdb_observed_version = $surrealdbObservedVersion
         }
         authority = [PSCustomObject]@{

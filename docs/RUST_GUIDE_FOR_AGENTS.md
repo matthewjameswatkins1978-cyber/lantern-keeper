@@ -10,7 +10,7 @@ does not require a particular editor or AI assistant.
 | Rust | 1.98.1 |
 | Edition | 2024 |
 | Dependency resolution | `Cargo.lock` is authoritative |
-| SurrealDB | exactly 3.3.0 |
+| SurrealDB | exactly 4.0.1 |
 
 Keep source choices compatible with the pinned toolchain. Inspect the lockfile
 and matching crate documentation before relying on an API.
