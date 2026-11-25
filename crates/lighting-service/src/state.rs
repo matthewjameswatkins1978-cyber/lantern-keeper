@@ -56,7 +56,7 @@ impl AppState {
             authority_service: None,
             dreamer_service: None,
             datastore_mode: None,
-            surrealdb_expected_version: "3.3.0",
+            surrealdb_expected_version: "4.0.1",
             surrealdb_observed_version: None,
         }
     }
