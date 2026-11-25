@@ -4,7 +4,7 @@
 //! so that the unified `lighting` binary can use them directly.  The standalone
 //! `lighting-cli` binary still works via a thin `main.rs` shim.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -125,7 +125,8 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             export,
             output,
             json,
-        } => cmd_hosted_seed_sql(&export, &output, json),
+            strict,
+        } => cmd_hosted_seed_sql(&export, &output, json, strict),
         CliCommand::Predicate { command } => match command {
             PredicateCommand::List { json } => cmd_predicate_list(&client, json),
             PredicateCommand::Get { key, json } => cmd_predicate_get(&client, &key, json),
@@ -367,6 +368,12 @@ pub enum CliCommand {
         /// Output JSON only.
         #[arg(long)]
         json: bool,
+        /// Production path: abort on the first malformed or missing row,
+        /// missing reference, NUL byte or token hazard — before any artifact
+        /// is written. Default (synthetic path) warns and still writes the
+        /// SQL + report for inspection.
+        #[arg(long)]
+        strict: bool,
     },
     /// Inspect the canonical predicate registry and unmapped claim queue.
     Predicate {
@@ -2418,7 +2425,135 @@ fn seed_belief_statement(
 }
 
 /// Read every `*.ndjson` in an export directory and emit hosted seed SQL.
-pub fn build_hosted_seed_sql(export_dir: &Path) -> anyhow::Result<(String, HostedSeedSqlReport)> {
+/// A pending `belief_revision` row: (file, line, record, canonical
+/// `created_at`), queued during the scan and resolved after it.
+type PendingRevisionRow = (
+    String,
+    usize,
+    serde_json::Map<String, serde_json::Value>,
+    String,
+);
+
+/// Zero token (C3-RELATIONS): a belief's creation transition consumed no
+/// prior hosted token, so its first revision records this sentinel.
+/// Canonical (30 chars) and never equal to a real `updated_at`, so it can
+/// never collide with the first post-seed correction's CAS insert.
+const ZERO_TOKEN: &str = "0001-01-01T00:00:00.000000000Z";
+
+/// A warning that aborts the build under `--strict` (production path)
+/// before any artifact is written, and is collected otherwise (synthetic
+/// path: SQL + report still written for inspection).
+fn record_warning(warnings: &mut Vec<String>, strict: bool, message: String) -> anyhow::Result<()> {
+    if strict {
+        bail!("strict seed build aborted: {message}");
+    }
+    warnings.push(message);
+    Ok(())
+}
+
+/// Belief chain anchors needed to derive revision `from_updated_at` tokens.
+struct BeliefAnchors {
+    created: Option<String>,
+    updated: Option<String>,
+}
+
+/// The belief id the seed row will use: payload id first (mirrors
+/// `seed_belief_statement`), then the normalised record id.
+fn belief_seed_id(record: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    if let Some(payload) = payload_map(record)
+        && let Some(id) = payload_text(&payload, "id")
+    {
+        return Some(id.to_owned());
+    }
+    record_text(record, "id").map(|raw| strip_table_prefix(raw, "belief").to_owned())
+}
+
+/// `memory_relation` → `epistemic_claim`: a Basic Memory relation is a
+/// subject/predicate/value triple (see `docs/c3-relations-mapping.md` for
+/// every fixed mapping choice). Returns `None` when the record cannot be
+/// mapped honestly; the caller records the warning.
+fn seed_relation_statement(
+    record: &serde_json::Map<String, serde_json::Value>,
+    warnings: &mut Vec<String>,
+) -> Option<String> {
+    let id = strip_table_prefix(record_text(record, "id")?, "memory_relation");
+    let dedupe = record_text(record, "dedupe_key")?;
+    let in_id = record_text(record, "in_id")?;
+    let out_id = record_text(record, "out_id")?;
+    // Native persists `origin` inside the relation payload, not as a record
+    // column; the synthetic fixture carries it at record level.
+    let origin = if let Some(origin) = record_text(record, "origin") {
+        origin.to_owned()
+    } else {
+        let payload = payload_map(record);
+        match payload
+            .as_ref()
+            .and_then(|payload| payload_text(payload, "origin"))
+        {
+            Some(origin) => origin.to_owned(),
+            None => {
+                warnings.push(format!(
+                    "relation {id}: no origin on record or payload; skipped"
+                ));
+                return None;
+            }
+        }
+    };
+    let created_at = canonical_hosted_timestamp(record_text(record, "created_at")?)?;
+    let predicate = dedupe.split('|').next().unwrap_or("").trim();
+    if predicate.is_empty() {
+        warnings.push(format!(
+            "relation {id}: dedupe_key carries no relation type; skipped"
+        ));
+        return None;
+    }
+    let episode_endpoint = [in_id, out_id]
+        .iter()
+        .find(|endpoint| endpoint.starts_with("episode:"))
+        .map(|endpoint| strip_table_prefix(endpoint, "episode").to_owned());
+    // Native persists the relation's own payload string; copy it byte-exact
+    // like claim and belief payloads (docs/c3-relations-mapping.md).
+    let payload = record_text(record, "payload")?;
+    let scope_hash = lighting_core::scope_hash(&BTreeMap::new());
+    Some(format!(
+        "INSERT INTO epistemic_claim (id, scope_hash, subject_key, predicate_key, predicate_candidate, predicate_status, value, polarity, speaker_actor_id, holder_actor_id, dedupe_key, episode_id, source_id, payload, known_at, created_at) VALUES ({id}, {scope_hash}, {subject}, {predicate}, NULL, 'resolved', {value}, 1, {speaker}, NULL, {dedupe_key}, {episode}, NULL, {payload}, {known_at}, {created_at}) ON CONFLICT(id) DO NOTHING;",
+        id = sql_text(id),
+        scope_hash = sql_text(&scope_hash),
+        subject = sql_text(in_id),
+        predicate = sql_text(predicate),
+        value = sql_text(out_id),
+        speaker = sql_text(&origin),
+        dedupe_key = sql_text(&format!("relation|{dedupe}")),
+        episode = sql_opt(episode_endpoint.as_deref()),
+        payload = sql_text(payload),
+        known_at = sql_text(&created_at),
+        created_at = sql_text(&created_at),
+    ))
+}
+
+/// `belief_revision` → `belief_revision` with the derived CAS token
+/// (`from_updated_at`); `payload` is the native payload string, byte-exact.
+fn seed_revision_statement(
+    id: &str,
+    belief_id: &str,
+    from_updated_at: &str,
+    payload: &str,
+    created_at: &str,
+) -> String {
+    format!(
+        "INSERT INTO belief_revision (id, belief_id, from_updated_at, payload, created_at) VALUES ({}, {}, {}, {}, {}) ON CONFLICT(id) DO NOTHING;",
+        sql_text(id),
+        sql_text(belief_id),
+        sql_text(from_updated_at),
+        sql_text(payload),
+        sql_text(created_at),
+    )
+}
+
+pub fn build_hosted_seed_sql(
+    export_dir: &Path,
+    strict: bool,
+) -> anyhow::Result<(String, HostedSeedSqlReport)> {
     let manifest_text = fs::read_to_string(export_dir.join("manifest.json")).ok();
     let manifest_record_count = manifest_text
         .as_deref()
@@ -2444,12 +2579,20 @@ pub fn build_hosted_seed_sql(export_dir: &Path) -> anyhow::Result<(String, Hoste
     }
 
     // Emission order follows the evidence chain (source -> episode -> claim
-    // -> belief) regardless of file order: the hosted executor enforces the
-    // declared foreign keys, so claims must never precede their sources.
-    let mut by_table: Vec<Vec<String>> = vec![Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    // -> belief -> belief_revision) regardless of file order: the hosted
+    // executor enforces the declared foreign keys, so claims must never
+    // precede their sources and revisions never precede their beliefs.
+    let mut by_table: Vec<Vec<String>> =
+        vec![Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
     let mut emitted: BTreeMap<String, usize> = BTreeMap::new();
     let mut skipped: BTreeMap<String, usize> = BTreeMap::new();
     let mut warnings: Vec<String> = Vec::new();
+    // C3-RELATIONS: belief chain anchors captured during the scan, and
+    // pending belief_revision rows resolved after it (chain derivation needs
+    // every belief's anchors first, so file order never matters).
+    let mut belief_tokens: BTreeMap<String, BeliefAnchors> = BTreeMap::new();
+    let mut pending_revisions: Vec<(String, usize, serde_json::Map<String, serde_json::Value>)> =
+        Vec::new();
 
     for file in &ndjson_files {
         let text = fs::read_to_string(file)
@@ -2461,44 +2604,93 @@ pub fn build_hosted_seed_sql(export_dir: &Path) -> anyhow::Result<(String, Hoste
             let parsed: serde_json::Value = match serde_json::from_str(line) {
                 Ok(value) => value,
                 Err(error) => {
-                    warnings.push(format!(
-                        "{} line {}: not valid JSON ({error}); skipped",
-                        file.display(),
-                        index + 1
-                    ));
+                    record_warning(
+                        &mut warnings,
+                        strict,
+                        format!(
+                            "{} line {}: not valid JSON ({error}); skipped",
+                            file.display(),
+                            index + 1
+                        ),
+                    )?;
                     continue;
                 }
             };
             let Some(table) = parsed.get("table").and_then(serde_json::Value::as_str) else {
-                warnings.push(format!(
-                    "{} line {}: missing table field; skipped",
-                    file.display(),
-                    index + 1
-                ));
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!(
+                        "{} line {}: missing table field; skipped",
+                        file.display(),
+                        index + 1
+                    ),
+                )?;
                 continue;
             };
             let Some(record) = parsed.get("record").and_then(serde_json::Value::as_object) else {
-                warnings.push(format!(
-                    "{} line {}: missing record object; skipped",
-                    file.display(),
-                    index + 1
-                ));
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!(
+                        "{} line {}: missing record object; skipped",
+                        file.display(),
+                        index + 1
+                    ),
+                )?;
                 continue;
             };
+            // Bytes (C3-RELATIONS): NUL cannot survive SQL TEXT; never strip
+            // it silently.
+            if table == "source"
+                && record
+                    .get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|content| content.contains('\u{0}'))
+            {
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!(
+                        "{} line {}: source content contains a NUL byte, which the seed SQL cannot preserve; skipped",
+                        file.display(),
+                        index + 1
+                    ),
+                )?;
+                continue;
+            }
+            if table == "belief_revision" {
+                pending_revisions.push((file.display().to_string(), index + 1, record.clone()));
+                continue;
+            }
             let bucket = match table {
                 "source" => 0,
                 "episode" => 1,
-                "epistemic_claim" => 2,
+                "epistemic_claim" | "memory_relation" => 2,
                 "belief" => 3,
                 other => {
                     *skipped.entry(other.to_owned()).or_default() += 1;
                     continue;
                 }
             };
+            if table == "belief"
+                && let (Some(id), Some(payload)) = (belief_seed_id(record), payload_map(record))
+            {
+                let created =
+                    payload_text(&payload, "created_at").and_then(canonical_hosted_timestamp);
+                let updated = canonical_record_or_payload_timestamp(
+                    record,
+                    &payload,
+                    "updated_at",
+                    "updated_at",
+                );
+                belief_tokens.insert(id, BeliefAnchors { created, updated });
+            }
             let statement = match table {
                 "source" => seed_source_statement(record),
                 "episode" => seed_episode_statement(record),
                 "epistemic_claim" => seed_claim_statement(record, &mut warnings),
+                "memory_relation" => seed_relation_statement(record, &mut warnings),
                 _ => seed_belief_statement(record, &mut warnings),
             };
             match statement {
@@ -2507,19 +2699,146 @@ pub fn build_hosted_seed_sql(export_dir: &Path) -> anyhow::Result<(String, Hoste
                     *emitted.entry(table.to_owned()).or_default() += 1;
                 }
                 None => {
-                    warnings.push(format!(
-                        "{} line {}: {table} record could not be mapped honestly; skipped",
-                        file.display(),
-                        index + 1
-                    ));
+                    record_warning(
+                        &mut warnings,
+                        strict,
+                        format!(
+                            "{} line {}: {table} record could not be mapped honestly; skipped",
+                            file.display(),
+                            index + 1
+                        ),
+                    )?;
                 }
             }
+        }
+    }
+
+    // C3-RELATIONS: resolve belief_revision rows into hosted CAS history
+    // after the scan (docs/c3-relations-mapping.md). Chain rule: from[0] is
+    // the zero token for the belief's own creation, otherwise the belief's
+    // initial token; from[k] = revision[k-1].created_at. Any derived token
+    // equal to the belief's current updated_at would block the first
+    // post-seed correction and is refused here.
+    let mut revisions_by_belief: BTreeMap<String, Vec<PendingRevisionRow>> = BTreeMap::new();
+    for (file, line, record) in pending_revisions {
+        let Some(belief_ref) = record_text(&record, "belief_id") else {
+            record_warning(
+                &mut warnings,
+                strict,
+                format!("{file} line {line}: belief_revision record has no belief_id; skipped"),
+            )?;
+            continue;
+        };
+        let belief_id = strip_table_prefix(belief_ref, "belief").to_owned();
+        let Some(created_at) =
+            record_text(&record, "created_at").and_then(canonical_hosted_timestamp)
+        else {
+            record_warning(
+                &mut warnings,
+                strict,
+                format!(
+                    "{file} line {line}: belief_revision record has no usable created_at; skipped"
+                ),
+            )?;
+            continue;
+        };
+        revisions_by_belief
+            .entry(belief_id)
+            .or_default()
+            .push((file, line, record, created_at));
+    }
+    let mut seen_tokens: BTreeSet<(String, String)> = BTreeSet::new();
+    for (belief_id, mut rows) in revisions_by_belief {
+        // Canonical created_at strings sort chronologically (fixed width).
+        rows.sort_by(|left, right| {
+            let left_id = record_text(&left.2, "id").unwrap_or_default();
+            let right_id = record_text(&right.2, "id").unwrap_or_default();
+            left.3.cmp(&right.3).then_with(|| left_id.cmp(right_id))
+        });
+        let anchors = belief_tokens.get(&belief_id);
+        let mut previous_created: Option<String> = None;
+        for (file, line, record, created_at) in rows {
+            let Some(id) = record_text(&record, "id")
+                .map(|raw| strip_table_prefix(raw, "belief_revision").to_owned())
+            else {
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!("{file} line {line}: belief_revision record has no id; skipped"),
+                )?;
+                continue;
+            };
+            let Some(payload) = record_text(&record, "payload") else {
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!("{file} line {line}: belief_revision {id} has no payload; skipped"),
+                )?;
+                continue;
+            };
+            let from = match &previous_created {
+                Some(previous) => previous.clone(),
+                None => match anchors.and_then(|anchors| anchors.created.as_ref()) {
+                    Some(belief_created) if *belief_created == created_at => ZERO_TOKEN.to_owned(),
+                    Some(belief_created) => belief_created.clone(),
+                    None => {
+                        record_warning(
+                            &mut warnings,
+                            strict,
+                            format!(
+                                "{file} line {line}: belief {belief_id} has no usable created_at; using the zero token for its creation transition"
+                            ),
+                        )?;
+                        ZERO_TOKEN.to_owned()
+                    }
+                },
+            };
+            // The chain advances even when a row is omitted below, so later
+            // revisions keep deriving from the native timeline.
+            previous_created = Some(created_at.clone());
+            if anchors.is_none() {
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!(
+                        "{file} line {line}: belief_revision {id} references belief {belief_id}, which is absent from the export; the apply will abort on the foreign key"
+                    ),
+                )?;
+            }
+            if anchors.and_then(|anchors| anchors.updated.as_ref()) == Some(&from) {
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!(
+                        "{file} line {line}: belief_revision {id} derives from_updated_at {from}, which equals the belief's current updated_at and would block the first post-seed correction; row omitted"
+                    ),
+                )?;
+                continue;
+            }
+            if !seen_tokens.insert((belief_id.clone(), from.clone())) {
+                record_warning(
+                    &mut warnings,
+                    strict,
+                    format!(
+                        "{file} line {line}: duplicate belief_revision token ({belief_id}, {from}); row omitted"
+                    ),
+                )?;
+                continue;
+            }
+            by_table[4].push(seed_revision_statement(
+                &id,
+                &belief_id,
+                &from,
+                payload,
+                &created_at,
+            ));
+            *emitted.entry("belief_revision".to_owned()).or_default() += 1;
         }
     }
     let statements: Vec<String> = by_table.into_iter().flatten().collect();
 
     let mut header = format!(
-        "-- {HOSTED_SEED_SQL_VERSION}: hosted D1 seed from Lantern logical export\n-- export: {}\n-- manifest record_count: {}\n-- emitted: {}\n-- skipped (not part of the hosted memory surface): {}\n-- idempotent: ON CONFLICT(id) DO NOTHING never overwrites post-seed corrections.\n-- apply: wrangler d1 execute lantern-keeper --remote --config wrangler.jsonc --file <this>\n\n",
+        "-- {HOSTED_SEED_SQL_VERSION}: hosted D1 seed from Lantern logical export\n-- export: {}\n-- manifest record_count: {}\n-- emitted: {}\n-- skipped (not part of the hosted memory surface): {}\n-- idempotent: ON CONFLICT(id) DO NOTHING never overwrites post-seed corrections.\n-- mapping: memory_relation->epistemic_claim, belief_revision->belief_revision (docs/c3-relations-mapping.md)\n-- apply: wrangler d1 execute lantern-keeper --remote --config wrangler.jsonc --file <this>\n\n",
         export_dir.display(),
         manifest_record_count
             .map(|count| count.to_string())
@@ -2552,11 +2871,18 @@ pub fn build_hosted_seed_sql(export_dir: &Path) -> anyhow::Result<(String, Hoste
     Ok((header, report))
 }
 
-fn cmd_hosted_seed_sql(export: &Path, output: &Path, json: bool) -> anyhow::Result<()> {
+fn cmd_hosted_seed_sql(
+    export: &Path,
+    output: &Path,
+    json: bool,
+    strict: bool,
+) -> anyhow::Result<()> {
     if !export.is_dir() {
         bail!("export path is not a directory: {}", export.display());
     }
-    let (sql, report) = build_hosted_seed_sql(export)?;
+    // Under --strict the build itself aborts on the first problem, so this
+    // path never reaches the artifact write with a strict failure.
+    let (sql, report) = build_hosted_seed_sql(export, strict)?;
 
     if let Some(parent) = output
         .parent()
@@ -4429,11 +4755,181 @@ mod tests {
     }
 
     #[test]
+    fn hosted_seed_maps_relations_history_and_bytes() {
+        let (sql, report) = build_hosted_seed_sql(&c3_fixture("synthetic-export"), false)
+            .expect("builder must run");
+        assert!(
+            report.warnings.is_empty(),
+            "warnings: {:?}",
+            report.warnings
+        );
+
+        // memory_relation -> epistemic_claim (docs/c3-relations-mapping.md).
+        assert_eq!(report.emitted.get("memory_relation"), Some(&1));
+        assert!(sql.contains("'relation|related_to|c3-seed-ep-alpha|Beta'"));
+        assert!(
+            sql.contains("'episode:c3-seed-ep-alpha'"),
+            "subject = in_id"
+        );
+        assert!(sql.contains("'basic-memory:Beta'"), "value = out_id");
+        assert!(
+            sql.contains("'related_to'"),
+            "predicate = dedupe first segment"
+        );
+        assert!(sql.contains("'resolved'"), "predicate_status = resolved");
+        let empty_hash = lighting_core::scope_hash(&BTreeMap::new());
+        assert!(
+            sql.contains(&format!("'{empty_hash}'")),
+            "relations seed the empty-scope hash"
+        );
+
+        // belief_revision -> belief_revision with the derived CAS chain.
+        assert_eq!(report.emitted.get("belief_revision"), Some(&2));
+        assert!(
+            sql.contains("'0001-01-01T00:00:00.000000000Z'"),
+            "creation transition records the zero token"
+        );
+        let rev2 = sql
+            .lines()
+            .find(|line| {
+                line.starts_with("INSERT INTO belief_revision") && line.contains("'c3-seed-rev-2'")
+            })
+            .expect("rev-2 statement");
+        assert!(
+            rev2.contains("'2026-10-01T10:00:00.000000000Z'"),
+            "second transition derives from the first revision's created_at: {rev2}"
+        );
+        // Byte-exact native payload strings survive into the seed.
+        assert!(
+            sql.contains("\"transition_type\":\"reinforce\""),
+            "revision payload preserved verbatim"
+        );
+    }
+
+    #[test]
+    fn hosted_seed_strict_aborts_before_writing_artifacts() {
+        let dir = c3_temp_path("strict-malformed");
+        fs::create_dir_all(&dir).expect("temp dir");
+        fs::write(dir.join("manifest.json"), "{}").expect("manifest");
+        fs::write(
+            dir.join("broken.ndjson"),
+            "{\"table\": \"source\"\nnot json at all\n",
+        )
+        .expect("shard");
+        let output = dir.join("seed.sql");
+
+        let strict = cmd_hosted_seed_sql(&dir, &output, false, true);
+        assert!(strict.is_err(), "strict must abort on a malformed row");
+        assert!(
+            !output.exists(),
+            "strict must abort before any artifact is written"
+        );
+
+        let default = cmd_hosted_seed_sql(&dir, &output, false, false);
+        assert!(
+            default.is_err(),
+            "default must still report unexplained loss"
+        );
+        assert!(
+            output.exists(),
+            "default writes the SQL + report for inspection"
+        );
+    }
+
+    #[test]
+    fn hosted_seed_strict_refuses_missing_belief_references() {
+        let dir = c3_temp_path("strict-referential");
+        fs::create_dir_all(&dir).expect("temp dir");
+        fs::write(dir.join("manifest.json"), "{}").expect("manifest");
+        fs::write(
+            dir.join("epistemic.ndjson"),
+            "{\"table\": \"belief_revision\", \"record\": {\"id\": \"belief_revision:orphan\", \"belief_id\": \"belief:absent\", \"payload\": \"{}\", \"created_at\": \"2026-10-01T10:00:00.000000000Z\"}}\n",
+        )
+        .expect("shard");
+        let output = dir.join("seed.sql");
+
+        assert!(
+            cmd_hosted_seed_sql(&dir, &output, false, true).is_err(),
+            "strict must abort on a revision whose belief is absent"
+        );
+        assert!(!output.exists(), "strict writes nothing");
+
+        // Default warns (the apply would fail closed on the foreign key) and
+        // still produces the artifact for inspection.
+        let _ = cmd_hosted_seed_sql(&dir, &output, false, false);
+        assert!(output.exists(), "default writes the artifact");
+    }
+
+    #[test]
+    fn hosted_seed_refuses_token_hazards() {
+        // A corrupt export where a derived from_updated_at equals the
+        // belief's current updated_at would block the first post-seed
+        // correction: strict aborts, default omits the row with a warning.
+        let dir = c3_temp_path("strict-hazard");
+        fs::create_dir_all(&dir).expect("temp dir");
+        fs::write(dir.join("manifest.json"), "{}").expect("manifest");
+        let belief = serde_json::json!({
+            "table": "belief",
+            "record": {
+                "id": "belief:hazard-1",
+                "payload": serde_json::to_string(&serde_json::json!({
+                    "id": "hazard-1",
+                    "holder_key": "matthew",
+                    "subject_key": "s",
+                    "predicate_key": "p",
+                    "current_value": "v",
+                    "scope": {},
+                    "state": "Active",
+                    "created_at": "2026-10-01T10:00:00.000000000Z",
+                    "updated_at": "2026-10-01T11:00:00.000000000Z"
+                })).expect("payload"),
+                "updated_at": "2026-10-01T11:00:00.000000000Z"
+            }
+        });
+        let revisions = [
+            ("r1", "2026-10-01T10:00:00.000000000Z"),
+            ("r2", "2026-10-01T11:00:00.000000000Z"),
+            ("r3", "2026-10-01T12:00:00.000000000Z"),
+        ];
+        let mut shard = format!("{}\n", belief);
+        for (id, created_at) in revisions {
+            shard.push_str(&format!(
+                "{{\"table\": \"belief_revision\", \"record\": {{\"id\": \"belief_revision:{id}\", \"belief_id\": \"belief:hazard-1\", \"payload\": \"{{}}\", \"created_at\": \"{created_at}\"}}}}\n"
+            ));
+        }
+        fs::write(dir.join("epistemic.ndjson"), shard).expect("shard");
+        let output = dir.join("seed.sql");
+
+        // r3 derives from = r2.created_at (11:00) == belief.updated_at.
+        assert!(
+            cmd_hosted_seed_sql(&dir, &output, false, true).is_err(),
+            "strict must abort on a token hazard"
+        );
+        assert!(!output.exists(), "strict writes nothing");
+
+        let (sql, report) = build_hosted_seed_sql(&dir, false).expect("default must build");
+        assert_eq!(
+            report.emitted.get("belief_revision"),
+            Some(&2),
+            "default omits the hazardous row"
+        );
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("would block the first post-seed correction")),
+            "warnings: {:?}",
+            report.warnings
+        );
+        assert!(!sql.contains("belief_revision:r3") && !sql.contains("'r3'"));
+    }
+
+    #[test]
     fn hosted_seed_builder_maps_the_synthetic_export() {
-        let (sql, report) =
-            build_hosted_seed_sql(&c3_fixture("synthetic-export")).expect("builder must run");
+        let (sql, report) = build_hosted_seed_sql(&c3_fixture("synthetic-export"), false)
+            .expect("builder must run");
         assert_eq!(report.schema, "hosted-seed-sql-v1");
-        assert_eq!(report.manifest_record_count, Some(14));
+        assert_eq!(report.manifest_record_count, Some(16));
         assert!(
             report.warnings.is_empty(),
             "warnings: {:?}",
@@ -4443,15 +4939,10 @@ mod tests {
         assert_eq!(report.emitted.get("episode"), Some(&2));
         assert_eq!(report.emitted.get("epistemic_claim"), Some(&2));
         assert_eq!(report.emitted.get("belief"), Some(&2));
-        assert_eq!(report.sql_statements, 8);
-        for unmapped in [
-            "marker",
-            "ledger_event",
-            "project",
-            "memory",
-            "memory_relation",
-            "trace",
-        ] {
+        assert_eq!(report.emitted.get("memory_relation"), Some(&1));
+        assert_eq!(report.emitted.get("belief_revision"), Some(&2));
+        assert_eq!(report.sql_statements, 11);
+        for unmapped in ["marker", "ledger_event", "project", "memory", "trace"] {
             assert_eq!(
                 report.skipped.get(unmapped),
                 Some(&1),
@@ -4471,7 +4962,7 @@ mod tests {
         // The semicolon matters: statements whose stored content contains
         // real newlines span multiple lines, and the header's idempotency
         // note has no trailing semicolon.
-        assert_eq!(sql.matches("ON CONFLICT(id) DO NOTHING;").count(), 8);
+        assert_eq!(sql.matches("ON CONFLICT(id) DO NOTHING;").count(), 11);
 
         // Surreal-style backticks from exported record ids must never leak
         // into the seed SQL.
@@ -4493,8 +4984,8 @@ mod tests {
 
     #[test]
     fn hosted_seed_applies_to_empty_sqlite_and_corrections_flow() {
-        let (sql, _report) =
-            build_hosted_seed_sql(&c3_fixture("synthetic-export")).expect("builder must run");
+        let (sql, _report) = build_hosted_seed_sql(&c3_fixture("synthetic-export"), false)
+            .expect("builder must run");
 
         let conn = rusqlite::Connection::open_in_memory().expect("sqlite");
         conn.execute_batch(lighting_store_d1::SCHEMA_SQL)
@@ -4504,9 +4995,69 @@ mod tests {
 
         assert_eq!(c3_count(&conn, "source"), 2);
         assert_eq!(c3_count(&conn, "episode"), 2);
-        assert_eq!(c3_count(&conn, "epistemic_claim"), 2);
+        assert_eq!(
+            c3_count(&conn, "epistemic_claim"),
+            3,
+            "2 claims + 1 relation-as-claim"
+        );
         assert_eq!(c3_count(&conn, "belief"), 2);
-        assert_eq!(c3_count(&conn, "belief_revision"), 0, "no genesis rows");
+        assert_eq!(
+            c3_count(&conn, "belief_revision"),
+            2,
+            "seeded history chain"
+        );
+        // No seeded revision may occupy the belief's current token: that row
+        // would collide with the first post-seed correction's CAS insert.
+        let hazard: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM belief_revision WHERE belief_id = 'c3-seed-bel-1' AND from_updated_at = '2026-10-01T11:00:00.000000000Z'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("hazard query");
+        assert_eq!(
+            hazard, 0,
+            "seeded history must not block the first correction"
+        );
+        // The creation transition records the derived zero token.
+        let zero: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM belief_revision WHERE from_updated_at = '0001-01-01T00:00:00.000000000Z'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("zero token query");
+        assert_eq!(zero, 1, "creation transition must record the zero token");
+
+        // Byte-exact Markdown round trip: CRLF and non-ASCII survive seeding.
+        let ledger = fs::read_to_string(c3_fixture("synthetic-export").join("ledger.ndjson"))
+            .expect("fixture ledger");
+        let exported_content: String = ledger
+            .lines()
+            .find(|line| line.contains("\"source:`c3-seed-src-alpha`\""))
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("fixture line"))
+            .and_then(|parsed| {
+                parsed
+                    .get("record")
+                    .and_then(|record| record.get("content"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .expect("alpha content in export");
+        let stored_content: String = conn
+            .query_row(
+                "SELECT content FROM source WHERE id = 'c3-seed-src-alpha'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("seeded content");
+        assert_eq!(
+            stored_content.as_bytes(),
+            exported_content.as_bytes(),
+            "source bytes must round-trip exactly (CRLF + non-ASCII)"
+        );
+        assert!(exported_content.contains("\r\n"));
+        assert!(exported_content.contains("café"));
 
         let seeded_token: String = conn
             .query_row(
@@ -4550,14 +5101,15 @@ mod tests {
             )
             .expect("corrected belief");
         assert_eq!(moved, correction.new_revision);
-        assert_eq!(c3_count(&conn, "belief_revision"), 1);
+        // 2 seeded history rows + the correction's own CAS guard row.
+        assert_eq!(c3_count(&conn, "belief_revision"), 3);
         assert_eq!(c3_count(&conn, "correction_idempotency"), 1);
         assert_eq!(c3_count(&conn, "mutation_receipt"), 1);
 
         // Re-applying the seed is idempotent and never clobbers corrections.
         conn.execute_batch(&sql).expect("re-apply must not fail");
         assert_eq!(c3_count(&conn, "belief"), 2);
-        assert_eq!(c3_count(&conn, "epistemic_claim"), 2);
+        assert_eq!(c3_count(&conn, "epistemic_claim"), 3);
         let still_moved: String = conn
             .query_row(
                 "SELECT updated_at FROM belief WHERE id = 'c3-seed-bel-1'",
@@ -4569,7 +5121,11 @@ mod tests {
             still_moved, correction.new_revision,
             "re-seeding must never overwrite a post-seed correction"
         );
-        assert_eq!(c3_count(&conn, "belief_revision"), 1);
+        assert_eq!(
+            c3_count(&conn, "belief_revision"),
+            3,
+            "re-seeding must not duplicate the seeded chain or the correction guard"
+        );
     }
 
     #[tokio::test]
@@ -4653,13 +5209,20 @@ mod tests {
         // Native logical export of the same state, then the builder over it.
         let export_dir = c3_temp_path("three-way-export");
         let summary = store.export_to(&export_dir).await?;
-        let (seed_sql, report) = build_hosted_seed_sql(&export_dir)?;
+        let (seed_sql, report) = build_hosted_seed_sql(&export_dir, false)?;
         assert!(
             report.warnings.is_empty(),
             "builder warnings on a clean native export: {:?}",
             report.warnings
         );
-        for table in ["source", "episode", "epistemic_claim", "belief"] {
+        for table in [
+            "source",
+            "episode",
+            "epistemic_claim",
+            "belief",
+            "memory_relation",
+            "belief_revision",
+        ] {
             let exported = summary.record_counts.get(table).copied().unwrap_or(0);
             let built = report.emitted.get(table).copied().unwrap_or(0);
             assert_eq!(
@@ -4673,9 +5236,11 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory()?;
         conn.execute_batch(lighting_store_d1::SCHEMA_SQL)?;
         conn.execute_batch(&seed_sql)?;
+        // Claims in the database = native claims + relation-as-claim rows.
         assert_eq!(
             c3_count(&conn, "epistemic_claim"),
-            report.emitted.get("epistemic_claim").copied().unwrap_or(0) as i64
+            (report.emitted.get("epistemic_claim").copied().unwrap_or(0)
+                + report.emitted.get("memory_relation").copied().unwrap_or(0)) as i64
         );
 
         // D1-direct style content reconciliation: per-table payload byte
@@ -4692,7 +5257,7 @@ mod tests {
                 .get("table")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
-            if table != "epistemic_claim" && table != "belief" {
+            if table != "epistemic_claim" && table != "belief" && table != "memory_relation" {
                 continue;
             }
             let payload = parsed
@@ -4703,7 +5268,15 @@ mod tests {
             *export_payload_bytes.entry(table.to_owned()).or_default() += payload.len();
         }
         for table in ["epistemic_claim", "belief"] {
-            let from_export = export_payload_bytes.get(table).copied().unwrap_or(0);
+            let mut from_export = export_payload_bytes.get(table).copied().unwrap_or(0);
+            if table == "epistemic_claim" {
+                // Relation rows seed INTO the claim table, so their payloads
+                // are part of the claim table's fingerprint.
+                from_export += export_payload_bytes
+                    .get("memory_relation")
+                    .copied()
+                    .unwrap_or(0);
+            }
             let from_db: i64 = conn.query_row(
                 &format!("SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM {table}"),
                 [],
