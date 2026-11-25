@@ -514,8 +514,24 @@ pub struct ContextPack {
     pub source_refs: Vec<String>,
     #[serde(default)]
     pub episode_refs: Vec<String>,
+    /// Section-aware ranking hits (SECTION-1): the top query-overlapping
+    /// outline sections of the pack's evidence sources, with byte ranges.
+    /// Additive only — never part of item/token budgets.
+    #[serde(default)]
+    pub sections: Vec<ContextSection>,
     #[serde(default)]
     pub retrieval_trace: ContextTrace,
+}
+
+/// One query-overlapping section of a source outline.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextSection {
+    pub source_id: String,
+    pub level: u8,
+    pub title: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub score: i32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

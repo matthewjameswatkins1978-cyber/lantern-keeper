@@ -3,13 +3,13 @@ use std::{collections::BTreeMap, sync::Arc};
 use chrono::Utc;
 use lighting_core::{
     Belief, BeliefId, BeliefLineage, BeliefRevision, BeliefRevisionId, BeliefState, Claim, ClaimId,
-    ContextPack, ContextPackId, ContextTrace, CorrectionIdempotencyRecord, DimensionDefinition,
-    Episode, EpisodeTitle, EpistemicError, EpistemicRepository, EpistemicRepositoryError,
-    MemoryItem, MemoryItemSearch, MemoryPathRepository, NewBelief, NewClaim, NewGraphRelation,
-    NewMemoryItem, NewSource, PredicateDefinition, PredicateStatus, Proposal, ProposalId,
-    ReconciliationAction, ReconciliationDecision, SourceContent, SourceKind, SourceRepository,
-    SourceTitle, Stance, StoreSourceResult, Trace, TraceId, TrustClass, normalize_registry_key,
-    propagate_stale_beliefs, reconcile_claim,
+    ContextPack, ContextPackId, ContextSection, ContextTrace, CorrectionIdempotencyRecord,
+    DimensionDefinition, Episode, EpisodeTitle, EpistemicError, EpistemicRepository,
+    EpistemicRepositoryError, MemoryItem, MemoryItemSearch, MemoryPathRepository, NewBelief,
+    NewClaim, NewGraphRelation, NewMemoryItem, NewSource, PredicateDefinition, PredicateStatus,
+    Proposal, ProposalId, ReconciliationAction, ReconciliationDecision, Source, SourceContent,
+    SourceKind, SourceRepository, SourceTitle, Stance, StoreSourceResult, Trace, TraceId,
+    TrustClass, normalize_registry_key, propagate_stale_beliefs, reconcile_claim,
 };
 use sha2::{Digest, Sha256};
 
@@ -1104,7 +1104,8 @@ impl EpistemicService {
             memories: all_memories,
             claims,
         });
-        let pack = selection.pack;
+        let mut pack = selection.pack;
+        self.attach_sections(&mut pack).await?;
         self.repo
             .store_context_pack(pack.clone())
             .await
@@ -1126,6 +1127,45 @@ impl EpistemicService {
             .await
             .map_err(map_repository_error)?;
         Ok(pack)
+    }
+
+    /// Attaches SECTION-1 section hits to a freshly selected pack: bounded
+    /// point lookups for the pack's evidence sources only, skipped when no
+    /// source repository is wired (advisory, additive — never fails
+    /// selection and never touches item/token budgets).
+    async fn attach_sections(&self, pack: &mut ContextPack) -> Result<(), EpistemicOperationError> {
+        let Some(source_repo) = self.source_repo.as_ref() else {
+            return Ok(());
+        };
+        if pack.source_refs.is_empty() {
+            return Ok(());
+        }
+        let mut sources = Vec::new();
+        for reference in &pack.source_refs {
+            let Some(id) = lighting_core::SourceId::parse(reference) else {
+                continue;
+            };
+            if let Some(source) = source_repo
+                .get(&id)
+                .await
+                .map_err(|error| EpistemicOperationError::Repository(Box::new(error)))?
+            {
+                sources.push(source);
+            }
+        }
+        let query_tokens = context_tokens(&pack.query);
+        pack.sections = score_sections(&query_tokens, &sources);
+        if !pack.sections.is_empty()
+            && !pack
+                .retrieval_trace
+                .lanes
+                .contains(&"section-overlap".to_owned())
+        {
+            pack.retrieval_trace
+                .lanes
+                .push("section-overlap".to_owned());
+        }
+        Ok(())
     }
 
     /// Compiles a bounded, zero-persistence context pack for the hosted
@@ -1165,7 +1205,7 @@ impl EpistemicService {
         let pack_id = ContextPackId::new(uuid::Uuid::new_v4().to_string()).map_err(|_| {
             EpistemicOperationError::Invalid("context ID could not be created".to_owned())
         })?;
-        let pack = compile_select(CompileSelectInput {
+        let mut pack = compile_select(CompileSelectInput {
             query,
             intent: request.intent,
             actor: request.actor,
@@ -1180,6 +1220,7 @@ impl EpistemicService {
             claims,
         })
         .pack;
+        self.attach_sections(&mut pack).await?;
         let encoded = serde_json::to_string(&pack).map_err(|error| {
             EpistemicOperationError::Invalid(format!(
                 "context pack could not be serialized: {error}"
@@ -1557,19 +1598,25 @@ fn compile_select(input: CompileSelectInput) -> CompileSelectOutput {
         searchable_query.push_str(hint);
     }
     let query_tokens = context_tokens(&searchable_query);
+    // State×intent (SECTION-1): history intent in the query is what makes
+    // history-state records first-class candidates for this selection — a
+    // superseded record gets a +3 intent bonus instead of the active +2.
+    let history_intent = history_requested(&query_tokens);
     let mut belief_candidates: Vec<(i32, Vec<String>, Belief)> = all_beliefs
         .into_iter()
         .map(|belief| {
-            let state_bonus = if belief.state == BeliefState::Active {
-                2
-            } else {
-                0
+            let state_bonus = match belief.state {
+                BeliefState::Active => 2,
+                _ if history_intent => 3,
+                _ => 0,
             };
             let (relevance, mut reasons) = belief_relevance_details(&belief, &query_tokens, &scope);
-            if state_bonus > 0 {
-                reasons.push("active-current-projection".to_owned());
-            } else {
-                reasons.push("historical-or-inactive-projection".to_owned());
+            match belief.state {
+                BeliefState::Active => reasons.push("active-current-projection".to_owned()),
+                _ if history_intent => {
+                    reasons.push("history-intent-history-state-boost".to_owned());
+                }
+                _ => reasons.push("historical-or-inactive-projection".to_owned()),
             }
             (relevance + state_bonus, reasons, belief)
         })
@@ -1628,14 +1675,13 @@ fn compile_select(input: CompileSelectInput) -> CompileSelectOutput {
     let mut selected_memories = Vec::new();
     let mut estimated_token_usage =
         estimate_tokens(&format!("# Lantern Context\n\nQuery: {query}\n"));
-    let history_requested = history_requested(&query_tokens);
     for (_, _, belief) in belief_candidates {
         if selected_beliefs.len() + selected_memories.len() >= item_budget {
             break;
         }
         let item_tokens = estimate_belief_tokens(&belief);
         let eligible = belief.state == BeliefState::Active
-            || history_requested
+            || history_intent
             || historical_value_requested(&belief, &query_tokens);
         if eligible
             && !belief.stale
@@ -1672,7 +1718,7 @@ fn compile_select(input: CompileSelectInput) -> CompileSelectOutput {
             if !project_hints.is_empty() {
                 lanes.push("project-hint".to_owned());
             }
-            if history_requested {
+            if history_intent {
                 lanes.push("temporal-history".to_owned());
             }
             lanes
@@ -1769,6 +1815,7 @@ fn compile_select(input: CompileSelectInput) -> CompileSelectOutput {
         soft_memories: selected_memories,
         source_refs,
         episode_refs,
+        sections: Vec::new(),
         retrieval_trace,
     };
     let trace_details = BTreeMap::from([
@@ -1847,6 +1894,59 @@ fn correction_payload_hash(request: &CorrectionRequest) -> Result<String, Episte
     })?;
     let digest = Sha256::digest(canonical);
     Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+/// Maximum section hits attached to one pack (SECTION-1; additive,
+/// budget-exempt — this is a presentation bound, not a retrieval budget).
+const MAX_SECTION_HITS: usize = 10;
+
+/// SECTION-1 section-aware scorer: parses each source's outline with
+/// [`lighting_core::parse_outline`] and ranks its sections by query-token
+/// overlap. Pure and deterministic: score desc, then source id, then start
+/// byte; sections with no overlap are dropped; the result is capped at
+/// [`MAX_SECTION_HITS`].
+fn score_sections(query_tokens: &[String], sources: &[Source]) -> Vec<ContextSection> {
+    if query_tokens.is_empty() {
+        return Vec::new();
+    }
+    let mut hits = Vec::new();
+    for source in sources {
+        let content = source.content().as_str();
+        let outline = lighting_core::parse_outline(content);
+        for heading in outline.headings {
+            let section_text = &content[heading.start_byte..heading.end_byte];
+            let section_tokens = context_tokens(section_text);
+            let score = query_tokens
+                .iter()
+                .filter(|token| section_tokens.iter().any(|candidate| candidate == *token))
+                .count() as i32;
+            if score > 0 {
+                hits.push(ContextSection {
+                    source_id: source.id().as_str().to_owned(),
+                    level: heading.level,
+                    title: heading.title,
+                    start_byte: heading.start_byte,
+                    end_byte: heading.end_byte,
+                    score,
+                });
+            }
+        }
+    }
+    hits.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            // Specificity: a parent section's byte range contains its
+            // children's, so on equal overlap the narrower section ranks
+            // first.
+            .then_with(|| {
+                (left.end_byte - left.start_byte).cmp(&(right.end_byte - right.start_byte))
+            })
+            .then_with(|| left.source_id.cmp(&right.source_id))
+            .then_with(|| left.start_byte.cmp(&right.start_byte))
+    });
+    hits.truncate(MAX_SECTION_HITS);
+    hits
 }
 
 fn context_tokens(query: &str) -> Vec<String> {
@@ -2203,5 +2303,190 @@ mod tests {
         let tokens = context_tokens("How do Matthew and Lucy work together?");
 
         assert_eq!(belief_relevance(&belief, &tokens, &BTreeMap::new()), 0);
+    }
+
+    fn ranking_belief(state: BeliefState, value: &str, at: chrono::DateTime<Utc>) -> Belief {
+        let mut belief = Belief::new(NewBelief {
+            holder_key: "matthew".to_owned(),
+            subject_key: "bench.editor".to_owned(),
+            predicate_key: "preferred".to_owned(),
+            current_value: value.to_owned(),
+            scope: BTreeMap::from([("project".to_owned(), "bench".to_owned())]),
+            confidence: 0.9,
+            trust_class: TrustClass::Direct,
+            known_from: at,
+            valid_from: Some(at),
+            created_at: at,
+        })
+        .expect("test belief is valid");
+        belief.updated_at = at;
+        belief.state = state;
+        belief
+    }
+
+    fn compile_ranking(query: &str, beliefs: Vec<Belief>) -> CompileSelectOutput {
+        compile_select(CompileSelectInput {
+            query: query.to_owned(),
+            intent: None,
+            actor: Some("test".to_owned()),
+            scope: BTreeMap::new(),
+            project_hints: Vec::new(),
+            item_budget: 10,
+            token_budget: 2048,
+            pack_id: ContextPackId::new("pack-section-test".to_owned()).expect("pack id"),
+            created_at: Utc::now(),
+            beliefs,
+            memories: Vec::new(),
+            claims: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn history_intent_boosts_history_state_records_into_selection() {
+        let now = Utc::now();
+        let earlier = now - chrono::Duration::seconds(5);
+        let active = ranking_belief(BeliefState::Active, "current pick alpha pair1", now);
+        let superseded = ranking_belief(BeliefState::Superseded, "legacy-entry-old1", earlier);
+        let decoy = ranking_belief(BeliefState::Active, "unrelated value", earlier);
+        let active_id = active.id.to_string();
+        let superseded_id = superseded.id.to_string();
+        let decoy_id = decoy.id.to_string();
+
+        let output = compile_ranking(
+            "history editor preferred pair1",
+            vec![active, superseded, decoy],
+        );
+
+        assert!(
+            output.pack.selected_ids.contains(&active_id),
+            "active projection must stay selected under history intent"
+        );
+        assert!(
+            output.pack.selected_ids.contains(&superseded_id),
+            "history intent must surface the superseded record"
+        );
+        let reasons = output
+            .pack
+            .retrieval_trace
+            .candidate_reasons
+            .get(&superseded_id)
+            .expect("superseded candidate reasons recorded");
+        assert!(
+            reasons
+                .iter()
+                .any(|reason| reason == "history-intent-history-state-boost"),
+            "boost reason must be recorded: {reasons:?}"
+        );
+        let scores = &output.pack.retrieval_trace.candidate_scores;
+        assert!(
+            scores[&superseded_id] > scores[&decoy_id],
+            "boosted superseded record must outrank the scope-only active decoy ({} vs {})",
+            scores[&superseded_id],
+            scores[&decoy_id]
+        );
+        assert!(
+            output
+                .pack
+                .retrieval_trace
+                .lanes
+                .contains(&"temporal-history".to_owned()),
+            "history lane must be recorded"
+        );
+    }
+
+    #[test]
+    fn without_history_intent_history_state_records_stay_unselected() {
+        let now = Utc::now();
+        let earlier = now - chrono::Duration::seconds(5);
+        let active = ranking_belief(BeliefState::Active, "current pick alpha pair1", now);
+        let superseded = ranking_belief(BeliefState::Superseded, "legacy-entry-old1", earlier);
+        let active_id = active.id.to_string();
+        let superseded_id = superseded.id.to_string();
+
+        let output = compile_ranking("editor preferred pair1", vec![active, superseded]);
+
+        assert!(
+            output.pack.selected_ids.contains(&active_id),
+            "active projection must be selected for the ordinary query"
+        );
+        assert!(
+            !output.pack.selected_ids.contains(&superseded_id),
+            "superseded record must NOT surface without history intent"
+        );
+        let reasons = output
+            .pack
+            .retrieval_trace
+            .candidate_reasons
+            .get(&superseded_id)
+            .expect("superseded candidate reasons recorded");
+        assert!(
+            !reasons
+                .iter()
+                .any(|reason| reason == "history-intent-history-state-boost"),
+            "no boost without history intent: {reasons:?}"
+        );
+    }
+
+    #[test]
+    fn section_scorer_ranks_overlapping_sections_with_byte_ranges() {
+        let source = Source::create(NewSource {
+            kind: SourceKind::Markdown,
+            title: SourceTitle::new("bench guide").expect("title"),
+            content: SourceContent::new(
+                "# Setup\n\nInstall the fixture pack.\n\n## Configuration\n\nEdit the runtime flags.\n\n## Teardown\n\nStop the helper services.\n"
+                    .to_owned(),
+            )
+            .expect("content"),
+        });
+        let tokens = context_tokens("configuration runtime flags");
+        let hits = score_sections(&tokens, std::slice::from_ref(&source));
+
+        assert!(!hits.is_empty(), "Configuration section must be a hit");
+        assert_eq!(hits[0].title, "Configuration");
+        assert!(hits[0].score >= 2);
+        let content = source.content().as_str();
+        let section = &content[hits[0].start_byte..hits[0].end_byte];
+        assert!(
+            section.starts_with("## Configuration"),
+            "byte range must slice the real section"
+        );
+        // The parent Setup section's byte range contains its children's, so it
+        // also overlaps the query; the narrower Configuration section must
+        // still rank first (specificity tie-break).
+        let titles: Vec<&str> = hits.iter().map(|hit| hit.title.as_str()).collect();
+        let config_at = titles
+            .iter()
+            .position(|title| *title == "Configuration")
+            .expect("Configuration must be a hit");
+        let setup_at = titles
+            .iter()
+            .position(|title| *title == "Setup")
+            .expect("Setup spans the query tokens as the parent section");
+        assert!(
+            config_at < setup_at,
+            "specific section must outrank its parent: {titles:?}"
+        );
+        assert!(
+            score_sections(&[], std::slice::from_ref(&source)).is_empty(),
+            "empty query must yield no sections"
+        );
+    }
+
+    #[test]
+    fn section_scorer_is_capped_and_deterministic() {
+        let mut content = String::new();
+        for index in 0..15 {
+            content.push_str(&format!("# Shared topic {index}\n\ntopic body\n"));
+        }
+        let source = Source::create(NewSource {
+            kind: SourceKind::Markdown,
+            title: SourceTitle::new("long note").expect("title"),
+            content: SourceContent::new(content).expect("content"),
+        });
+        let tokens = context_tokens("topic");
+        let first = score_sections(&tokens, std::slice::from_ref(&source));
+        let second = score_sections(&tokens, std::slice::from_ref(&source));
+        assert_eq!(first.len(), MAX_SECTION_HITS, "cap must hold");
+        assert_eq!(first, second, "scoring must be deterministic");
     }
 }
