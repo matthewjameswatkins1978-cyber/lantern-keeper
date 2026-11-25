@@ -25,6 +25,12 @@ pub enum SurrealEpistemicError {
     Decode(#[source] serde_json::Error),
     #[error("epistemic record payload is missing")]
     MissingPayload,
+    #[error("{context} was rejected at statement {statement} and rolled back: {detail}")]
+    StatementRejected {
+        context: &'static str,
+        statement: usize,
+        detail: String,
+    },
 }
 
 #[derive(Clone)]
@@ -38,11 +44,12 @@ impl SurrealEpistemicRepository {
     }
 
     pub async fn migrate(&self) -> Result<(), SurrealEpistemicError> {
-        self.store
+        let mut response = self
+            .store
             .query(SCHEMA_MIGRATION_V9)
             .await
-            .map(|_| ())
-            .map_err(SurrealEpistemicError::Query)
+            .map_err(SurrealEpistemicError::Query)?;
+        refuse_statements(&mut response, "migrate")
     }
 }
 
@@ -58,7 +65,7 @@ impl EpistemicRepository for SurrealEpistemicRepository {
         }
         let payload = serde_json::to_string(&claim)
             .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
-        self.store
+        let mut response = self.store
             .query("CREATE epistemic_claim CONTENT { id: $id, payload: $payload, dedupe_key: $dedupe_key, created_at: $created_at }")
             .bind(("id", claim.id.as_str()))
             .bind(("payload", payload))
@@ -66,6 +73,7 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .bind(("created_at", claim.created_at))
             .await
             .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        refuse_statements(&mut response, "store_claim").map_err(operation)?;
         Ok(claim)
     }
 
@@ -110,7 +118,7 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
         let state = serde_json::to_string(&belief.state)
             .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
-        self.store
+        let mut response = self.store
             .query("CREATE belief CONTENT { id: $id, payload: $payload, stale: $stale, state: $state, updated_at: $updated_at }")
             .bind(("id", belief.id.as_str()))
             .bind(("payload", payload))
@@ -119,6 +127,7 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .bind(("updated_at", belief.updated_at))
             .await
             .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        refuse_statements(&mut response, "store_belief").map_err(operation)?;
         Ok(belief)
     }
 
@@ -166,13 +175,14 @@ impl EpistemicRepository for SurrealEpistemicRepository {
         belief.mark_stale(reason, at);
         let payload = serde_json::to_string(&belief)
             .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
-        self.store
+        let mut response = self.store
             .query("UPDATE belief SET payload = $payload, stale = true, updated_at = $updated_at WHERE id = type::record('belief', $id)")
             .bind(("id", id.as_str()))
             .bind(("payload", payload))
             .bind(("updated_at", at))
             .await
             .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        refuse_statements(&mut response, "mark_belief_stale").map_err(operation)?;
         Ok(belief)
     }
 
@@ -295,9 +305,10 @@ impl EpistemicRepository for SurrealEpistemicRepository {
                 ))
                 .bind((format!("revision_{index}_created_at"), revision.created_at));
         }
-        query
+        let mut response = query
             .await
             .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        refuse_statements(&mut response, "apply_belief_transition").map_err(operation)?;
         Ok(current)
     }
 
@@ -326,13 +337,14 @@ impl EpistemicRepository for SurrealEpistemicRepository {
     ) -> Result<ContextPack, EpistemicRepositoryError> {
         let payload = serde_json::to_string(&pack)
             .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
-        self.store
+        let mut response = self.store
             .query("CREATE context_pack CONTENT { id: $id, payload: $payload, created_at: $created_at }")
             .bind(("id", pack.id.as_str()))
             .bind(("payload", payload))
             .bind(("created_at", pack.created_at))
             .await
             .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        refuse_statements(&mut response, "store_context_pack").map_err(operation)?;
         Ok(pack)
     }
 
@@ -360,7 +372,7 @@ impl EpistemicRepository for SurrealEpistemicRepository {
         }
         let payload = serde_json::to_string(&item)
             .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
-        self.store
+        let mut response = self.store
             .query("CREATE memory_item CONTENT { id: $id, payload: $payload, dedupe_key: $dedupe_key, content: $content, archived: $archived, salience: $salience, created_at: $created_at }")
             .bind(("id", item.id.as_str()))
             .bind(("payload", payload))
@@ -371,6 +383,7 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .bind(("created_at", item.created_at))
             .await
             .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        refuse_statements(&mut response, "store_memory_item").map_err(operation)?;
         Ok(item)
     }
 
@@ -425,7 +438,7 @@ impl EpistemicRepository for SurrealEpistemicRepository {
     ) -> Result<Proposal, EpistemicRepositoryError> {
         let payload = serde_json::to_string(&proposal)
             .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
-        self.store
+        let mut response = self.store
             .query("CREATE proposal CONTENT { id: $id, payload: $payload, status: $status, created_at: $created_at }")
             .bind(("id", proposal.id.as_str()))
             .bind(("payload", payload))
@@ -433,6 +446,7 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .bind(("created_at", proposal.created_at))
             .await
             .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        refuse_statements(&mut response, "enqueue_proposal").map_err(operation)?;
         Ok(proposal)
     }
 
@@ -478,7 +492,7 @@ impl EpistemicRepository for SurrealEpistemicRepository {
     ) -> Result<Proposal, EpistemicRepositoryError> {
         let payload = serde_json::to_string(&proposal)
             .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
-        self.store
+        let mut response = self.store
             .query(
                 "UPDATE proposal SET payload = $payload, status = $status WHERE id = type::record('proposal', $id)",
             )
@@ -487,6 +501,7 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .bind(("status", proposal.status.clone()))
             .await
             .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        refuse_statements(&mut response, "update_proposal").map_err(operation)?;
         Ok(proposal)
     }
 
@@ -503,7 +518,7 @@ impl EpistemicRepository for SurrealEpistemicRepository {
         }
         let payload = serde_json::to_string(&relation)
             .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
-        self.store
+        let mut response = self.store
             .query("CREATE memory_relation CONTENT { id: $id, payload: $payload, dedupe_key: $dedupe_key, in_id: $in_id, out_id: $out_id, resolved: $resolved, created_at: $created_at }")
             .bind(("id", relation.id.as_str()))
             .bind(("payload", payload))
@@ -514,6 +529,7 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             .bind(("created_at", relation.created_at))
             .await
             .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        refuse_statements(&mut response, "store_relation").map_err(operation)?;
         Ok(relation)
     }
 
@@ -643,7 +659,7 @@ where
     let query = format!(
         "CREATE {table} CONTENT {{ id: $id, key: $key, payload: $payload, created_at: $created_at }}"
     );
-    store
+    let mut response = store
         .query(query)
         .bind(("id", key.to_owned()))
         .bind(("key", key.to_owned()))
@@ -651,6 +667,7 @@ where
         .bind(("created_at", created_at))
         .await
         .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+    refuse_statements(&mut response, "append_registry_definition").map_err(operation)?;
     Ok(value.clone())
 }
 
@@ -689,13 +706,14 @@ where
         .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
     let query =
         format!("CREATE {table} CONTENT {{ id: $id, payload: $payload, created_at: $created_at }}");
-    store
+    let mut response = store
         .query(query)
         .bind(("id", id))
         .bind(("payload", payload))
         .bind(("created_at", created_at))
         .await
         .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+    refuse_statements(&mut response, "append_payload").map_err(operation)?;
     Ok(value.clone())
 }
 
@@ -739,6 +757,27 @@ fn decode<T: serde::de::DeserializeOwned>(record: Object) -> Result<T, SurrealEp
         .and_then(|value| value.clone().into_t::<String>().ok())
         .ok_or(SurrealEpistemicError::MissingPayload)?;
     serde_json::from_str(&payload).map_err(SurrealEpistemicError::Decode)
+}
+
+/// Refuses a response whose statements were rejected.
+///
+/// `Query::await` reports transport and parse failures only. A statement
+/// rejected inside a `BEGIN … COMMIT` batch arrives in the response with the
+/// whole transaction rolled back, so without this check a rolled-back write
+/// returns `Ok` and the caller records an accepted write that does not exist.
+fn refuse_statements(
+    response: &mut surrealdb::IndexedResults,
+    context: &'static str,
+) -> Result<(), SurrealEpistemicError> {
+    let errors = response.take_errors();
+    if let Some((statement, error)) = errors.into_iter().min_by_key(|(index, _)| *index) {
+        return Err(SurrealEpistemicError::StatementRejected {
+            context,
+            statement,
+            detail: error.to_string(),
+        });
+    }
+    Ok(())
 }
 
 fn operation(error: impl std::error::Error + Send + Sync + 'static) -> EpistemicRepositoryError {
