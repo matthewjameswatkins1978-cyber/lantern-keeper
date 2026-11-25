@@ -43,4 +43,8 @@ pub struct MarkerRetrievalResponse {
     pub marker: Option<MarkerMatch>,
     pub episodes: Vec<RetrievedEpisode>,
     pub warnings: Vec<String>,
+    /// True when the Marker–Episode cap (50) was reached: the response may
+    /// omit later linked Episodes, whether the cap applied in this service or
+    /// in the adapter below it. Additive field; existing consumers ignore it.
+    pub truncated: bool,
 }
