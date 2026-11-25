@@ -79,9 +79,9 @@ fn matrix() -> Vec<((Adapter, Clause), Cell)> {
         for clause in CLAUSES {
             let cell = match (adapter, clause) {
                 (Adapter::Native, Clause::NoFalseSuccess) => Cell::Pending(
-                    "this lineage predates the repair: a rolled-back batch still returns Ok \
-                     (measured on the M1 bounded surface). Fixed on \
-                     fix/native-write-failure-report @ c57907f; asserted there, not here.",
+                    "this matrix does not inject a native statement failure; the workspace \
+                     test statement_error_reporting::partial_batch_aborts_and_reports_failure \
+                     exercises rollback and error reporting on the native adapter.",
                 ),
                 (Adapter::Native, _) => Cell::Executed,
                 (Adapter::HostedD1, _) => Cell::Pending(HOSTED_GAP),
