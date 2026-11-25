@@ -22,3 +22,7 @@ CREATE TABLE IF NOT EXISTS remember_idempotency (
 
 -- Same binding-not-global rule as corrections: enforced UNIQUE.
 CREATE UNIQUE INDEX IF NOT EXISTS remember_binding ON remember_idempotency (principal, scope_hash, idempotency_key);
+
+-- The deployed 0001 baseline reports hosted-1; this migration moves the
+-- database to hosted-2 so lantern_status never claims an old schema.
+INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', 'hosted-2');

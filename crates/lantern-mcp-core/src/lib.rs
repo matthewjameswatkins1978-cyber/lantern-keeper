@@ -748,6 +748,15 @@ pub fn payload_hash(
 
 /// Deterministic receipt/revision ids: same accepted write -> same id, so a
 /// replay collides on the primary key instead of minting a duplicate.
+/// Payload hash for a keyed remember: envelope binds the contract version,
+/// composite key binds principal+scope+caller key, content hash binds the
+/// exact bytes. The worker persists exactly this value and compares exactly
+/// this value on replay -- any divergence is a guaranteed replay break, so
+/// the formula lives here, not at the call site.
+pub fn remember_payload_hash(envelope: &str, composite_key: &str, content_hash: &str) -> String {
+    sha256_hex(&format!("{envelope}|{composite_key}|{content_hash}"))
+}
+
 pub fn deterministic_id(prefix: &str, composite_key: &str, payload_hash: &str) -> String {
     sha256_hex(&format!("{prefix}|{composite_key}|{payload_hash}"))
         .chars()
@@ -918,6 +927,18 @@ mod tests {
         let good = json!({"scope": scope, "content": "hi", "idempotency_key": "k"});
         let args = parse_remember(&good).expect("valid remember");
         assert_eq!(args.content, "hi");
+    }
+
+    #[test]
+    fn remember_payload_hash_binds_all_inputs() {
+        // The worker persists exactly this value and compares exactly this
+        // value on replay. If the formula drifts from either side, replay
+        // breaks -- this test pins it.
+        let base = remember_payload_hash("v1", "p|s|k", "ch");
+        assert_eq!(base, remember_payload_hash("v1", "p|s|k", "ch"));
+        assert_ne!(base, remember_payload_hash("v2", "p|s|k", "ch"));
+        assert_ne!(base, remember_payload_hash("v1", "p|s|k2", "ch"));
+        assert_ne!(base, remember_payload_hash("v1", "p|s|k", "ch2"));
     }
 
     #[test]

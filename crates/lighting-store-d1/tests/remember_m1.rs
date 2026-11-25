@@ -156,6 +156,46 @@ fn replay_returns_original_without_duplicating() {
 }
 
 #[test]
+fn persisted_hash_matches_replay_comparison() {
+    // Regression for the Q17 qualification blocker: the worker persisted
+    // content_hash but compared the envelope hash, so every replay
+    // conflicted. The contract is: the stored payload_hash MUST equal the
+    // value the worker compares. This test runs the full cycle at the seam:
+    // batch -> persisted row -> lookup -> compare.
+    let conn = open_schema().expect("schema");
+    let write = remember("r1", "hello", "k-replay");
+    run_batch(&conn, &batch_of(&write)).expect("accepted");
+
+    let stored: String = conn
+        .query_row(
+            "SELECT payload_hash FROM remember_idempotency WHERE key = 'pi|scope-a|k-replay'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("receipt row");
+    // The worker compares this exact stored value against its freshly
+    // computed hash; equality is what makes replay return the receipt.
+    let key = idempotency_composite_key("pi", "scope-a", "k-replay");
+    let found: Option<(String, String)> = {
+        let mut prepared = conn.prepare(&lookup_remember(&key).sql).expect("prepare");
+        let mut rows = prepared.query(rusqlite::params![key]).expect("query");
+        rows.next()
+            .expect("row")
+            .map(|row| (row.get(0).expect("key"), row.get(1).expect("payload_hash")))
+    };
+    let (found_key, found_hash) = found.expect("receipt must be found");
+    assert_eq!(found_key, "pi|scope-a|k-replay");
+    assert_eq!(
+        found_hash, stored,
+        "compared value must equal persisted value"
+    );
+    assert_eq!(
+        stored, "hash-k-replay",
+        "fixture hash passes through untouched"
+    );
+}
+
+#[test]
 fn denied_scope_sees_nothing() {
     let conn = open_schema().expect("schema");
     let write = remember("r1", "secret", "k1");

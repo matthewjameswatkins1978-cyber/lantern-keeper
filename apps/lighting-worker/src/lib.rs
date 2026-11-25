@@ -20,7 +20,7 @@ use lantern_mcp_core::{
     canonical_from_millis, classify_d1_error, context_score, deterministic_id, escape_like,
     from_batch_refusal, load_credentials, merge_belief_payload, parse_client_msg, parse_context,
     parse_correct, parse_get_source, parse_list_notes, parse_remember, parse_search,
-    parse_why, payload_hash, rpc_error, rpc_result, tool_catalog,
+    parse_why, payload_hash, remember_payload_hash, rpc_error, rpc_result, tool_catalog,
     sha256_hex, PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION,
 };
 use lighting_store_d1 as store;
@@ -344,7 +344,7 @@ async fn remember(
         store::idempotency_composite_key(&principal.principal, &scope_hash, &args.idempotency_key);
     let envelope = store::WRITE_ENVELOPE_VERSION;
     let content_hash = sha256_hex(&args.content);
-    let hash = sha256_hex(&format!("{envelope}|{composite}|{content_hash}"));
+    let hash = remember_payload_hash(envelope, &composite, &content_hash);
     let source_id: String = content_hash.chars().take(32).collect();
 
     // 1. Replay check: exact key + same payload -> original receipt back.
@@ -363,6 +363,7 @@ async fn remember(
         "memory_id": memory_id,
         "envelope_version": envelope,
         "accepted_at": accepted_at,
+        "scope_hash": scope_hash,
         "replayed": false
     })
     .to_string();
@@ -373,7 +374,7 @@ async fn remember(
         principal: principal.principal.clone(),
         scope_hash: scope_hash.clone(),
         content: args.content.clone(),
-        payload_hash: content_hash,
+        payload_hash: hash.clone(),
         receipt_id,
         accepted_at,
         result_json: result_json.clone(),
@@ -386,14 +387,10 @@ async fn remember(
         prepared.push(bind_statement(&d1, statement)?);
     }
     match d1.batch(prepared).await {
-        Ok(_) => {
-            let mut payload: Value = serde_json::from_str(&result_json)
-                .map_err(|_| CoreError::Storage("receipt serialization".into()))?;
-            if let Some(object) = payload.as_object_mut() {
-                object.insert("scope_hash".into(), json!(scope_hash));
-            }
-            Ok(payload)
-        }
+        // The receipt already carries scope_hash (built above), so fresh and
+        // replayed responses have identical shape apart from `replayed`.
+        Ok(_) => serde_json::from_str(&result_json)
+            .map_err(|_| CoreError::Storage("receipt serialization".into())),
         Err(error) => {
             let classified = classify_any(error);
             if classified == CoreError::IdempotencyConflict {
