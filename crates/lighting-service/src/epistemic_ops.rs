@@ -392,6 +392,13 @@ impl EpistemicService {
                 "correction target must be an active belief".to_owned(),
             ));
         }
+        // Q18 gap 2: stale material is suppressed from ordinary operations,
+        // and a correction is an ordinary operation.
+        if target.stale {
+            return Err(EpistemicOperationError::Invalid(
+                "correction target must not be a stale projection".to_owned(),
+            ));
+        }
         let context_pack_id = request
             .context_pack_id
             .as_deref()
@@ -480,11 +487,12 @@ impl EpistemicService {
             .await
             .map_err(map_repository_error)?;
         let reconciliation = self
-            .reconcile_claim(
+            .reconcile_claim_pinned(
                 claim.id.as_str(),
                 ReconcileClaimRequest {
                     independent_evidence: true,
                 },
+                Some(target),
             )
             .await?;
         let result = CorrectionResult {
@@ -518,6 +526,20 @@ impl EpistemicService {
         id: &str,
         request: ReconcileClaimRequest,
     ) -> Result<ReconciliationResult, EpistemicOperationError> {
+        self.reconcile_claim_pinned(id, request, None).await
+    }
+
+    /// Q18 gap 1: reconciliation against an explicitly declared target. The
+    /// public path (`reconcile_claim`) re-discovers the newest active
+    /// projection for the claim's key, which lets a correction drift onto a
+    /// sibling that shares the key; `record_correction` pins the belief the
+    /// caller actually declared instead.
+    pub async fn reconcile_claim_pinned(
+        &self,
+        id: &str,
+        request: ReconcileClaimRequest,
+        pinned_target: Option<Belief>,
+    ) -> Result<ReconciliationResult, EpistemicOperationError> {
         let id = lighting_core::ClaimId::new(id.to_owned())
             .map_err(|_| EpistemicOperationError::Invalid("claim ID cannot be blank".to_owned()))?;
         let claim = self
@@ -531,17 +553,20 @@ impl EpistemicService {
             .list_beliefs(true)
             .await
             .map_err(map_repository_error)?;
-        let existing = all_beliefs
-            .iter()
-            .filter(|belief| {
-                claim.predicate_key.as_ref() == Some(&belief.predicate_key)
-                    && claim.subject_key == belief.subject_key
-                    && claim.holder_actor_id.as_deref() == Some(belief.holder_key.as_str())
-                    && claim.scope_hash == belief.scope_hash
-                    && belief.state == BeliefState::Active
-            })
-            .max_by_key(|belief| belief.updated_at)
-            .cloned();
+        let existing = match pinned_target {
+            Some(target) => Some(target),
+            None => all_beliefs
+                .iter()
+                .filter(|belief| {
+                    claim.predicate_key.as_ref() == Some(&belief.predicate_key)
+                        && claim.subject_key == belief.subject_key
+                        && claim.holder_actor_id.as_deref() == Some(belief.holder_key.as_str())
+                        && claim.scope_hash == belief.scope_hash
+                        && belief.state == BeliefState::Active
+                })
+                .max_by_key(|belief| belief.updated_at)
+                .cloned(),
+        };
         let decision = reconcile_claim(&claim, existing.as_ref(), request.independent_evidence);
         let now = Utc::now();
         let trace_id = new_trace_id()?;

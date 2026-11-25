@@ -165,17 +165,9 @@ async fn correction_acts_on_the_declared_target() -> Result<(), Box<dyn std::err
         .await?
         .ok_or("declared target disappeared")?;
     assert_eq!(
-        stored.current_value, "gamma",
-        "the declared target must carry the correction's current_value"
-    );
-    assert_eq!(
-        result
-            .reconciliation
-            .belief
-            .as_ref()
-            .map(|belief| belief.id.clone()),
-        Some(older.id.clone()),
-        "the reconciliation result must reference the declared target"
+        stored.state,
+        lighting_core::BeliefState::Superseded,
+        "the declared target must be the projection the correction superseded"
     );
     let untouched = repo
         .get_belief(&newer.id)
@@ -184,6 +176,25 @@ async fn correction_acts_on_the_declared_target() -> Result<(), Box<dyn std::err
     assert_eq!(
         untouched.current_value, "beta",
         "a projection the caller did not target must not absorb the correction"
+    );
+    assert_eq!(
+        untouched.state,
+        lighting_core::BeliefState::Active,
+        "a projection the caller did not target must stay active"
+    );
+    let replacement = result
+        .reconciliation
+        .belief
+        .as_ref()
+        .ok_or("reconciliation produced no belief")?;
+    assert_eq!(
+        replacement.current_value, "gamma",
+        "the correction's replacement must carry the new value"
+    );
+    assert_eq!(
+        replacement.lineage.prior_belief_id.as_deref(),
+        Some(older.id.as_str()),
+        "the replacement must derive from the declared target, not a sibling"
     );
     Ok(())
 }

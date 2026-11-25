@@ -899,6 +899,19 @@ pub fn reconcile_claim(
             )
         };
     };
+    // Q18 gap 4: a replayed correction carries the same claim identity the
+    // projection already recorded — reinforcement would double-count it.
+    if existing
+        .lineage
+        .supporting_claim_ids
+        .iter()
+        .any(|recorded| recorded == claim.id.as_str())
+    {
+        return decision(
+            ReconciliationAction::NoChange,
+            "claim is already recorded against this belief",
+        );
+    }
     if existing.current_value == claim.value && claim.polarity {
         return if independent_evidence {
             decision(
