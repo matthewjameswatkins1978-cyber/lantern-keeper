@@ -1,216 +1,88 @@
-# Lantern Keeper
+<div align="center">
+  <img src="assets/brand/readme-banner.svg" alt="Lantern Keeper — quiet by default, powerful on demand" width="100%">
+  <h1>Give your AI a memory that belongs to you.</h1>
+  <p>Keep the knowledge, ideas and decisions that make your work yours.<br>Pick up where you left off, even when you change AI.</p>
+  <p><strong>Open source</strong> · <strong>Local-first</strong> · <strong>Model-independent</strong> · <strong>Built in Rust</strong></p>
+  <p><a href="#what-you-can-do">Explore the features</a> · <a href="#try-it-locally">Try it locally</a> · <a href="#the-road-to-10">Road to 1.0</a> · <a href="#for-developers">Technical details</a></p>
+</div>
 
-> **Developer preview.** Lantern Keeper can be built and experimented with locally, but it is not a certified production service or a turnkey, audited multi-user deployment. A working MCP transport does not, by itself, establish native tool availability in every ChatGPT client. Check the actual client integration and authorization boundaries before relying on it. The [dated engineering audit](CURRENT.md) and [release roadmap](docs/ROADMAP.md) record the evidence and work still required.
+> [!NOTE]
+> **Developer preview, not a finished commercial service.** The local engine and MCP integration are available to build from source. A private hosted profile is in active development; full workshop migration, everyday client acceptance and a public managed service are not yet complete. See [current engineering evidence](CURRENT.md) and the [engineering roadmap](docs/ROADMAP.md). The product roadmap below distinguishes shipped capabilities from planned work.
 
-> A local-first trust layer for persistent AI memory and controlled agent action.
+## Memory that stays out of your way
 
-Lantern Keeper is infrastructure for AI systems that need to **remember without quietly rewriting history** and **act without quietly inheriting unlimited authority**.
+A good AI memory system should feel like part of the conversation, not another application to manage.
 
-Most AI memory systems flatten very different things into one bucket: what somebody said, what a model inferred, what is currently believed, what might be useful later, and what an agent is allowed to do. Lantern Keeper keeps those things separate on purpose.
+You should be able to start a new conversation, continue a project, recall an idea or correct something that has changed without repeatedly explaining everything to your assistant. When a remembered detail matters, your AI can bring it up. When it doesn't, your memory should stay quietly in the background.
 
-That gives it two connected jobs:
+That's what Lantern Keeper is designed for.
 
-1. **Epistemic memory** — preserve evidence, perspective, corrections, current belief, soft memory, and retrieval lineage.
-2. **Authority and execution trust** — keep remembered information separate from permission, then record what an authorised agent actually did.
+Its goal is a natural workflow through compatible AI clients: save useful knowledge at the right moments, retrieve only what helps, and make the original material available when you want to examine it. Automatic capture and recall depend on the client's tool access and instructions; Lantern Keeper does not secretly record conversations or run an always-on AI in the background.
 
-A memory system should be able to answer **“why do you believe this?”**. An agent system should also be able to answer **“why were you allowed to do that?”**. Lantern is built around both questions.
+### What you can do
 
-## Lantern Warden
+| | Everyday use | Under the bonnet |
+| :--- | :--- | :--- |
+| **💡 Keep an idea** | Save a musical idea, a research fragment or a useful thought without turning it into a factual assertion. | Soft Memory Items, typed material and source provenance. |
+| **🔎 Find something again** | Ask what was decided, what a note said or why a particular approach was chosen. | Search, bounded context assembly and inspectable retrieval lineage. |
+| **🕯️ Correct a memory** | Change what is understood to be current without silently erasing useful history. | Evidence-linked claims, reconciliation, supersession and revision lineage. |
+| **📚 Continue a project** | Recover the relevant decisions, rejected approaches and supporting material when returning to work. | Project associations, Context Packs and evidence links; richer resumption is on the roadmap. |
+| **🤝 Work across AI tools** | Use the same knowledge with compatible assistants instead of rebuilding a separate memory for each model. | A local MCP bridge and a developing authenticated hosted profile. |
+| **🧭 Learn from experience** | Give agents useful lessons, observations and records of failed approaches. | Existing soft memory kinds; individually scoped agent continuity is planned. |
+| **📦 Keep your knowledge yours** | Run locally and move your memory rather than tying it to a particular AI subscription. | Logical export and restore; customer-facing lossless portability and deletion controls are planned. |
 
-Memory can influence thought.
-Only authority can permit action.
+### A small example
 
-Lantern Warden is the judge-facing trust console built on Lantern Keeper. It
-separates four questions that are often collapsed by an AI system:
+**You:** Remember that we rejected the original search design because it scanned the entire project.
 
-| State | Question | Meaning |
-| --- | --- | --- |
-| **HEARD** | What did it hear? | External evidence and its Source → Episode provenance |
-| **THOUGHT** | What does it think? | A candidate interpretation, never a canonical mutation |
-| **AUTHORISED** | Is it allowed? | Tethers policy plus an authenticated Warden authority decision |
-| **DONE** | What actually happened? | OpenShell effect, Trail, and linked receipts |
+**Later, in a different session:** What was the reason we changed the search design?
 
-The public demo is replay-first and synthetic-only. It is designed to show the
-accepted execution evidence without exposing grant administration, Tethers
-control, OpenShell control, personal memory, or credentials. The public
-endpoint is not a production deployment.
+**Your assistant:** We rejected the previous approach because of the full-project scan. Here is the relevant decision and its supporting memory.
 
-### Trust chain
+This is the intended experience, illustrated with fictional data. It is not a screenshot or a claim that every AI client already supports unattended capture.
 
-```text
-Tavily external evidence
-          ↓
-Lantern Sources / Episodes
-          ↓
-Nemotron candidate cognition
-          ↓
-Lantern Warden state
-          X  no automatic authority edge
-          X
-Authenticated AuthorityGrant
-          ↓
-Tethers policy
-          ↓
-OpenShell
-          ↓
-Trail + Warden receipts
-```
+## Why Lantern Keeper is different
 
-Tavily supplies bounded external evidence; NVIDIA Nemotron through Nebius
-Token Factory supplies candidate interpretation; Tethers supplies the
-deterministic policy boundary; OpenShell supplies the sandboxed effect
-boundary. None of the external evidence or model output can create authority.
+**A note is not a belief. An idea is not a fact. A remembered instruction is not permission.**
 
-Local console: `LANTERN_TRUST_CONSOLE=1 cargo run --locked -p lighting -- serve`,
-then open `http://127.0.0.1:4317/console`. The public container mode is
-`WARDEN_PUBLIC_DEMO=1`; it registers only the health, version, static console,
-and replay-only surface. Release image instructions and limitations are in
-[`docs/hackathon/M7_PUBLIC_DEMO.md`](docs/hackathon/M7_PUBLIC_DEMO.md).
+Lantern Keeper preserves these distinctions instead of flattening everything into interchangeable text fragments. You can keep creative work as creative work, retain attributed factual assertions and understand why an accepted fact changed.
 
-## The idea
+- **Original material matters.** Source evidence, attribution and exact text are the route back to the underlying information.
+- **Current knowledge is not the same as history.** Corrections preserve useful earlier evidence rather than silently rewriting it.
+- **Useful context beats a wall of text.** Bounded Context Packs help an AI work with relevant material rather than loading an entire archive.
+- **Your choice of AI matters.** The memory engine is separate from the model that uses it. It does not require a second language-model subscription.
+- **Memory is not authority.** Stored text cannot grant an agent permission to execute tools or change its own access.
 
-```text
-KNOWLEDGE
+## The road to 1.0
 
-conversation / file / tool result / external evidence
-                         |
-                         v
-                    Source
-                 exact evidence
-                         |
-                         v
-                    Episode
-                  bounded event
-                         |
-                         v
-                     Claim
-            what was actually asserted
-          + perspective + provenance
-                         |
-                         v
-                     Belief
-             current reconciled view
-          + lineage + scope + validity
-                         |
-                         v
-                  Context Pack
-             bounded working context
+The aim is an easy-to-use personal and collaborative memory service, with a small optional agent-memory capability. The native engine is the foundation, not a product we are replacing.
 
-Soft Memory Items sit beside this chain for ideas, fragments, lessons,
-creative seeds, tensions and other useful material that is not established fact.
+| Capability | Status |
+| :--- | :--- |
+| Evidence-linked factual capture and soft memory | Available in local developer preview |
+| Corrections, current/historical retrieval and bounded context | Available in local developer preview |
+| Logical export/restore and local MCP integration | Available in local developer preview |
+| Read-only Streamable HTTP MCP adapter | Available locally; loopback-bound |
+| Private authenticated hosted memory | Prototype / in development |
+| Native database modernisation | In development |
+| Exact document/code workflows and section-aware retrieval | Planned enhancements |
+| Natural cross-client capture and project resumption | Planned; practical client qualification required |
+| Optional scoped agent lessons and continuity | Planned for 1.0 |
+| Customer accounts, permission controls, export/delete and simple onboarding | Planned |
+| Managed service, packaged self-hosting and automatic updates | Planned; not on sale today |
 
-ACTION
+The proposed product experience is to connect once, work normally and use memory on demand when needed. We will compare everyday workflows against a conventional shared-memory service and a memory-disabled control, measuring important recall, human reminders, interruptions, correctness, latency and cost. No claim of superiority before the evidence.
 
-Principal -> Authority Grant -> Tethers policy -> bounded executor -> Receipt
-                     ^                                      |
-                     |                                      v
-               revocation / expiry                    actual outcome
-```
+## Try it locally
 
-The two chains deliberately do **not** collapse into one another. A remembered fact cannot grant authority. A model suggestion cannot grant authority. A generated Context Pack cannot become evidence merely because an AI wrote it. Permission has to come through the authority path.
+**For developers:** the repository is available to build from source. A packaged installer is not yet available as part of this preview.
 
-## Why this is useful
-
-Long-lived AI systems accumulate context. Context is useful, but it is also where subtle errors become durable.
-
-A summary can slowly become “fact”. A quotation can lose its speaker. Repetition can look like consensus. A correction can overwrite the thing it corrected. An assistant can quote its own earlier output until the system appears to have evidence that never existed.
-
-Lantern Keeper treats those as modelling problems, not prompt-engineering problems.
-
-Its central design choices are:
-
-- **evidence before interpretation** — retain the source route back to what happened;
-- **perspective is explicit** — originator, speaker, transmitter, holder and stance are different things;
-- **corrections are additive** — new evidence supersedes current understanding without erasing history;
-- **soft memory stays soft** — an idea can remain useful without becoming a factual claim;
-- **AI output is candidate material** — Dreamer, extractors and semantic systems may propose, but do not silently establish canonical truth;
-- **retrieval is inspectable** — Context Packs carry reasons, provenance, budgets and omissions;
-- **authority is separate from knowledge** — knowing something does not imply permission to act on it;
-- **effects are receipted** — authorised actions can be tied to an outcome and an auditable receipt chain;
-- **local-first by default** — the normal path uses embedded SurrealKV and keeps private state on the operator's machine.
-
-## What can Lantern Keeper be used for?
-
-Lantern began as persistent memory for a long-running human/AI collaboration, but the architecture is intentionally broader than that origin.
-
-### Persistent personal or professional AI memory
-
-Give an assistant long-term memory without turning every remembered sentence into an unquestioned fact. Preferences, decisions, corrections, project knowledge, ideas and open loops can coexist while retaining their different trust levels.
-
-### Long-running project memory
-
-Keep design decisions, requirements, rejected paths, results and corrections attached to evidence. A new agent or session can receive a bounded Context Pack instead of a giant undifferentiated transcript.
-
-### Multi-agent systems
-
-Different agents can share evidence while retaining distinct perspectives and permissions. One agent's output does not automatically become another agent's authority or belief.
-
-### Auditable research and retrieval
-
-External search results can be stored as evidence before interpretation. A model can produce candidate conclusions while the route back to URLs, retrieval metadata, Sources and Episodes remains inspectable.
-
-### Safer autonomous or semi-autonomous agents
-
-Lantern's authority model can be used with Tethers and a sandboxed executor so an agent receives only narrow, explicit capabilities. Grants can expire or be revoked, and execution can fail closed when authority is missing.
-
-### Decision logs and institutional memory
-
-Teams can preserve not only the current decision but why it was made, what evidence existed at the time, what later corrected it, and which historical view is being requested.
-
-### Creative work
-
-Ideas, fragments, jokes, references, patterns, tensions, creative seeds and rejected paths can remain useful without being misclassified as facts. This is especially valuable for creative systems where “interesting” and “true” are different categories.
-
-### Memory migration and portability
-
-Lantern includes logical export/restore and migration accounting so memory is not intended to become an opaque database that can never be inspected or moved.
-
-### Trust-aware RAG and context assembly
-
-Lantern can sit underneath retrieval systems as the layer that decides what kind of thing a record is, where it came from, whether it is current, and why it was selected.
-
-## What works today
-
-The current `master` branch is a **source-ready developer preview**. It is suitable for developers who want to clone it, inspect it, run it locally, build integrations, or experiment with the model now.
-
-Implemented and verified work includes:
-
-- Rust 1.98.1 / Edition 2024 workspace;
-- embedded, versioned SurrealKV as the normal local store, with an optional SurrealDB 3.3.0 remote lane;
-- durable Sources, Episodes, Projects, Claims, Beliefs, soft Memory Items, relations, Traces, Proposals, predicates and dimensions;
-- immutable evidence-linked factual capture;
-- deterministic Claim-to-Belief reconciliation, supersession, correction lineage and stale propagation;
-- current-versus-historical retrieval;
-- bounded deterministic Context Packs with provenance, selection reasons and retrieval traces;
-- logical export and restore;
-- LanternBench behavioural acceptance coverage;
-- a local stdio MCP bridge exposing eight bounded tools;
-- a real connected Codex Desktop MCP proof covering remember, search, context, why, correction, restart persistence and provenance;
-- durable authority grants and revocations with exact capability checks, expiry and fail-closed behaviour;
-- server-owned authority IDs, timestamps and provenance rather than client-authored trust records;
-- canonical execution receipts with SHA-256 continuity links;
-- Tethers authority integration;
-- a verified OpenShell sandbox path with denied forbidden paths, denied network egress and no Lantern control credentials exposed to the sandbox;
-- an external-evidence cognitive path using Tavily -> Source/Episode -> candidate-only Nemotron output;
-- a Trust Console that makes the chain visible as **HEARD -> THOUGHT -> AUTHORISED -> DONE**.
-
-The hackathon authority/execution work is sometimes referred to as **Lantern Warden**. Warden is best understood as a demonstration profile built on the wider Lantern Keeper architecture, not a replacement for the general memory system.
-
-## Download and run from source
-
-There is not yet a packaged GitHub Release or one-click installer. The repository itself is public and ready to clone or download and build from source.
-
-Prerequisites:
-
-- Git
-- Rust 1.98.1 toolchain
-- the normal native build prerequisites for your platform
+Prerequisites: Git, the [Rust toolchain pinned by this repository](rust-toolchain.toml) (1.98.1 at this revision), and your platform's native build dependencies.
 
 ```bash
 git clone https://github.com/matthewjameswatkins1978-cyber/lantern-keeper.git
 cd lantern-keeper
 cargo build --workspace
-cargo test --workspace
 ```
 
 Start the local service:
@@ -219,86 +91,102 @@ Start the local service:
 cargo run -p lighting -- serve
 ```
 
-The service binds to `127.0.0.1:4317` by default.
-
-In another terminal:
+It binds to `127.0.0.1:4317` by default. In another terminal, check the service:
 
 ```bash
 cargo run -p lighting -- health --json
 cargo run -p lighting -- doctor --json
 ```
 
-Run the stdio MCP bridge:
+Configure a compatible local MCP client to launch this stdio adapter from the repository directory:
 
 ```bash
 cargo run -p lighting -- mcp
 ```
 
-Platform-specific helper scripts may exist under `scripts/`, but ordinary validation and usage should not depend on PowerShell or any single operating system.
+The separate read-only Streamable HTTP adapter is documented in [MCP integration](docs/mcp.md). It is loopback-bound, and is not a production remote-authentication solution. **Do not expose the local write service to the internet.**
 
-## MCP surface
+The [connected-client proof](docs/mcp.md#connected-client-proof) documents a real Codex Desktop MCP lifecycle. Compatibility with other clients depends on their actual supported integration and authentication surface; ordinary ChatGPT native access is not established by that proof.
 
-The MCP bridge intentionally exposes a small capability surface rather than raw database access:
+## For developers
 
-- `lantern_context`
-- `lantern_remember`
-- `lantern_search`
-- `lantern_why`
-- `lantern_correct`
-- `lantern_status`
-- `lantern_foreman_queue`
-- `lantern_foreman_review`
+### Architecture
 
-See [`docs/mcp.md`](docs/mcp.md).
-
-## Trust boundaries
-
-Lantern Keeper is deliberately conservative about what becomes authoritative.
-
-```text
-Evidence answers:       what happened?
-Claims answer:          what was asserted?
-Beliefs answer:         what is the current reconciled view?
-Context Packs answer:   what is useful for this request?
-Authority answers:      what may this principal do?
-Receipts answer:        what action was actually attempted or completed?
+```mermaid
+flowchart TD
+    A["AI client / CLI / application"] --> B["MCP or service API"]
+    B --> C["Memory service"]
+    C --> D["Sources · episodes · claims"]
+    C --> E["Soft memory · projects · relations"]
+    D --> F["Reconciled beliefs · revision history"]
+    F --> G["Bounded context · provenance"]
+    E --> G
+    D --> H["Local SurrealDB / SurrealKV"]
+    E --> H
+    F --> H
 ```
 
-Those are different questions and they stay different in the data model.
+The native workspace uses Rust, Tokio/Axum and an embedded SurrealKV store, with an optional remote SurrealDB lane. The current default branch pins SurrealDB 3.3.0. A newer database qualification and a Cloudflare Workers/D1 hosted adapter are active development work, not default-branch features.
 
-## Current limitations
+The product direction is to reuse the existing semantic core across local and hosted storage. Essential memory operations must have compatible observable semantics, with any profile-specific differences clearly documented.
 
-The engine is usable now, but it is still a developer-facing project rather than a finished end-user product.
+### The memory model
 
-Current follow-up work includes:
+| Layer | Purpose |
+| :--- | :--- |
+| Source | Preserve original evidence and material. |
+| Episode | Identify a bounded part of a source. |
+| Claim | Attribute an assertion to its speaker or originator. |
+| Belief | Represent the reconciled current understanding, with lineage. |
+| Soft Memory Item | Keep ideas, fragments, lessons and open questions without treating them as established facts. |
+| Context Pack | Assemble a bounded, inspectable selection for the current request. |
 
-- packaged binaries and a formal versioned GitHub Release;
-- broader cross-platform packaging and CI polish;
-- richer typed/fused retrieval and graph-backed project association;
-- more generic user-facing configuration around legacy actor labels that remain in some reference fixtures and defaults;
-- optional hosted/cloud workflows without weakening the local-first trust model;
-- broader client packaging as product access allows.
+### MCP tools
 
-Historical reference fixtures may still use the original human/assistant names from the project that produced them. Those names are examples and test history, not requirements of the architecture.
+The trusted local stdio bridge exposes eight tools. The four ordinary read operations also appear on the separate read-only HTTP adapter.
+
+| Operation | Local stdio | Loopback HTTP |
+| :--- | :---: | :---: |
+| `lantern_status` | ✓ | ✓ |
+| `lantern_search` | ✓ | ✓ |
+| `lantern_context` | ✓ | ✓ |
+| `lantern_why` | ✓ | ✓ |
+| `lantern_remember` | ✓ | — |
+| `lantern_correct` | ✓ | — |
+| `lantern_foreman_queue` | ✓ | — |
+| `lantern_foreman_review` | ✓ | — |
+
+Read the [MCP contract](docs/mcp.md) for argument schemas, supported soft-memory types, provenance and correction behaviour. No generic SQL tool is exposed.
+
+### Testing and reliability
+
+```bash
+cargo fmt --all -- --check
+cargo test --workspace
+```
+
+[LanternBench](docs/LANTERNBENCH.md) exercises behavioural properties such as attribution, corrections, stale information, scope and context budgets. The existing CI has historically excluded server-gated integration tests; a green run is not by itself certification of persistence, recovery, security or all platforms. See [CURRENT.md](CURRENT.md) for dated evidence and known gaps.
+
+### The wider research
+
+Lantern Keeper also contains a separate experimental authority and execution trust chain, including Lantern Warden, Tethers integration and receipt-linked action demonstrations. These remain available for researchers, but are not necessary to use Lantern Keeper as a memory system. See [the Warden demonstration and evidence](HACKATHON.md).
 
 ## Documentation
 
-- [`CURRENT.md`](CURRENT.md) — verified current state
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — next engineering and packaging work
-- [`docs/architecture/LANTERN_LIVING_MEMORY_ARCHITECTURE.md`](docs/architecture/LANTERN_LIVING_MEMORY_ARCHITECTURE.md) — memory model
-- [`docs/architecture/PERSPECTIVE_AND_PROVENANCE.md`](docs/architecture/PERSPECTIVE_AND_PROVENANCE.md) — attribution and evidence lineage
-- [`docs/architecture/MEMORY_GOVERNANCE.md`](docs/architecture/MEMORY_GOVERNANCE.md) — promotion, correction and review rules
-- [`docs/architecture/CONTEXT_COMPILER.md`](docs/architecture/CONTEXT_COMPILER.md) — bounded context assembly
-- [`docs/architecture/DREAMER_AND_FOREMAN.md`](docs/architecture/DREAMER_AND_FOREMAN.md) — candidate-only AI governance
-- [`docs/mcp.md`](docs/mcp.md) — MCP integration contract
-- [`docs/recovery.md`](docs/recovery.md) — export and recovery
-- [`docs/LANTERNBENCH.md`](docs/LANTERNBENCH.md) — behavioural acceptance suite
-- [`HACKATHON.md`](HACKATHON.md) and [`docs/hackathon/`](docs/hackathon/) — Lantern Warden trust-chain demonstrations and evidence
+| Start here | Go deeper |
+| :--- | :--- |
+| [Current engineering evidence](CURRENT.md) | [Memory architecture](docs/architecture/LANTERN_LIVING_MEMORY_ARCHITECTURE.md) |
+| [Engineering roadmap](docs/ROADMAP.md) | [Perspective and provenance](docs/architecture/PERSPECTIVE_AND_PROVENANCE.md) |
+| [MCP integration](docs/mcp.md) | [Memory governance](docs/architecture/MEMORY_GOVERNANCE.md) |
+| [Recovery](docs/recovery.md) | [Context compiler](docs/architecture/CONTEXT_COMPILER.md) |
+| [LanternBench](docs/LANTERNBENCH.md) | [Dreamer and Foreman research](docs/architecture/DREAMER_AND_FOREMAN.md) |
 
-## Licence
+## Open source, by design
 
-Lantern Keeper is dual-licensed under MIT or Apache-2.0. See [`LICENSE-MIT`](LICENSE-MIT) and [`LICENSE-APACHE`](LICENSE-APACHE).
+Lantern Keeper is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE). The project aims to retain a free self-hosted option alongside a simple paid managed service; hosting plans, prices and launch availability are not yet final.
 
-## One sentence
+Explore the source, [report a problem](../../issues), or propose an improvement. If you are evaluating it for an integration, start with the current MCP contract and the dated evidence.
 
-**Lantern Keeper is a chain of custody for AI memory, plus a separate chain of authority for AI action.**
+---
+
+<div align="center"><strong>Your knowledge. Your memory. Your choice of AI.</strong><br><sub>Quiet by default. Powerful on demand.</sub></div>
