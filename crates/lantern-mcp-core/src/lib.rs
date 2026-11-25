@@ -101,7 +101,7 @@ pub fn authenticate(entries: &[CredentialEntry], presented: &str) -> Result<Prin
     for entry in entries {
         let stored = entry.token_sha256.to_ascii_lowercase();
         // Compare always, ignore result until the end: avoids early exit.
-        let equal = stored.as_bytes().len() == digest.len()
+        let equal = stored.len() == digest.len()
             && stored
                 .as_bytes()
                 .iter()
