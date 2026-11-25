@@ -15,9 +15,9 @@ A good AI memory system should feel like part of the conversation, not another a
 
 You should be able to start a new conversation, continue a project, recall an idea or correct something that has changed without repeatedly explaining everything to your assistant. When a remembered detail matters, your AI can bring it up. When it doesn't, your memory should stay quietly in the background.
 
-That's what Lantern Keeper is designed for.
+**Lantern Keeper is an independent external memory built specifically for AI to use.** Attach it to a compatible assistant to extend its memory without handing control of your knowledge to a single AI provider. It complements the assistant's native memory; it does not change or control that system. The AI operates Lantern Keeper, and you own the memory.
 
-Its goal is a natural workflow through compatible AI clients: save useful knowledge at the right moments, retrieve only what helps, and make the original material available when you want to examine it. Automatic capture and recall depend on the client's tool access and instructions; Lantern Keeper does not secretly record conversations or run an always-on AI in the background.
+The intended workflow is AI-first: your assistant infers useful connections, preserves important information, recalls relevant context and maintains it during normal work. You can correct a memory simply by saying "That's not quite how it happened." You should not have to organise folders, classify facts or manage a database. Lantern Keeper preserves captured originals and provenance so mistaken associations can be corrected without losing evidence. The engine maintains integrity; the AI supplies interpretation. Storage should be generous; attention should be selective. Automatic capture and recall depend on the client's tool access and instructions; Lantern Keeper does not secretly record conversations or run an always-on AI in the background.
 
 ### What you can do
 
@@ -55,7 +55,7 @@ Lantern Keeper preserves these distinctions instead of flattening everything int
 
 ## The road to 1.0
 
-The aim is an easy-to-use personal and collaborative memory service, with a small optional agent-memory capability. The native engine is the foundation, not a product we are replacing.
+The aim is independent AI-native memory for personal, project and collaborative knowledge, with a small optional agent-memory capability. The AI is the primary operator; human inspection, access and export remain available on demand. The native engine is the foundation, not a product we are replacing.
 
 | Capability | Status |
 | :--- | :--- |
@@ -128,7 +128,7 @@ flowchart TD
 
 The native workspace uses Rust, Tokio/Axum and an embedded SurrealKV store, with an optional remote SurrealDB lane. The current default branch pins SurrealDB 3.3.0. A newer database qualification and a Cloudflare Workers/D1 hosted adapter are active development work, not default-branch features.
 
-The product direction is to reuse the existing semantic core across local and hosted storage. Essential memory operations must have compatible observable semantics, with any profile-specific differences clearly documented.
+The product direction is AI-first at the edges, deterministic at the spine, durable in the middle. Typed tool results, stable references, explicit evidence and scope, revision checks and bounded context let an AI act on memory without having to imitate a human editor. Inferred links and interpretations must remain correctable; competing claims must not be silently turned into consensus. Reuse the existing semantic core across local and hosted storage. Essential memory operations must have compatible observable semantics, with any profile-specific differences clearly documented.
 
 ### The memory model
 
