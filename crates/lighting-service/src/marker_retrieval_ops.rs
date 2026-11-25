@@ -9,6 +9,12 @@ use lighting_core::{Marker, MemoryPathRepository, SourceRepository, find_all_mat
 use crate::marker_retrieval_dto::{MarkerMatch, MarkerRetrievalResponse, RetrievedEpisode};
 use crate::source_dto::ApiError;
 
+/// Hard cap on Marker–Episode links processed per retrieval request
+/// (LK-CUTOVER CONTENT-1). Bounds the three repository queries each link
+/// costs and makes truncation an explicit, tested service guarantee
+/// rather than an adapter accident.
+const MAX_MARKER_EPISODES: usize = 50;
+
 #[derive(Debug, thiserror::Error)]
 pub enum RetrievalError {
     #[error("storage unavailable")]
@@ -53,6 +59,7 @@ impl MarkerRetrievalService {
                     marker: None,
                     episodes: vec![],
                     warnings: vec!["No exact Marker matches this phrase.".to_owned()],
+                    truncated: false,
                 });
             }
         };
@@ -73,6 +80,7 @@ impl MarkerRetrievalService {
                     marker: None,
                     episodes: vec![],
                     warnings: vec!["No exact Marker matches this phrase.".to_owned()],
+                    truncated: false,
                 });
             }
         };
@@ -95,11 +103,18 @@ impl MarkerRetrievalService {
                 marker: Some(marker_match),
                 episodes: vec![],
                 warnings: vec!["Marker exists but is not linked to any Episodes.".to_owned()],
+                truncated: false,
             });
         }
 
-        let mut episodes = Vec::with_capacity(links.len());
-        for link in &links {
+        // Hard cap on processed links (CONTENT-1): bounds the three
+        // repository queries each link costs. `truncated` is set when the cap
+        // is reached — the adapter below may already have cut the link list,
+        // so reaching the cap means the response may omit later links.
+        let truncated = links.len() >= MAX_MARKER_EPISODES;
+        let processed = &links[..links.len().min(MAX_MARKER_EPISODES)];
+        let mut episodes = Vec::with_capacity(processed.len());
+        for link in processed {
             let episode = match self
                 .memory_repo
                 .get_episode(link.episode_id())
@@ -210,10 +225,10 @@ impl MarkerRetrievalService {
         });
 
         let count = episodes.len();
-        let warnings = if count >= 50 {
+        let warnings = if truncated {
             vec![format!(
-                "Results hard-limited to 50. {} Episode(s) returned.",
-                count
+                "Marker reached the {}-Episode cap; {} Episode(s) returned. Additional linked Episodes, if any, were not retrieved.",
+                MAX_MARKER_EPISODES, count
             )]
         } else {
             vec![]
@@ -224,6 +239,7 @@ impl MarkerRetrievalService {
             marker: Some(marker_match),
             episodes,
             warnings,
+            truncated,
         })
     }
 }
