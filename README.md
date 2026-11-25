@@ -185,7 +185,7 @@ Lantern Keeper also contains a separate experimental authority and execution tru
 
 Lantern Keeper is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE). The project aims to retain a free self-hosted option alongside a simple paid managed service; hosting plans, prices and launch availability are not yet final.
 
-Explore the source, [report a problem](../../issues), or propose an improvement. If you are evaluating it for an integration, start with the current MCP contract and the dated evidence.
+Explore the source, [report a problem](https://github.com/matthewjameswatkins1978-cyber/lantern-keeper/issues), or propose an improvement. If you are evaluating it for an integration, start with the current MCP contract and the dated evidence.
 
 ---
 
