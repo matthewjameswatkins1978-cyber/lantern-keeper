@@ -39,13 +39,13 @@ pub use bridge_intent::{
 pub use dreamer::{CandidateKind, DreamerCandidate, DreamerCandidateError, EvidenceReference};
 pub use epistemic::{
     Actor, Belief, BeliefLineage, BeliefRevision, BeliefState, Claim, ContextPack, ContextSection,
-    ContextTrace, CorrectionIdempotencyRecord, DimensionDefinition, EpistemicError,
-    EpistemicRepository, EpistemicRepositoryError, Frame, FrameAction, GraphRelation, MemoryItem,
-    MemoryItemKind, MemoryItemSearch, NewBelief, NewClaim, NewGraphRelation, NewMemoryItem,
-    PredicateDefinition, PredicateDefinitionStatus, PredicateStatus, Proposal,
-    ReconciliationAction, ReconciliationDecision, RelationKind, Scope, Stance, Trace, TrustClass,
-    normalize_registry_key, normalize_scope, propagate_stale_beliefs, reconcile_claim, scope_hash,
-    scopes_overlap,
+    ContextTrace, CorrectionIdempotencyRecord, CorrectionWriteBatch, CorrectionWriteOutcome,
+    DimensionDefinition, EpistemicError, EpistemicRepository, EpistemicRepositoryError, Frame,
+    FrameAction, GraphRelation, MemoryItem, MemoryItemKind, MemoryItemSearch, NewBelief, NewClaim,
+    NewGraphRelation, NewMemoryItem, PredicateDefinition, PredicateDefinitionStatus,
+    PredicateStatus, Proposal, ReconciliationAction, ReconciliationDecision, RelationKind, Scope,
+    Stance, Trace, TrustClass, normalize_registry_key, normalize_scope, propagate_stale_beliefs,
+    reconcile_claim, scope_hash, scopes_overlap,
 };
 pub use ledger::{
     LedgerEvent, LedgerEventError, LedgerEventRepository, LedgerIngestResult,

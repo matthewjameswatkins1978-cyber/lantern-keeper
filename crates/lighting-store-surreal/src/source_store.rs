@@ -274,6 +274,15 @@ impl SourceRepository for SurrealSourceRepository {
             .await
             .map_err(|e| SourceRepositoryError::Operation(Box::new(e)))
     }
+
+    async fn get_by_fingerprint(
+        &self,
+        fingerprint: &str,
+    ) -> Result<Option<SourceId>, SourceRepositoryError> {
+        self.find_by_fingerprint(fingerprint)
+            .await
+            .map_err(|e| SourceRepositoryError::Operation(Box::new(e)))
+    }
 }
 
 impl SurrealSourceRepository {
@@ -344,7 +353,7 @@ impl SurrealSourceRepository {
     }
 }
 
-fn kind_to_string(kind: SourceKind) -> String {
+pub(crate) fn kind_to_string(kind: SourceKind) -> String {
     match kind {
         SourceKind::PlainText => "plaintext".to_owned(),
         SourceKind::Markdown => "markdown".to_owned(),

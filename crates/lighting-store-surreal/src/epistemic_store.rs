@@ -7,14 +7,15 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lighting_core::{
     Belief, BeliefId, BeliefRevision, Claim, ClaimId, ContextPack, ContextPackId,
-    CorrectionIdempotencyRecord, DimensionDefinition, EpistemicRepository,
-    EpistemicRepositoryError, GraphRelation, MemoryItem, MemoryItemSearch, PredicateDefinition,
-    Proposal, ProposalId, Scope, Trace,
+    CorrectionIdempotencyRecord, CorrectionWriteBatch, CorrectionWriteOutcome, DimensionDefinition,
+    EpistemicRepository, EpistemicRepositoryError, GraphRelation, MemoryItem, MemoryItemSearch,
+    PredicateDefinition, Proposal, ProposalId, Scope, Trace,
 };
 use surrealdb::types::Object;
 use thiserror::Error;
 
 use crate::connection::SurrealStore;
+use crate::source_store::kind_to_string;
 
 #[derive(Debug, Error)]
 pub enum SurrealEpistemicError {
@@ -54,6 +55,143 @@ impl SurrealEpistemicRepository {
             .map_err(SurrealEpistemicError::Query)?;
         refuse_statements(&mut response, "migrate")
     }
+}
+
+thread_local! {
+    /// Q18 test seam: while set on this thread, `apply_correction_batch`
+    /// appends a THROW after every earlier statement has executed, so a test
+    /// observes a real mid-batch failure and the transaction's rollback.
+    /// Off by default; read only by the correction batch.
+    pub static Q18_FAULT_INJECT: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// CAS THROW for the consumed-token guard (Q18 gap 3): aborts the whole
+/// batch. A zero-row WHERE predicate alone would silently commit the rest of
+/// the batch and must never masquerade as compare-and-set.
+const CAS_THROW: &str = "IF (SELECT VALUE updated_at FROM type::record('belief', $previous_id))[0] != $expected_token THEN THROW 'revision conflict: belief revision token is no longer current'; END";
+
+/// The belief-transition statements, shared by the direct transition and the
+/// single-transaction correction batch so the two paths cannot drift.
+fn belief_transition_statements(
+    previous: Option<&Belief>,
+    current: Option<&Belief>,
+    stale_beliefs: &[Belief],
+    revisions: &[BeliefRevision],
+    expected_token: Option<DateTime<Utc>>,
+) -> Vec<String> {
+    let mut statements = Vec::new();
+    // The THROW reads $previous_id, so it only belongs to the batch when
+    // there is a previous row to CAS (create-only writes carry no token).
+    if expected_token.is_some() && previous.is_some() {
+        statements.push(CAS_THROW.to_owned());
+    }
+    if previous.is_some() {
+        let cas_predicate = if expected_token.is_some() {
+            " AND updated_at = $expected_token"
+        } else {
+            ""
+        };
+        statements.push(format!(
+            "UPDATE belief SET payload = $previous_payload, stale = $previous_stale, state = $previous_state, updated_at = $previous_updated_at WHERE id = type::record('belief', $previous_id){cas_predicate}"
+        ));
+    }
+    if let Some(current) = current {
+        let statement = if previous.is_some_and(|previous| previous.id == current.id) {
+            "UPDATE belief SET payload = $current_payload, stale = $current_stale, state = $current_state, updated_at = $current_updated_at WHERE id = type::record('belief', $current_id)"
+        } else {
+            "CREATE belief CONTENT { id: $current_id, payload: $current_payload, stale: $current_stale, state: $current_state, updated_at: $current_updated_at }"
+        };
+        statements.push(statement.to_owned());
+    }
+    for index in 0..stale_beliefs.len() {
+        let payload_name = format!("stale_{index}_payload");
+        let id_name = format!("stale_{index}_id");
+        statements.push(format!(
+            "UPDATE belief SET payload = ${payload_name}, stale = true, updated_at = ${id_name}_updated_at WHERE id = type::record('belief', ${id_name})"
+        ));
+    }
+    statements.push(
+        "CREATE trace CONTENT { id: $trace_id, payload: $trace_payload, created_at: $trace_created_at }"
+            .to_owned(),
+    );
+    for index in 0..revisions.len() {
+        let id_name = format!("revision_{index}_id");
+        let belief_id_name = format!("revision_{index}_belief_id");
+        let payload_name = format!("revision_{index}_payload");
+        let created_at_name = format!("revision_{index}_created_at");
+        statements.push(format!(
+            "CREATE belief_revision CONTENT {{ id: ${id_name}, belief_id: ${belief_id_name}, payload: ${payload_name}, created_at: ${created_at_name} }}"
+        ));
+    }
+    statements
+}
+
+/// Binds every variable the belief-transition statements reference.
+fn bind_belief_transition<'a>(
+    query: surrealdb::method::Query<'a, surrealdb::engine::any::Any>,
+    previous: Option<&Belief>,
+    current: Option<&Belief>,
+    stale_beliefs: &[Belief],
+    revisions: &[BeliefRevision],
+    trace: &Trace,
+    expected_token: Option<DateTime<Utc>>,
+) -> Result<surrealdb::method::Query<'a, surrealdb::engine::any::Any>, SurrealEpistemicError> {
+    let mut query = query;
+    if let Some(previous) = previous {
+        query = query
+            .bind(("previous_id", previous.id.as_str()))
+            .bind((
+                "previous_payload",
+                serde_json::to_string(previous).map_err(SurrealEpistemicError::Encode)?,
+            ))
+            .bind(("previous_stale", previous.stale))
+            .bind(("previous_state", belief_state(previous)))
+            .bind(("previous_updated_at", previous.updated_at));
+    }
+    if let Some(expected) = expected_token {
+        query = query.bind(("expected_token", expected));
+    }
+    if let Some(current) = current {
+        query = query
+            .bind(("current_id", current.id.as_str()))
+            .bind((
+                "current_payload",
+                serde_json::to_string(current).map_err(SurrealEpistemicError::Encode)?,
+            ))
+            .bind(("current_stale", current.stale))
+            .bind(("current_state", belief_state(current)))
+            .bind(("current_updated_at", current.updated_at));
+    }
+    for (index, stale) in stale_beliefs.iter().enumerate() {
+        let id_name = format!("stale_{index}_id");
+        query = query
+            .bind((id_name.clone(), stale.id.as_str()))
+            .bind((
+                format!("stale_{index}_payload"),
+                serde_json::to_string(stale).map_err(SurrealEpistemicError::Encode)?,
+            ))
+            .bind((format!("{id_name}_updated_at"), stale.updated_at));
+    }
+    let trace_payload = serde_json::to_string(trace).map_err(SurrealEpistemicError::Encode)?;
+    query = query
+        .bind(("trace_id", trace.id.as_str()))
+        .bind(("trace_payload", trace_payload))
+        .bind(("trace_created_at", trace.created_at));
+    for (index, revision) in revisions.iter().enumerate() {
+        query = query
+            .bind((format!("revision_{index}_id"), revision.id.as_str()))
+            .bind((
+                format!("revision_{index}_belief_id"),
+                revision.belief_id.as_str(),
+            ))
+            .bind((
+                format!("revision_{index}_payload"),
+                serde_json::to_string(revision).map_err(SurrealEpistemicError::Encode)?,
+            ))
+            .bind((format!("revision_{index}_created_at"), revision.created_at));
+    }
+    Ok(query)
 }
 
 #[async_trait]
@@ -261,13 +399,14 @@ impl EpistemicRepository for SurrealEpistemicRepository {
         Ok(belief)
     }
 
-    async fn apply_belief_transition(
+    async fn apply_belief_transition_guarded(
         &self,
         previous: Option<Belief>,
         current: Option<Belief>,
         revisions: Vec<BeliefRevision>,
         trace: Trace,
         stale_beliefs: Vec<Belief>,
+        expected_token: Option<DateTime<Utc>>,
     ) -> Result<Option<Belief>, EpistemicRepositoryError> {
         // A repeated Claim can intentionally produce a NoChange decision. In
         // that case there is no projection mutation to wrap in a transaction;
@@ -282,109 +421,191 @@ impl EpistemicRepository for SurrealEpistemicRepository {
             return Ok(None);
         }
         let mut statements = vec!["BEGIN TRANSACTION".to_owned()];
-
-        if previous.is_some() {
-            statements.push(
-                "UPDATE belief SET payload = $previous_payload, stale = $previous_stale, state = $previous_state, updated_at = $previous_updated_at WHERE id = type::record('belief', $previous_id)".to_owned(),
-            );
-        }
-
-        if let Some(current) = current.as_ref() {
-            let statement = if previous
-                .as_ref()
-                .is_some_and(|previous| previous.id == current.id)
-            {
-                "UPDATE belief SET payload = $current_payload, stale = $current_stale, state = $current_state, updated_at = $current_updated_at WHERE id = type::record('belief', $current_id)"
-            } else {
-                "CREATE belief CONTENT { id: $current_id, payload: $current_payload, stale: $current_stale, state: $current_state, updated_at: $current_updated_at }"
-            };
-            statements.push(statement.to_owned());
-        }
-
-        for index in 0..stale_beliefs.len() {
-            let payload_name = format!("stale_{index}_payload");
-            let id_name = format!("stale_{index}_id");
-            statements.push(format!(
-                "UPDATE belief SET payload = ${payload_name}, stale = true, updated_at = ${id_name}_updated_at WHERE id = type::record('belief', ${id_name})"
-            ));
-        }
-
-        let trace_payload = serde_json::to_string(&trace)
-            .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
-        statements.push(
-            "CREATE trace CONTENT { id: $trace_id, payload: $trace_payload, created_at: $trace_created_at }".to_owned(),
-        );
-
-        for (index, _) in revisions.iter().enumerate() {
-            let id_name = format!("revision_{index}_id");
-            let belief_id_name = format!("revision_{index}_belief_id");
-            let payload_name = format!("revision_{index}_payload");
-            let created_at_name = format!("revision_{index}_created_at");
-            statements.push(format!(
-                "CREATE belief_revision CONTENT {{ id: ${id_name}, belief_id: ${belief_id_name}, payload: ${payload_name}, created_at: ${created_at_name} }}"
-            ));
-        }
-
+        statements.extend(belief_transition_statements(
+            previous.as_ref(),
+            current.as_ref(),
+            &stale_beliefs,
+            &revisions,
+            expected_token,
+        ));
         let query_text = format!("{}; COMMIT TRANSACTION", statements.join("; "));
-        let mut query = self.store.query(query_text);
-        if let Some(previous) = previous.as_ref() {
-            query = query
-                .bind(("previous_id", previous.id.as_str()))
-                .bind((
-                    "previous_payload",
-                    serde_json::to_string(previous)
-                        .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?,
-                ))
-                .bind(("previous_stale", previous.stale))
-                .bind(("previous_state", belief_state(previous)))
-                .bind(("previous_updated_at", previous.updated_at));
-        }
-        if let Some(current) = current.as_ref() {
-            query = query
-                .bind(("current_id", current.id.as_str()))
-                .bind((
-                    "current_payload",
-                    serde_json::to_string(current)
-                        .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?,
-                ))
-                .bind(("current_stale", current.stale))
-                .bind(("current_state", belief_state(current)))
-                .bind(("current_updated_at", current.updated_at));
-        }
-        for (index, stale) in stale_beliefs.iter().enumerate() {
-            let id_name = format!("stale_{index}_id");
-            query = query
-                .bind((id_name.clone(), stale.id.as_str()))
-                .bind((
-                    format!("stale_{index}_payload"),
-                    serde_json::to_string(stale)
-                        .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?,
-                ))
-                .bind((format!("{id_name}_updated_at"), stale.updated_at));
-        }
-        query = query
-            .bind(("trace_id", trace.id.as_str()))
-            .bind(("trace_payload", trace_payload))
-            .bind(("trace_created_at", trace.created_at));
-        for (index, revision) in revisions.iter().enumerate() {
-            query = query
-                .bind((format!("revision_{index}_id"), revision.id.as_str()))
-                .bind((
-                    format!("revision_{index}_belief_id"),
-                    revision.belief_id.as_str(),
-                ))
-                .bind((
-                    format!("revision_{index}_payload"),
-                    serde_json::to_string(revision)
-                        .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?,
-                ))
-                .bind((format!("revision_{index}_created_at"), revision.created_at));
-        }
+        let query = bind_belief_transition(
+            self.store.query(query_text),
+            previous.as_ref(),
+            current.as_ref(),
+            &stale_beliefs,
+            &revisions,
+            &trace,
+            expected_token,
+        )
+        .map_err(operation)?;
         let mut response = query
             .await
             .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
         refuse_statements(&mut response, "apply_belief_transition").map_err(operation)?;
         Ok(current)
+    }
+
+    async fn get_claim_by_dedupe_key(
+        &self,
+        dedupe_key: &str,
+    ) -> Result<Option<Claim>, EpistemicRepositoryError> {
+        self.find_by_key("epistemic_claim", "dedupe_key", dedupe_key)
+            .await
+            .map_err(operation)?
+            .map(decode)
+            .transpose()
+            .map_err(operation)
+    }
+
+    /// Q18 gap 5: the whole correction write set in ONE transaction —
+    /// dedupe lookups first (skipping the matching inserts), then
+    /// source/episode/claim, the CAS-guarded projection transition with its
+    /// trace and revisions, and the idempotency receipt. Any rejected
+    /// statement (including the optional test-seam THROW) rolls the entire
+    /// batch back and is surfaced by `refuse_statements`.
+    async fn apply_correction_batch(
+        &self,
+        batch: CorrectionWriteBatch,
+    ) -> Result<CorrectionWriteOutcome, EpistemicRepositoryError> {
+        let CorrectionWriteBatch {
+            source,
+            source_exists,
+            source_previous_id,
+            episode,
+            episode_exists,
+            claim,
+            claim_exists,
+            previous,
+            current,
+            revisions,
+            trace,
+            stale_beliefs,
+            expected_token,
+            receipt,
+            write_trace,
+        } = batch;
+
+        let mut statements = vec!["BEGIN TRANSACTION".to_owned()];
+        if let (Some(source), false) = (source.as_ref(), source_exists) {
+            statements.push(
+                "CREATE source CONTENT { id: $source_id, kind: $source_kind, title: $source_title, content: $source_content, fingerprint: $source_fingerprint, created_at: $source_created_at, previous_version_id: $source_previous_id }"
+                    .to_owned(),
+            );
+            let _ = source;
+        }
+        if let (Some(episode), false) = (episode.as_ref(), episode_exists) {
+            statements.push(
+                "CREATE episode CONTENT { id: $episode_id, title: $episode_title, source_id: $episode_source_id, start_byte: $episode_start_byte, end_byte: $episode_end_byte, created_at: $episode_created_at }"
+                    .to_owned(),
+            );
+            let _ = episode;
+        }
+        if let (Some(claim), false) = (claim.as_ref(), claim_exists) {
+            statements.push(
+                "CREATE epistemic_claim CONTENT { id: $claim_id, payload: $claim_payload, dedupe_key: $claim_dedupe_key, created_at: $claim_created_at }"
+                    .to_owned(),
+            );
+            let _ = claim;
+        }
+        if write_trace
+            || previous.is_some()
+            || current.is_some()
+            || !revisions.is_empty()
+            || !stale_beliefs.is_empty()
+        {
+            statements.extend(belief_transition_statements(
+                previous.as_ref(),
+                current.as_ref(),
+                &stale_beliefs,
+                &revisions,
+                expected_token,
+            ));
+        }
+        if receipt.is_some() {
+            statements.push(
+                "CREATE correction_idempotency CONTENT { key: $receipt_key, payload: $receipt_payload, created_at: $receipt_created_at }"
+                    .to_owned(),
+            );
+        }
+        if Q18_FAULT_INJECT.with(|flag| flag.get()) {
+            statements.push("THROW 'q18 injected mid-batch failure'".to_owned());
+        }
+        statements.push("COMMIT TRANSACTION".to_owned());
+
+        let query_text = statements.join("; ");
+        let mut query = self.store.query(query_text);
+        if let (Some(source), false) = (source.as_ref(), source_exists) {
+            query = query
+                .bind(("source_id", source.id().as_str()))
+                .bind(("source_kind", kind_to_string(source.kind())))
+                .bind(("source_title", source.title().as_str()))
+                .bind(("source_content", source.content().as_str()))
+                .bind(("source_fingerprint", source.fingerprint().as_str()))
+                .bind(("source_created_at", source.created_at()))
+                .bind(("source_previous_id", source_previous_id));
+        }
+        if let (Some(episode), false) = (episode.as_ref(), episode_exists) {
+            query = query
+                .bind(("episode_id", episode.id().as_str()))
+                .bind(("episode_title", episode.title().as_str()))
+                .bind((
+                    "episode_source_id",
+                    episode.source_range().source_id().as_str(),
+                ))
+                .bind((
+                    "episode_start_byte",
+                    episode.source_range().start_byte() as i64,
+                ))
+                .bind(("episode_end_byte", episode.source_range().end_byte() as i64))
+                .bind(("episode_created_at", episode.created_at()));
+        }
+        if let (Some(claim), false) = (claim.as_ref(), claim_exists) {
+            let payload = serde_json::to_string(claim)
+                .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
+            query = query
+                .bind(("claim_id", claim.id.as_str()))
+                .bind(("claim_payload", payload))
+                .bind(("claim_dedupe_key", claim.dedupe_key.clone()))
+                .bind(("claim_created_at", claim.created_at));
+        }
+        query = bind_belief_transition(
+            query,
+            previous.as_ref(),
+            current.as_ref(),
+            &stale_beliefs,
+            &revisions,
+            &trace,
+            expected_token,
+        )
+        .map_err(operation)?;
+        if let Some(receipt) = receipt.as_ref() {
+            let payload = serde_json::to_string(receipt)
+                .map_err(|error| operation(SurrealEpistemicError::Encode(error)))?;
+            query = query
+                .bind(("receipt_key", receipt.key.clone()))
+                .bind(("receipt_payload", payload))
+                .bind(("receipt_created_at", receipt.created_at));
+        }
+        let mut response = query
+            .await
+            .map_err(|error| operation(SurrealEpistemicError::Query(error)))?;
+        refuse_statements(&mut response, "apply_correction_batch").map_err(operation)?;
+        Ok(CorrectionWriteOutcome {
+            source_id: source
+                .as_ref()
+                .map(|source| source.id().as_str().to_owned())
+                .unwrap_or_default(),
+            episode_id: episode
+                .as_ref()
+                .map(|episode| episode.id().to_string())
+                .unwrap_or_default(),
+            claim_id: claim
+                .as_ref()
+                .map(|claim| claim.id.to_string())
+                .unwrap_or_default(),
+            belief: current,
+        })
     }
 
     async fn list_belief_revisions(
