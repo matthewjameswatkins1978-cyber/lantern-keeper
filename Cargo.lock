@@ -2517,6 +2517,7 @@ dependencies = [
 name = "lighting-store-d1"
 version = "0.1.0"
 dependencies = [
+ "lantern-mcp-core",
  "lighting-core",
  "rusqlite",
 ]

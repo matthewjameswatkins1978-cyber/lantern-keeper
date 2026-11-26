@@ -9,4 +9,5 @@ license.workspace = true
 lighting-core = { path = "../lighting-core" }
 
 [dev-dependencies]
+lantern-mcp-core = { path = "../lantern-mcp-core" }
 rusqlite = { version = "0.32", features = ["bundled"] }
