@@ -17,6 +17,10 @@
 //! honestly. Structural guarantees DO fail the run: budgets must never be
 //! exceeded, every query must be evaluated against a known mode, and every
 //! label reference must resolve.
+//!
+//! A second test seeds one claim with lineage so an `exact_identifier` pack
+//! carries non-empty `source_refs` and bounded section hits. Fixture/test-only:
+//! the 32-query corpus and the baseline assertions above are untouched.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -28,13 +32,15 @@ use chrono::{Duration, Utc};
 use serde::Deserialize;
 
 use lighting_core::{
-    Belief, BeliefState, EpistemicRepository, NewBelief, NewSource, Source, SourceContent,
-    SourceKind, SourceRepository, SourceTitle, TrustClass,
+    Belief, BeliefLineage, BeliefState, Claim, EpistemicRepository, NewBelief, NewClaim, NewSource,
+    PredicateStatus, Source, SourceContent, SourceKind, SourceRepository, SourceTitle, Stance,
+    StoreSourceResult, TrustClass,
 };
 use lighting_service::epistemic_dto::ContextCompileRequest;
 use lighting_service::{EpistemicService, source_ops::SourceService};
 use lighting_store_surreal::{
-    StoreConfig, SurrealEpistemicRepository, SurrealSourceRepository, SurrealStore,
+    StoreConfig, SurrealEpistemicRepository, SurrealMemoryPathRepository, SurrealSourceRepository,
+    SurrealStore,
 };
 use uuid::Uuid;
 
@@ -403,5 +409,272 @@ async fn section_ranking_corpus_baseline() -> Result<(), Box<dyn Error>> {
             .ok_or_else(|| format!("family {family} has no queries"))?;
         assert!(stats.queries > 0, "family {family} must be evaluated");
     }
+    Ok(())
+}
+
+/// Claim-seeded scenario (follow-up flag): one claim with lineage attached to
+/// the `exact_identifier` record, so the pack's `source_refs` is non-empty and
+/// section hits attach from the claim's evidence note. Both halves run against
+/// one deterministic store: a lineage-free pack documents the empty
+/// `source_refs`/empty-sections state, then the lineaged query proves
+/// non-empty, capped, byte-bounded sections. Fixture/test-only — the 32-query
+/// corpus and the baseline test above are untouched.
+#[tokio::test]
+async fn section_ranking_claim_seeded_sections() -> Result<(), Box<dyn Error>> {
+    const SEEDED_NOTE_TITLE: &str = "bench: registry claims";
+    const SEEDED_NOTE_CONTENT: &str = "\
+# Registry Claims
+
+## Registry entry rx-1042
+rx-1042 verified ready in the bench registry.
+
+## Unrelated entries
+Other rows without the target identifier.
+";
+    /// Mirrors `MAX_SECTION_HITS` in `lighting_service::epistemic_ops`.
+    const SECTIONS_CAP: usize = 10;
+
+    let raw = fs::read_to_string(CORPUS_PATH)
+        .map_err(|error| format!("cannot read corpus at {CORPUS_PATH}: {error}"))?;
+    let corpus: Corpus = serde_json::from_str(&raw)?;
+    assert_eq!(
+        corpus.queries.len(),
+        EXPECTED_QUERY_COUNT,
+        "claim-seeded test reads the same full corpus"
+    );
+
+    let store = SurrealStore::connect(&embedded_config(test_path("claim-seeded"))).await?;
+    store.initialise_schema().await?;
+    let epistemic_repo = Arc::new(SurrealEpistemicRepository::new(store.clone()));
+    epistemic_repo.migrate().await?;
+    let source_repo = Arc::new(SurrealSourceRepository::new(store.clone()));
+    source_repo.migrate().await?;
+    let memory_path_repo = Arc::new(SurrealMemoryPathRepository::new(store.clone()));
+    memory_path_repo.migrate().await?;
+    let epistemic = EpistemicService::new_with_evidence(
+        epistemic_repo.clone(),
+        source_repo.clone(),
+        memory_path_repo.clone(),
+    );
+
+    // Corpus notes, seeded exactly as the baseline seeds them.
+    for note in &corpus.notes {
+        let kind = if note.kind == "markdown" {
+            SourceKind::Markdown
+        } else {
+            SourceKind::PlainText
+        };
+        let source = Source::create(NewSource {
+            kind,
+            title: SourceTitle::new(note.title.clone())
+                .map_err(|error| format!("bad note title: {error}"))?,
+            content: SourceContent::new(note.content.clone())
+                .map_err(|error| format!("bad note content: {error}"))?,
+        });
+        source_repo.store(source).await?;
+    }
+
+    // Evidence note whose outline sections carry the queried identifier.
+    let seeded = match source_repo
+        .store(Source::create(NewSource {
+            kind: SourceKind::Markdown,
+            title: SourceTitle::new(SEEDED_NOTE_TITLE)
+                .map_err(|error| format!("bad seeded title: {error}"))?,
+            content: SourceContent::new(SEEDED_NOTE_CONTENT)
+                .map_err(|error| format!("bad seeded content: {error}"))?,
+        }))
+        .await?
+    {
+        StoreSourceResult::Stored(source) => source,
+        StoreSourceResult::Duplicate { existing_id, .. } => {
+            return Err(format!("seeded note collided with {}", existing_id.as_str()).into());
+        }
+    };
+    let seeded_source_id = seeded.id().as_str().to_owned();
+    let span_start = SEEDED_NOTE_CONTENT
+        .find("rx-1042")
+        .ok_or_else(|| "seeded note must contain the queried identifier".to_string())?;
+
+    // One claim sourced from that note.
+    let claim = Claim::new(NewClaim {
+        episode_id: None,
+        source_id: Some(seeded_source_id.clone()),
+        evidence_span: Some((span_start, span_start + "rx-1042".len())),
+        subject_key: "bench.registry".to_owned(),
+        predicate_key: Some("status".to_owned()),
+        predicate_candidate: None,
+        predicate_status: PredicateStatus::Resolved,
+        value: "registry entry rx-1042 ready".to_owned(),
+        scope: BTreeMap::from([("project".to_owned(), "bench".to_owned())]),
+        polarity: true,
+        originator_actor_id: "bench".to_owned(),
+        speaker_actor_id: "bench".to_owned(),
+        transmitter_actor_id: None,
+        holder_actor_id: None,
+        stance: Stance::Endorsing,
+        framing_path: Vec::new(),
+        confidence: 0.9,
+        known_at: Utc::now(),
+        valid_from: None,
+        valid_to: None,
+        extractor: "bench-fixture".to_owned(),
+        extractor_version: "1".to_owned(),
+        created_at: Utc::now(),
+    })
+    .map_err(|error| format!("claim failed to construct: {error}"))?;
+    let claim = epistemic_repo.store_claim(claim).await?;
+
+    // Seeded beliefs (staggered clocks, same as the baseline); the
+    // exact-identifier record e-1 carries lineage to the claim.
+    let base = Utc::now();
+    let mut ref_to_id: BTreeMap<String, String> = BTreeMap::new();
+    for (index, entry) in corpus.beliefs.iter().enumerate() {
+        let at = base + Duration::milliseconds(index as i64);
+        let mut belief = Belief::new(NewBelief {
+            holder_key: "matthew".to_owned(),
+            subject_key: entry.subject_key.clone(),
+            predicate_key: entry.predicate_key.clone(),
+            current_value: entry.current_value.clone(),
+            scope: entry.scope.clone(),
+            confidence: 0.9,
+            trust_class: TrustClass::Direct,
+            known_from: at,
+            valid_from: Some(at),
+            created_at: at,
+        })
+        .map_err(|error| format!("belief {} failed to construct: {error}", entry.reference))?;
+        belief.updated_at = at;
+        if entry.state.as_deref() == Some("Superseded") {
+            belief.state = BeliefState::Superseded;
+        }
+        if entry.reference == "e-1" {
+            belief.lineage = BeliefLineage {
+                supporting_claim_ids: vec![claim.id.as_str().to_owned()],
+                ..BeliefLineage::default()
+            };
+        }
+        let stored = epistemic_repo.store_belief(belief).await?;
+        ref_to_id.insert(entry.reference.clone(), stored.id.to_string());
+    }
+
+    let context_request = |query: &str, project: &str| ContextCompileRequest {
+        query: query.to_owned(),
+        actor: Some("bench".to_owned()),
+        project_hints: Vec::new(),
+        scope: BTreeMap::from([("project".to_owned(), project.to_owned())]),
+        intent: None,
+        item_budget: 8,
+        token_budget: 2048,
+    };
+
+    // BEFORE — lineage-free selection: the exact-scope lane cannot see e-1's
+    // claim, so source_refs and sections stay empty (the pre-seed state).
+    let before = epistemic
+        .compile_context_scoped(context_request("sapphire valve v1 open", "bench-scope"))
+        .await?;
+    let s1 = ref_to_id
+        .get("s-1")
+        .ok_or_else(|| "missing s-1".to_string())?;
+    assert!(
+        before.selected_ids.iter().any(|selected| selected == s1),
+        "before: the scoped family query must select s-1"
+    );
+    assert!(
+        before.source_refs.is_empty(),
+        "before: no lineage in the selection -> empty source_refs"
+    );
+    assert!(
+        before.sections.is_empty(),
+        "before: no evidence sources -> no section hits"
+    );
+
+    // AFTER — e-1 carries lineage to the claim: source_refs fills from the
+    // claim's evidence note and bounded sections attach for the query.
+    let after = epistemic
+        .compile_context(context_request("rx-1042", "bench"))
+        .await?;
+    let e1 = ref_to_id
+        .get("e-1")
+        .ok_or_else(|| "missing e-1".to_string())?;
+    assert!(
+        after.selected_ids.iter().any(|selected| selected == e1),
+        "after: the exact-identifier query must still select e-1"
+    );
+    assert_eq!(
+        after.source_refs,
+        vec![seeded_source_id.clone()],
+        "after: the claim's lineage surfaces exactly the evidence note"
+    );
+    assert!(
+        !after.sections.is_empty(),
+        "after: sections must appear for the claim-seeded query"
+    );
+    assert!(
+        after.sections.len() <= SECTIONS_CAP,
+        "after: section hits must stay within the cap ({} > {SECTIONS_CAP})",
+        after.sections.len()
+    );
+    let stored_content = seeded.content().as_str();
+    for section in &after.sections {
+        assert_eq!(
+            section.source_id, seeded_source_id,
+            "after: every section must come from the claim's evidence note"
+        );
+        assert!(
+            section.score > 0,
+            "after: attached sections must overlap the query"
+        );
+        assert!(
+            section.start_byte < section.end_byte && section.end_byte <= stored_content.len(),
+            "after: section byte ranges must stay inside the note"
+        );
+    }
+    assert!(
+        after
+            .sections
+            .iter()
+            .any(|section| section.title.contains("rx-1042")),
+        "after: the identifier heading must rank among the section hits"
+    );
+    assert!(
+        after
+            .retrieval_trace
+            .lanes
+            .iter()
+            .any(|lane| lane == "section-overlap"),
+        "after: the section-overlap lane must be recorded"
+    );
+    assert!(
+        after.retrieval_trace.estimated_token_usage <= after.retrieval_trace.token_budget,
+        "after: estimated tokens must stay within the budget"
+    );
+    assert!(
+        after.selected_ids.len() <= after.retrieval_trace.item_budget,
+        "after: selection must stay within the item budget"
+    );
+
+    // Before/after receipt (visible with --nocapture).
+    println!();
+    println!("== claim-seeded section scenario ==");
+    println!(
+        "{:<6} {:<24} {:>11} {:>8} {:>8}",
+        "phase", "query (lane)", "source_refs", "sections", "selected"
+    );
+    println!(
+        "{:<6} {:<24} {:>11} {:>8} {:>8}",
+        "before",
+        "scoped, no lineage",
+        before.source_refs.len(),
+        before.sections.len(),
+        before.selected_ids.len()
+    );
+    println!(
+        "{:<6} {:<24} {:>11} {:>8} {:>8}",
+        "after",
+        "rx-1042 exact+lineage",
+        after.source_refs.len(),
+        after.sections.len(),
+        after.selected_ids.len()
+    );
     Ok(())
 }
