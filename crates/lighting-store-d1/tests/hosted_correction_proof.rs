@@ -18,22 +18,21 @@
 //!   `scope_hash` returns zero rows);
 //! * stale suppression holds for `scoped_belief_candidates`.
 //!
-//! Documented gaps (see the receipt for the gap list):
-//! * GAP-1 `search_beliefs` does not filter `stale` (the candidates read
-//!   does), and the worker search handler does not post-filter — a stale
-//!   belief leaks into search. Reproduction asserted green below;
-//!   acceptance form is `#[ignore]`d.
-//! * GAP-2 `lantern_correct` fresh responses carry `scope_hash` but the
-//!   replayed receipt (stored `result_json`) does not, so fresh and
-//!   replayed shapes diverge — contradicting the remember handler's
-//!   documented invariant. Reproduction asserted green below; acceptance
-//!   form is `#[ignore]`d.
+//! Gaps found here and closed upstream on q17/hosted-capture @ 2130dc4
+//! (merged into this branch); the acceptance forms now run active:
+//! * GAP-1 `search_beliefs` now filters `stale = 0` like the candidates
+//!   read (search_suppresses_stale_beliefs).
+//! * GAP-2 `lantern_correct` receipts now carry `scope_hash` at build time,
+//!   so fresh and replayed shapes are identical (correct_replay_receipt_
+//!   includes_scope).
+//! * GAP-3 the correction batch now advances `current_value` together with
+//!   the token and payload (correction_updates_the_current_value_column).
 
 use lighting_store_d1::{
-    BatchRefusal, KeyedCorrection, REMEMBER_SCHEMA_SQL, RememberInput, SCHEMA_SQL, SqlStatement,
-    SqlValue, belief_detail, belief_revisions, build_correction_batch, build_remember_batch,
-    idempotency_composite_key, lookup_idempotency, lookup_remember, memory_note_list,
-    scoped_belief_candidates, search_beliefs, source_bytes,
+    BatchRefusal, KeyedCorrection, REMEMBER_ATTR_SCHEMA_SQL, REMEMBER_SCHEMA_SQL, RememberInput,
+    SCHEMA_SQL, SqlStatement, SqlValue, belief_detail, belief_revisions, build_correction_batch,
+    build_remember_batch, idempotency_composite_key, lookup_idempotency, lookup_remember,
+    memory_note_list, scoped_belief_candidates, search_beliefs, source_bytes,
 };
 use rusqlite::{Connection, Result as SqlResult};
 
@@ -45,6 +44,7 @@ fn open_schema() -> SqlResult<Connection> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch(SCHEMA_SQL)?;
     conn.execute_batch(REMEMBER_SCHEMA_SQL)?;
+    conn.execute_batch(REMEMBER_ATTR_SCHEMA_SQL)?;
     Ok(conn)
 }
 
@@ -181,6 +181,7 @@ fn remember_once(
         memory_id: format!("mem-{caller_key}"),
         principal: principal.to_owned(),
         scope_hash: SCOPE_A.to_owned(),
+        actor: principal.to_owned(),
         content: content.to_owned(),
         fingerprint: format!("fp-{content}"),
         payload_hash: hash,
@@ -231,13 +232,14 @@ fn correct_once(
     let accepted_at = CANONICAL_T0;
     let new_token = format!("{expected_revision}+1");
     let result_json = format!(
-        r#"{{"receipt_id":"receipt-{caller_key}","belief_id":"{belief_id}","current_revision":"{new_token}","value":"{new_value}","envelope_version":"lantern-keeper-write-envelope-v1","accepted_at":"{accepted_at}","replayed":false}}"#
+        r#"{{"receipt_id":"receipt-{caller_key}","belief_id":"{belief_id}","current_revision":"{new_token}","value":"{new_value}","envelope_version":"lantern-keeper-write-envelope-v1","accepted_at":"{accepted_at}","scope_hash":"{scope_hash}","replayed":false}}"#
     );
     let correction = KeyedCorrection {
         revision_id: format!("revision-{caller_key}"),
         target_belief_id: belief_id.to_owned(),
         expected_revision: expected_revision.to_owned(),
         new_revision: new_token.clone(),
+        new_value: new_value.to_owned(),
         revision_payload: format!(r#"{{"actor":"{principal}","accepted_at":"{accepted_at}"}}"#),
         belief_payload: format!(r#"{{"current_value":"{new_value}"}}"#),
         principal: principal.to_owned(),
@@ -359,6 +361,7 @@ fn failed_correction_batch_persists_nothing() {
         target_belief_id: "belief-1".to_owned(),
         expected_revision: "2026-02-01T00:00:00.000000000Z".to_owned(),
         new_revision: "2026-03-01T00:00:00.000000000Z".to_owned(),
+        new_value: "forged".to_owned(),
         revision_payload: r#"{"actor":"pi"}"#.to_owned(),
         belief_payload: r#"{"current_value":"forged"}"#.to_owned(),
         principal: "pi".to_owned(),
@@ -413,6 +416,7 @@ fn duplicate_revision_id_rolls_back_the_whole_batch() {
         target_belief_id: "belief-1".to_owned(),
         expected_revision: CANONICAL_T0.to_owned(),
         new_revision: "2026-03-01T00:00:00.000000000Z".to_owned(),
+        new_value: "beta".to_owned(),
         revision_payload: r#"{"actor":"pi"}"#.to_owned(),
         belief_payload: r#"{"current_value":"beta"}"#.to_owned(),
         principal: "pi".to_owned(),
@@ -518,43 +522,11 @@ fn correction_current_history_and_evidence_align() {
     assert!(denied_notes.is_empty(), "denied scope lists no notes");
 }
 
-/// GAP-3 reproduction (green, deliberate): after a successful correction
-/// the belief's `current_value` COLUMN still holds the old value while the
-/// `payload` carries the new one — `build_correction_batch` advances
-/// `updated_at` + `payload` only, and `belief_detail` SELECTs the stale
-/// column. Readers of `current_value` see pre-correction state.
-#[test]
-fn gap_correction_leaves_stale_current_value_column_reproduction() {
-    let conn = open_schema().expect("schema");
-    seed_belief(&conn, "belief-1", SCOPE_A, "alpha", CANONICAL_T0, false).expect("seed");
-    correct_once(
-        &conn,
-        "pi",
-        SCOPE_A,
-        "belief-1",
-        CANONICAL_T0,
-        "beta",
-        "column-gap-key",
-    )
-    .expect("correction accepted");
-
-    let detail = rows_for(&conn, &belief_detail("belief-1", SCOPE_A));
-    assert_eq!(
-        detail[0][6], "alpha",
-        "GAP-3: current_value column was never advanced by the batch"
-    );
-    assert!(
-        detail[0][10].contains("beta"),
-        "GAP-3: the payload DID advance — column and payload diverge"
-    );
-}
-
 /// GAP-3 acceptance form: `belief_detail.current_value` must match the
 /// corrected payload. Ignored until the seam owner fixes the batch (add
 /// `current_value = ?` to the projection UPDATE) or drops the column from
 /// the read.
 #[test]
-#[ignore = "GAP-3: build_correction_batch never updates the current_value column (payload advances, column does not)"]
 fn correction_updates_the_current_value_column() {
     let conn = open_schema().expect("schema");
     seed_belief(&conn, "belief-1", SCOPE_A, "alpha", CANONICAL_T0, false).expect("seed");
@@ -590,28 +562,9 @@ fn scoped_candidates_suppress_stale_beliefs() {
     assert_eq!(all.len(), 2, "explicit include_stale shows both");
 }
 
-/// GAP-1 reproduction (green, deliberate): `search_beliefs` currently
-/// returns stale beliefs — the candidates read above does not, and the
-/// worker search handler does not post-filter. Documented, not fixed here.
-#[test]
-fn gap_search_returns_stale_reproduction() {
-    let conn = open_schema().expect("schema");
-    seed_belief(&conn, "stale-1", SCOPE_A, "stale value", CANONICAL_T0, true).expect("seed");
-
-    let hits = rows_for(&conn, &search_beliefs(SCOPE_A, &["%stale%".to_owned()], 10));
-    assert_eq!(
-        hits.len(),
-        1,
-        "GAP-1: search_beliefs leaks the stale belief (no stale = 0 filter; \
-         scoped_belief_candidates has one, the worker search handler does not \
-         post-filter). Acceptance form is the ignored test below."
-    );
-}
-
 /// GAP-1 acceptance form: search must suppress stale like the candidates
 /// read does. Ignored until the seam owner fixes the SQL/handler.
 #[test]
-#[ignore = "GAP-1: search_beliefs has no stale filter (leak proven by gap_search_returns_stale_reproduction)"]
 fn search_suppresses_stale_beliefs() {
     let conn = open_schema().expect("schema");
     seed_belief(&conn, "stale-1", SCOPE_A, "stale value", CANONICAL_T0, true).expect("seed");
@@ -619,50 +572,10 @@ fn search_suppresses_stale_beliefs() {
     assert!(hits.is_empty(), "search must not return stale projections");
 }
 
-/// GAP-2 reproduction (green, deliberate): a replayed `lantern_correct`
-/// receipt lacks `scope_hash` while the fresh response carries it — the
-/// remember handler's documented invariant ("fresh and replayed responses
-/// have identical shape apart from `replayed`") does not hold for correct.
-#[test]
-fn gap_correct_replay_receipt_lacks_scope_reproduction() {
-    let conn = open_schema().expect("schema");
-    seed_belief(&conn, "belief-1", SCOPE_A, "alpha", CANONICAL_T0, false).expect("seed");
-    correct_once(
-        &conn,
-        "pi",
-        SCOPE_A,
-        "belief-1",
-        CANONICAL_T0,
-        "beta",
-        "replay-key",
-    )
-    .expect("first correction");
-    let replayed = correct_once(
-        &conn,
-        "pi",
-        SCOPE_A,
-        "belief-1",
-        CANONICAL_T0,
-        "beta",
-        "replay-key",
-    )
-    .expect("replay");
-
-    assert!(replayed.replayed, "second call replays");
-    assert!(
-        replayed.get("scope_hash").is_none(),
-        "GAP-2: replayed correct receipt has no scope_hash while the fresh \
-         response does (worker correct() inserts scope only on the fresh \
-         path; replay_response returns the stored result_json verbatim). \
-         Acceptance form is the ignored test below."
-    );
-}
-
 /// GAP-2 acceptance form: fresh and replayed correct receipts must carry
 /// the same shape (both including `scope_hash`), per the remember handler's
 /// invariant. Ignored until the seam owner fixes the worker.
 #[test]
-#[ignore = "GAP-2: lantern_correct replayed receipt lacks scope_hash (fresh has it)"]
 fn correct_replay_receipt_includes_scope() {
     let conn = open_schema().expect("schema");
     seed_belief(&conn, "belief-1", SCOPE_A, "alpha", CANONICAL_T0, false).expect("seed");
