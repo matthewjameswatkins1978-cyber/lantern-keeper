@@ -33,6 +33,10 @@ const SCHEMA_VERSION_SQL: &str = "SELECT value FROM schema_meta WHERE key = 'sch
 const CREDENTIALS_SECRET: &str = "LANTERN_MCP_CREDENTIALS";
 const D1_BINDING: &str = "LANTERN_DB";
 
+fn branding_icons() -> Value {
+    json!([{ "src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAFUUlEQVRYw7WXS2xUVRjHf+fcO3du592Z6UhtS2mBUoJWRBBLTEyDj4UoaKJB3UBi3MgCY+Jjo2XpwrAxLkx8bHSJ1eAWTXgHFjyEAAFaUkAcOp2ZTqfzuvceF3cYKLYzN4JfcieZ+517vv/3/x7nfAJg+eAAQBvwKvAusB6IAoKHIwrIAyeBb4FfgNKVC5cQdeNxYBTYCYS87OY4at47KYVXtLPA93V70zpg1v/s8uKxoyDol6ztj7CqOwjAxetFTl2doVhxkK1RhOq2AD7SgW3ADq/GuxJ+PtjWy8hQnJCpuy6VLX4/M83esWvcyFS8gBB1m0e0eDKxF1jthfagX/Lpm/1s2dDB9UyFX4+lOXW1QCJisHEgSiLi4/D5LDVbeQmHH4jqwFNeAuc4irX9EUaG4lz9u8TH313i7EQBgP0nwnyxc4CRoTg/90c4dD6L5oEGYL0EYl5WAqzqDhIydQ7+meXsRAEpBVIKzk4UOHguS8jUG3nhUWI6LWKvVD3rFZiGBCBXtLBVPS6A7UBu1gLcNY4CodyNRXMihN4KYrhNIxzQsR1FwK+hlCJoanQl/A2abcd9p5S75o6uMGcxW7abI1g+OKAWUijlGv/87RU80RfGUYpQm040oJOfsyiWrQZ1Cgiad3WzJQspBKfHC+z56TKFkr0oE00ZEAIeaTfo7vAzW7LJFGrMzFkI4dJ7L/JCyWroEmEfoTaNW7kKokUM9GbG80WLsaNphvrC3Jyu8OW+CWbL9qJJo4CQqfHha8voW9LG2NE0+WIN2aQiWjAgOHBmmtc3pXh8WZjP3lqO7ahmn6BJQSpmcHaiwIEz0y0ZkK1CkJmpsu9IGkcp4mEfmhQIAfK+RwjXeDzsw1GKfUfSZGaqraqAllUAkM5XQcHp8QKjP16mZi/Mgk8TjL6zgif7w6RzVS9bewPQkzTx+yTjt0pMpEvc2zo06fYBVxTjt0o8sypKd4fpCYBsuUAIepImCJicKqPUXdp1CSsfDdJmSKRwS3dyqgwCliZNZCv+vQDw6YLupEnNUg0AACNDcVIxPy+uSzC8OtZIzsmpMjVL0Z008ekPCEApCJoanXGDYsXmr+kKChgejPHJG328tC7B0yuj7N7ay6quII6CW9MVihWbzrhR744PAgBFe8hHMmKQLdS4na+yJGaw65WldCVM3t+ylMeWhVjRGWD3tl7agzq381WyhRrJiEF7yIdCPQAABamYQSSgk85XyRcthgdjrFkawnYUpk+iSYHtKDatjjG8OkauaJHOV4kEdFJR40EZgK6EiWlIbmQqlKs2nQk/uiYa+jti6JLeVBvlqs2NTAXTkHQlzRb+twAguZvNk7fLWI7iRqaCtUAfqNmKm9MVLEcxebvcqJ5WWd5Ur+uS7g4Ty1ZcS5dwFBw+l+XYhdy8DicEHL+Q4/C5LI6Ca+kSlq3o6TDR9eYQFm1ESoHpk3S2+7GV4tk17fSm2gDIFmtUag5GffNKzSFbrLH9uU4AejpMHKXobPdj+iTFcvPjWLHArUjTBJvXxulNmUgBWzemGps4Ss1LLkOXvLyho9F43FuUojdlsnltnN9OTP1rjrjjpwRyC3kfDejseL6LZMRACjHPAykEmpz/3Nv13MNKkIwY7Hi+i2hAX6wacjruuPTCvW+FgJk5i6/3TzLQHQBFy2y+X0T959L1ucZFZQE5KZYPDmwHvgHC92tbnf1eZZEregF4TwfGgE0sMJp5vNv/F1HAD8CYFk8mLOA4EADWAMb/ZbUus7iMjwIFLTuVIZ5MlIA/gIu4g0ocd3R62OP5IWAP8BVQuHLhEv8AIuT/hsL9HTAAAAAASUVORK5CYII=", "mimeType": "image/png", "sizes": ["32x32"] }])
+}
+
 #[event(fetch)]
 async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     serve(req, env).await
@@ -82,11 +86,20 @@ async fn serve(mut req: Request, env: Env) -> Result<Response> {
             json!({
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": { "tools": { "listChanged": false } },
-                "serverInfo": { "name": SERVER_NAME, "version": SERVER_VERSION }
+                "serverInfo": { "name": SERVER_NAME, "version": SERVER_VERSION, "icons": branding_icons() }
             }),
         )),
         "ping" => json_ok(&rpc_result(&id, json!({}))),
-        "tools/list" => json_ok(&rpc_result(&id, tool_catalog())),
+        "tools/list" => {
+            let mut catalog = tool_catalog();
+            if let Some(tools) = catalog["tools"].as_array_mut() {
+                let icons = branding_icons();
+                for tool in tools {
+                    tool["icons"] = icons.clone();
+                }
+            }
+            json_ok(&rpc_result(&id, catalog))
+        }
         "tools/call" => {
             let name = params
                 .get("name")
