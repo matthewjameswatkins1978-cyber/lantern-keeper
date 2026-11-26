@@ -5077,6 +5077,7 @@ mod tests {
             target_belief_id: "c3-seed-bel-1".to_owned(),
             expected_revision: seeded_token.clone(),
             new_revision: "2026-10-01T14:00:00.000000000Z".to_owned(),
+            new_value: "corrected by c3 test".to_owned(),
             revision_payload: "{\"actor\":\"c3-test\"}".to_owned(),
             belief_payload: "{\"id\":\"c3-seed-bel-1\",\"current_value\":\"corrected by c3 test\"}"
                 .to_owned(),

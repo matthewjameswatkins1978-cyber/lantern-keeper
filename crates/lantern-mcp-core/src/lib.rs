@@ -942,6 +942,17 @@ mod tests {
     }
 
     #[test]
+    fn remember_payload_hash_is_deterministic_and_binding() {
+        // The worker persists exactly this value and compares exactly this
+        // value on replay. Any drift is a guaranteed replay break.
+        let a = remember_payload_hash("v1", "p|s|k", "ch");
+        assert_eq!(a, remember_payload_hash("v1", "p|s|k", "ch"));
+        assert_ne!(a, remember_payload_hash("v2", "p|s|k", "ch"));
+        assert_ne!(a, remember_payload_hash("v1", "p|s|k2", "ch"));
+        assert_ne!(a, remember_payload_hash("v1", "p|s|k", "ch2"));
+    }
+
+    #[test]
     fn get_source_and_list_notes_parse_and_bound() {
         let scope = json!({"project": "smoke"});
         let get = json!({"scope": scope, "source_id": "abc"});

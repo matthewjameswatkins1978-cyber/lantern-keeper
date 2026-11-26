@@ -373,6 +373,7 @@ async fn remember(
         memory_id,
         principal: principal.principal.clone(),
         scope_hash: scope_hash.clone(),
+        actor: principal.principal.clone(),
         content: args.content.clone(),
         fingerprint: content_hash.clone(),
         payload_hash: hash.clone(),
@@ -464,6 +465,7 @@ async fn correct(
         "value": args.new_value,
         "envelope_version": envelope,
         "accepted_at": accepted_at,
+        "scope_hash": scope_hash,
         "replayed": false
     })
     .to_string();
@@ -473,6 +475,7 @@ async fn correct(
         target_belief_id: args.belief_id.clone(),
         expected_revision: args.expected_revision.clone(),
         new_revision: new_token.clone(),
+        new_value: args.new_value.clone(),
         revision_payload: json!({ "actor": principal.principal, "accepted_at": accepted_at })
             .to_string(),
         belief_payload: merged_payload,
@@ -491,14 +494,10 @@ async fn correct(
         prepared.push(bind_statement(&d1, statement)?);
     }
     match d1.batch(prepared).await {
-        Ok(_) => {
-            let mut payload: Value = serde_json::from_str(&result_json)
-                .map_err(|_| CoreError::Storage("receipt serialization".into()))?;
-            if let Some(object) = payload.as_object_mut() {
-                object.insert("scope_hash".into(), json!(scope_hash));
-            }
-            Ok(payload)
-        }
+        // The receipt already carries scope_hash (built above), so fresh and
+        // replayed responses have identical shape apart from `replayed`.
+        Ok(_) => serde_json::from_str(&result_json)
+            .map_err(|_| CoreError::Storage("receipt serialization".into())),
         Err(error) => {
             let classified = classify_any(error);
             if classified == CoreError::IdempotencyConflict {

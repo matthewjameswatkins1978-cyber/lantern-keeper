@@ -83,6 +83,7 @@ fn correction(
         target_belief_id: belief.to_owned(),
         expected_revision: expected.to_owned(),
         new_revision: new.to_owned(),
+        new_value: format!("value-for-{id}"),
         revision_payload: "{}".to_owned(),
         belief_payload: "{}".to_owned(),
         principal: "pi".to_owned(),
@@ -175,6 +176,26 @@ fn forged_expected_revision_aborts_with_nothing_moved() {
         "rev-1",
         "projection must not move on a forged token"
     );
+}
+
+#[test]
+fn projection_value_advances_with_token_and_payload() {
+    // Q18-hosted finding, proven live: the batch moved updated_at and
+    // payload but left current_value stale, so `why` contradicted itself.
+    // Token, value and payload now move in the same statement.
+    let conn = open_schema().expect("schema");
+    seed_belief(&conn, "b1", "scope-a", "rev-1", false).expect("seed");
+    let write = correction("r1", "b1", "rev-1", "rev-2", "k1");
+    run_batch(&conn, &batch_of(&write)).expect("accepted");
+    let (updated, value): (String, String) = conn
+        .query_row(
+            "SELECT updated_at, current_value FROM belief WHERE id = 'b1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("belief");
+    assert_eq!(updated, "rev-2");
+    assert_eq!(value, "value-for-r1");
 }
 
 #[test]
