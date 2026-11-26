@@ -473,6 +473,7 @@ async fn correct(
         target_belief_id: args.belief_id.clone(),
         expected_revision: args.expected_revision.clone(),
         new_revision: new_token.clone(),
+        new_value: args.new_value.clone(),
         revision_payload: json!({ "actor": principal.principal, "accepted_at": accepted_at })
             .to_string(),
         belief_payload: merged_payload,

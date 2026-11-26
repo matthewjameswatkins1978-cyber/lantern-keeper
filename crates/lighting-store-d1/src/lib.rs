@@ -112,6 +112,10 @@ pub struct KeyedCorrection {
     pub expected_revision: String,
     /// The `updated_at` token this transition moves the belief to.
     pub new_revision: String,
+    /// The governed human-readable value after this transition. Stored in
+    /// `belief.current_value` by the same batch so the projection, the
+    /// revision token and the readable value can never disagree.
+    pub new_value: String,
     pub revision_payload: String,
     pub belief_payload: String,
     pub principal: String,
@@ -184,11 +188,13 @@ pub fn build_correction_batch(w: &KeyedCorrection) -> Result<Vec<SqlStatement>, 
                 w.accepted_at.clone().into(),
             ],
         ),
-        // 2. Advance the governed projection.
+        // 2. Advance the governed projection: token, value and payload
+        // move together or the batch rolls back.
         SqlStatement::new(
-            "UPDATE belief SET updated_at = ?, payload = ? WHERE id = ?",
+            "UPDATE belief SET updated_at = ?, current_value = ?, payload = ? WHERE id = ?",
             vec![
                 w.new_revision.clone().into(),
+                w.new_value.clone().into(),
                 w.belief_payload.clone().into(),
                 w.target_belief_id.clone().into(),
             ],
