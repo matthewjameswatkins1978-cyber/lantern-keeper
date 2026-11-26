@@ -41,6 +41,10 @@ on:
         description: "Optional export manifest JSON (with record_counts) for the D1-direct reconcile probe"
         required: false
         default: ""
+      allow_without_manifest:
+        description: "Explicit opt-out of the manifest comparison (structural checks still enforced). Use only for code-only deploys."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -143,8 +147,9 @@ jobs:
 
           echo "== 2. tools/list =="
           TOOLS="$(mcp_call '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')"
-          echo "$TOOLS" | jq -e '.result.tools | length == 5' >/dev/null
+          echo "$TOOLS" | jq -e '.result.tools | length == 8' >/dev/null
           echo "$TOOLS" | jq -e '[.result.tools[].name] | index("lantern_correct") != null' >/dev/null
+          echo "$TOOLS" | jq -e '[.result.tools[].name] | index("lantern_remember") != null' >/dev/null
 
           echo "== 3. seed synthetic belief (insert-if-absent, D1) =="
           SCOPE_JSON='{"project":"deploy-proof"}'
@@ -212,32 +217,71 @@ jobs:
         working-directory: apps/lighting-worker
         env:
           EXPORT_MANIFEST: ${{ inputs.export_manifest }}
+          ALLOW_WITHOUT_MANIFEST: ${{ inputs.allow_without_manifest }}
         run: |
           set -euo pipefail
           # Raw D1-side reconciliation (seq57): reads the hosted database
           # directly with wrangler, independent of any REST surface. Payload
           # byte sums act as content fingerprints (no crypto hash in D1 SQL).
-          # Post-seed additions (e.g. the synthetic deploy-proof belief)
-          # surface as explicit mismatches — fail visible, never silent.
-          SEEDED="$(wrangler d1 execute lantern-keeper --remote --config wrangler.jsonc --json --command "SELECT (SELECT COUNT(*) FROM source) AS source, (SELECT COUNT(*) FROM episode) AS episode, (SELECT COUNT(*) FROM epistemic_claim) AS epistemic_claim, (SELECT COUNT(*) FROM belief) AS belief, (SELECT COALESCE(SUM(LENGTH(payload)),0) FROM epistemic_claim) AS claim_payload_bytes, (SELECT COALESCE(SUM(LENGTH(payload)),0) FROM belief) AS belief_payload_bytes, (SELECT value FROM schema_meta WHERE key = 'schema_version') AS schema_version")"
+          # The synthetic deploy-proof canary is counted separately and
+          # excluded from manifest comparisons — canary drift can never
+          # silently pass as import content.
+          CANARY_HASH="$(printf 'project=deploy-proof\n' | sha256sum | awk '{print $1}')"
+                    SEEDED="$(wrangler d1 execute lantern-keeper --remote --config wrangler.jsonc --json --command "SELECT (SELECT COUNT(*) FROM source) AS source, (SELECT COUNT(*) FROM episode) AS episode, (SELECT COUNT(*) FROM epistemic_claim WHERE scope_hash <> '${CANARY_HASH}') AS epistemic_claim, (SELECT COUNT(*) FROM belief WHERE scope_hash <> '${CANARY_HASH}') AS belief, (SELECT COUNT(*) FROM memory_item WHERE scope_hash <> '${CANARY_HASH}') AS memory_item, (SELECT COUNT(*) FROM belief_revision WHERE belief_id NOT IN (SELECT id FROM belief WHERE scope_hash = '${CANARY_HASH}')) AS belief_revision, (SELECT COUNT(*) FROM correction_idempotency WHERE scope_hash <> '${CANARY_HASH}') AS correction_idempotency, (SELECT COUNT(*) FROM mutation_receipt WHERE scope_hash <> '${CANARY_HASH}') AS mutation_receipt, (SELECT COALESCE(SUM(LENGTH(CAST(payload AS BLOB))),0) FROM epistemic_claim WHERE scope_hash <> '${CANARY_HASH}') AS claim_payload_bytes, (SELECT COALESCE(SUM(LENGTH(CAST(payload AS BLOB))),0) FROM belief WHERE scope_hash <> '${CANARY_HASH}') AS belief_payload_bytes, (SELECT value FROM schema_meta WHERE key = 'schema_version') AS schema_version, (SELECT COUNT(*) FROM belief WHERE scope_hash = '${CANARY_HASH}') AS canary_beliefs, (SELECT COUNT(*) FROM memory_item WHERE scope_hash = '${CANARY_HASH}') AS canary_notes")"
           echo "$SEEDED" | jq .
           RESULTS="$(echo "$SEEDED" | jq -c '.[0].results[0]')"
-          if [ -n "${EXPORT_MANIFEST:-}" ]; then
-            echo "$EXPORT_MANIFEST" | jq -e '.record_counts' >/dev/null || {
-              echo "export_manifest input must contain record_counts" >&2
+          SCHEMA_GOT="$(echo "$RESULTS" | jq -r '.schema_version')"
+          if [ "$SCHEMA_GOT" != "hosted-2" ]; then
+            echo "schema_version is '$SCHEMA_GOT', want 'hosted-2' — migration 0002 not applied" >&2
+            exit 1
+          fi
+          echo "schema_version: hosted-2"
+          echo "canary rows (excluded from manifest comparison): beliefs=$(echo "$RESULTS" | jq -r '.canary_beliefs') notes=$(echo "$RESULTS" | jq -r '.canary_notes')"
+          if [ -z "${EXPORT_MANIFEST:-}" ]; then
+            if [ "${ALLOW_WITHOUT_MANIFEST:-}" = "true" ]; then
+              echo "no export_manifest input; operator explicitly allowed a counts-free run (structural checks above still enforced)"
+              echo "D1-direct reconcile: SKIPPED (explicit opt-out)"
+              exit 0
+            fi
+            echo "no export_manifest input and allow_without_manifest is not 'true' — refusing an uncompared run" >&2
+            exit 1
+          fi
+          echo "$EXPORT_MANIFEST" | jq -e '.record_counts' >/dev/null || {
+            echo "export_manifest input must contain record_counts" >&2
+            exit 1
+          }
+          COMPARED=0
+          for T in source episode epistemic_claim belief memory_item belief_revision correction_idempotency mutation_receipt; do
+            WANT="$(echo "$EXPORT_MANIFEST" | jq -r --arg t "$T" '.record_counts[$t] // empty')"
+            if [ -z "$WANT" ]; then
+              echo "manifest has no count for $T — refusing a partial comparison" >&2
               exit 1
-            }
-            for T in source episode epistemic_claim belief; do
-              WANT="$(echo "$EXPORT_MANIFEST" | jq -r --arg t "$T" '.record_counts[$t] // empty')"
-              [ -n "$WANT" ] || continue
-              GOT="$(echo "$RESULTS" | jq -r --arg t "$T" '.[$t]')"
-              if [ "$GOT" != "$WANT" ]; then
-                echo "MISMATCH $T: D1 has $GOT, export manifest says $WANT" >&2
+            fi
+            GOT="$(echo "$RESULTS" | jq -r --arg t "$T" '.[$t]')"
+            if [ "$GOT" != "$WANT" ]; then
+              echo "MISMATCH $T: D1 has $GOT, export manifest says $WANT" >&2
+              exit 1
+            fi
+            echo "match $T: $GOT"
+            COMPARED=$((COMPARED+1))
+          done
+          NONZERO="$(echo "$EXPORT_MANIFEST" | jq '[.record_counts | to_entries[] | select(.value > 0)] | length')"
+          if [ "$NONZERO" = "0" ]; then
+            echo "manifest record_counts are all zero — refusing a vacuous PASS" >&2
+            exit 1
+          fi
+          echo "compared $COMPARED tables, $NONZERO nonzero"
+          SCOPE_WANT="$(echo "$EXPORT_MANIFEST" | jq -r '.scope_hash // empty')"
+          if [ -n "$SCOPE_WANT" ]; then
+            for T in belief memory_item epistemic_claim correction_idempotency mutation_receipt; do
+              STRAY="$(wrangler d1 execute lantern-keeper --remote --config wrangler.jsonc --json --command "SELECT COUNT(*) AS c FROM $T WHERE scope_hash NOT IN ('$SCOPE_WANT', '$CANARY_HASH')" | jq -r '.[0].results[0].c')"
+              if [ "$STRAY" != "0" ]; then
+                echo "SCOPE LEAK in $T: $STRAY rows outside import scope and canary scope" >&2
                 exit 1
               fi
-              echo "match $T: $GOT"
             done
-            echo "D1-direct reconcile: PASS"
+            echo "scope confinement: clean"
           else
-            echo "no export_manifest input — counts and fingerprints printed above for operator comparison (not asserted)"
+            echo "manifest has no scope_hash — scope confinement not checked (counts still enforced above)"
           fi
+          echo "D1-direct reconcile: PASS"
