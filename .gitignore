@@ -21,3 +21,7 @@ Desktop.ini
 
 # Cloudflare deployment cache (per-machine, never commit).
 .wrangler/
+# Node tooling (apps/lantern-chatgpt worker).
+node_modules/
+apps/lantern-chatgpt/dist/
+
