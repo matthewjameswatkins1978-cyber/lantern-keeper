@@ -424,19 +424,51 @@ pub fn lookup_remember(composite_key: &str) -> SqlStatement {
     )
 }
 
-/// Bounded scoped note list, newest first. Zero-write.
+/// Bounded scoped note list, newest first, with the `source_id` handle that
+/// [`source_bytes`] resolves to exact content. Zero-write. A row written
+/// before schema 0002 reports a NULL handle honestly; none is invented.
 pub fn memory_note_list(scope_hash: &str, limit: usize) -> SqlStatement {
     let effective = limit.min(MAX_CANDIDATES);
     if effective == 0 {
         return SqlStatement::new(
-            "SELECT id, content, created_at FROM memory_item WHERE 0",
+            "SELECT id, content, created_at, source_id FROM memory_item WHERE 0",
             vec![],
         );
     }
     SqlStatement::new(
-        "SELECT id, content, created_at FROM memory_item WHERE scope_hash = ? AND archived = 0 ORDER BY created_at DESC, id ASC LIMIT ?",
+        "SELECT id, content, created_at, source_id FROM memory_item WHERE scope_hash = ? AND archived = 0 ORDER BY created_at DESC, id ASC LIMIT ?",
         vec![scope_hash.into(), (effective as i64).into()],
     )
+}
+
+/// Bounded scoped ordinary-note query: [`memory_note_list`] plus LIKE
+/// filters bound as parameters (never interpolated), so notes older than
+/// the newest page stay findable inside the same 128-row bound. Empty
+/// patterns return no rows rather than an unscoped scan. Zero-write.
+pub fn search_memory_notes(scope_hash: &str, patterns: &[String], limit: usize) -> SqlStatement {
+    let effective = limit.min(MAX_CANDIDATES);
+    if effective == 0 || patterns.is_empty() {
+        return SqlStatement::new(
+            "SELECT id, content, created_at, source_id FROM memory_item WHERE 0",
+            vec![],
+        );
+    }
+    let mut sql = String::from(
+        "SELECT id, content, created_at, source_id FROM memory_item WHERE scope_hash = ? AND archived = 0 AND (",
+    );
+    for index in 0..patterns.len() {
+        if index > 0 {
+            sql.push_str(" OR ");
+        }
+        sql.push_str("(content LIKE ? COLLATE NOCASE)");
+    }
+    sql.push_str(") ORDER BY created_at DESC, id ASC LIMIT ?");
+    let mut params = vec![SqlValue::Text(scope_hash.to_owned())];
+    for pattern in patterns {
+        params.push(SqlValue::Text(pattern.clone()));
+    }
+    params.push(SqlValue::Integer(effective as i64));
+    SqlStatement::new(sql, params)
 }
 
 /// Exact source-bytes point read, scope-confined through the owning note.

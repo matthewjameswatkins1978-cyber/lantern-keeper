@@ -126,7 +126,8 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             output,
             json,
             strict,
-        } => cmd_hosted_seed_sql(&export, &output, json, strict),
+            scope,
+        } => cmd_hosted_seed_sql(&export, &output, json, strict, &scope),
         CliCommand::Predicate { command } => match command {
             PredicateCommand::List { json } => cmd_predicate_list(&client, json),
             PredicateCommand::Get { key, json } => cmd_predicate_get(&client, &key, json),
@@ -374,6 +375,13 @@ pub enum CliCommand {
         /// SQL + report for inspection.
         #[arg(long)]
         strict: bool,
+        /// Trusted operator scope for imported ordinary-note projections:
+        /// KEY=VALUE, repeatable — all pairs form one normalised scope.
+        /// Under --strict this is required whenever the export contains
+        /// classifiable sources, because without it imported Markdown
+        /// stays invisible to the ordinary hosted note list.
+        #[arg(long = "scope", value_name = "KEY=VALUE")]
+        scope: Vec<String>,
     },
     /// Inspect the canonical predicate registry and unmapped claim queue.
     Predicate {
@@ -2250,22 +2258,72 @@ fn canonical_record_or_payload_timestamp(
         .or_else(|| payload_text(payload, payload_key).and_then(canonical_hosted_timestamp))
 }
 
-fn seed_source_statement(record: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+/// One classified source row plus the exact fields its ordinary-note
+/// projection needs — one extraction, so a projection can never drift from
+/// the byte-exact source row it points at.
+struct SeededSource {
+    statement: String,
+    id: String,
+    content: String,
+    created_at: String,
+}
+
+fn seed_source_statement(
+    record: &serde_json::Map<String, serde_json::Value>,
+) -> Option<SeededSource> {
     let id = strip_table_prefix(record_text(record, "id")?, "source");
     let kind = record_text(record, "kind")?;
     let title = record_text(record, "title")?;
     let content = record_text(record, "content")?;
     let fingerprint = record_text(record, "fingerprint")?;
     let created_at = canonical_hosted_timestamp(record_text(record, "created_at")?)?;
-    Some(format!(
-        "INSERT INTO source (id, kind, title, content, fingerprint, created_at) VALUES ({}, {}, {}, {}, {}, {}) ON CONFLICT(id) DO NOTHING;",
-        sql_text(id),
-        sql_text(kind),
-        sql_text(title),
-        sql_text(content),
-        sql_text(fingerprint),
-        sql_text(&created_at),
-    ))
+    Some(SeededSource {
+        statement: format!(
+            "INSERT INTO source (id, kind, title, content, fingerprint, created_at) VALUES ({}, {}, {}, {}, {}, {}) ON CONFLICT(id) DO NOTHING;",
+            sql_text(id),
+            sql_text(kind),
+            sql_text(title),
+            sql_text(content),
+            sql_text(fingerprint),
+            sql_text(&created_at),
+        ),
+        id: id.to_owned(),
+        content: content.to_owned(),
+        created_at,
+    })
+}
+
+/// Ordinary-note projection for one classified imported source: a scoped
+/// `memory_item` (kind 'note') whose `source_id` resolves to the byte-exact
+/// source row. NEVER an `epistemic_claim` or `belief` — an import must not
+/// manufacture verified knowledge. The id is deterministic over operator
+/// scope and source row, and `ON CONFLICT(id) DO NOTHING` makes a re-run
+/// collide benignly instead of duplicating (replay-safe).
+fn seed_import_note_statement(source: &SeededSource, scope_hash: &str) -> String {
+    format!(
+        "INSERT INTO memory_item (id, scope_hash, content, kind, salience, archived, payload, created_at, source_id, actor) VALUES ({id}, {scope_hash}, {content}, 'note', 0.0, 0, {content}, {created_at}, {source_id}, 'import:hosted-seed-sql-v1') ON CONFLICT(id) DO NOTHING;",
+        id = sql_text(&import_note_id(scope_hash, &source.id)),
+        scope_hash = sql_text(scope_hash),
+        content = sql_text(&source.content),
+        created_at = sql_text(&source.created_at),
+        source_id = sql_text(&source.id),
+    )
+}
+
+/// Deterministic note id: same operator scope + same source row -> same
+/// primary key, so a re-seeded import collides instead of duplicating. The
+/// `importnote|` input prefix keeps this id space distinct from a keyed
+/// remember's `memory|` id space.
+fn import_note_id(scope_hash: &str, source_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(format!("importnote|{scope_hash}|{source_id}").as_bytes());
+    digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+        .chars()
+        .take(32)
+        .collect()
 }
 
 fn seed_episode_statement(record: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
@@ -2553,7 +2611,24 @@ fn seed_revision_statement(
 pub fn build_hosted_seed_sql(
     export_dir: &Path,
     strict: bool,
+    operator_scope: Option<BTreeMap<String, String>>,
 ) -> anyhow::Result<(String, HostedSeedSqlReport)> {
+    // Trusted operator scope for imported ordinary-note projections: it
+    // decides where imported Markdown becomes visible, so invalid or empty
+    // input fails closed here instead of seeding into a wrong namespace.
+    let import_scope_hash = match operator_scope {
+        Some(scope) => {
+            if scope.is_empty() {
+                bail!(
+                    "operator scope must not be empty (pass at least one --scope KEY=VALUE pair)"
+                );
+            }
+            let normalised = lighting_core::normalize_scope(&scope)
+                .map_err(|error| anyhow::anyhow!("operator scope invalid: {error}"))?;
+            Some(lighting_core::scope_hash(&normalised))
+        }
+        None => None,
+    };
     let manifest_text = fs::read_to_string(export_dir.join("manifest.json")).ok();
     let manifest_record_count = manifest_text
         .as_deref()
@@ -2686,8 +2761,32 @@ pub fn build_hosted_seed_sql(
                 );
                 belief_tokens.insert(id, BeliefAnchors { created, updated });
             }
+            if table == "source" {
+                // Import visibility: one classified source, one ordinary-note
+                // projection pushed directly after it (the projection's
+                // foreign key points at this row) when an operator scope is
+                // supplied. The projection is a note — never a claim/belief.
+                let Some(source) = seed_source_statement(record) else {
+                    record_warning(
+                        &mut warnings,
+                        strict,
+                        format!(
+                            "{} line {}: {table} record could not be mapped honestly; skipped",
+                            file.display(),
+                            index + 1
+                        ),
+                    )?;
+                    continue;
+                };
+                by_table[bucket].push(source.statement);
+                *emitted.entry(table.to_owned()).or_default() += 1;
+                if let Some(scope_hash) = &import_scope_hash {
+                    by_table[bucket].push(seed_import_note_statement(&source, scope_hash));
+                    *emitted.entry("memory_item".to_owned()).or_default() += 1;
+                }
+                continue;
+            }
             let statement = match table {
-                "source" => seed_source_statement(record),
                 "episode" => seed_episode_statement(record),
                 "epistemic_claim" => seed_claim_statement(record, &mut warnings),
                 "memory_relation" => seed_relation_statement(record, &mut warnings),
@@ -2835,10 +2934,31 @@ pub fn build_hosted_seed_sql(
             *emitted.entry("belief_revision".to_owned()).or_default() += 1;
         }
     }
+    // Import visibility: without a trusted operator scope the exported
+    // sources cannot be projected into ordinary notes, so imported Markdown
+    // would stay invisible to the ordinary hosted list/get path. --strict
+    // refuses to build that silently; the default path records it so the
+    // report never claims a fully mapped import.
+    let source_count = emitted.get("source").copied().unwrap_or(0);
+    if import_scope_hash.is_none() && source_count > 0 {
+        record_warning(
+            &mut warnings,
+            strict,
+            format!(
+                "{source_count} exported source(s) were seeded without an ordinary note projection: no operator scope was supplied (--scope KEY=VALUE), so imported Markdown stays invisible to lantern_list_notes"
+            ),
+        )?;
+    }
     let statements: Vec<String> = by_table.into_iter().flatten().collect();
 
+    // Name the projection rule in the artifact itself when it applied.
+    let projection_note = if emitted.contains_key("memory_item") {
+        "-- note projection: classified imported source -> scoped memory_item (kind 'note', operator scope, valid source_id; never a claim or belief); requires hosted schema 0002+0003 (memory_item.source_id, actor)\n"
+    } else {
+        ""
+    };
     let mut header = format!(
-        "-- {HOSTED_SEED_SQL_VERSION}: hosted D1 seed from Lantern logical export\n-- export: {}\n-- manifest record_count: {}\n-- emitted: {}\n-- skipped (not part of the hosted memory surface): {}\n-- idempotent: ON CONFLICT(id) DO NOTHING never overwrites post-seed corrections.\n-- mapping: memory_relation->epistemic_claim, belief_revision->belief_revision (docs/c3-relations-mapping.md)\n-- apply: wrangler d1 execute lantern-keeper --remote --config wrangler.jsonc --file <this>\n\n",
+        "-- {HOSTED_SEED_SQL_VERSION}: hosted D1 seed from Lantern logical export\n-- export: {}\n-- manifest record_count: {}\n-- emitted: {}\n-- skipped (not part of the hosted memory surface): {}\n-- idempotent: ON CONFLICT(id) DO NOTHING never overwrites post-seed corrections.\n-- mapping: memory_relation->epistemic_claim, belief_revision->belief_revision (docs/c3-relations-mapping.md)\n{projection_note}-- apply: wrangler d1 execute lantern-keeper --remote --config wrangler.jsonc --file <this>\n\n",
         export_dir.display(),
         manifest_record_count
             .map(|count| count.to_string())
@@ -2876,13 +2996,15 @@ fn cmd_hosted_seed_sql(
     output: &Path,
     json: bool,
     strict: bool,
+    scope_pairs: &[String],
 ) -> anyhow::Result<()> {
     if !export.is_dir() {
         bail!("export path is not a directory: {}", export.display());
     }
+    let operator_scope = parse_operator_scope(scope_pairs)?;
     // Under --strict the build itself aborts on the first problem, so this
     // path never reaches the artifact write with a strict failure.
-    let (sql, report) = build_hosted_seed_sql(export, strict)?;
+    let (sql, report) = build_hosted_seed_sql(export, strict, operator_scope)?;
 
     if let Some(parent) = output
         .parent()
@@ -2927,6 +3049,29 @@ fn cmd_hosted_seed_sql(
         );
     }
     Ok(())
+}
+
+/// Parse repeated `--scope KEY=VALUE` pairs into one operator scope. The
+/// scope is trusted operator input (it decides where imported notes become
+/// visible), so a malformed pair fails closed instead of guessing.
+fn parse_operator_scope(pairs: &[String]) -> anyhow::Result<Option<BTreeMap<String, String>>> {
+    if pairs.is_empty() {
+        return Ok(None);
+    }
+    let mut scope = BTreeMap::new();
+    for pair in pairs {
+        let Some((key, value)) = pair.split_once('=') else {
+            bail!("--scope expects KEY=VALUE, got {pair:?}");
+        };
+        let (key, value) = (key.trim(), value.trim());
+        if key.is_empty() || value.is_empty() {
+            bail!("--scope expects a non-empty KEY and VALUE, got {pair:?}");
+        }
+        if scope.insert(key.to_owned(), value.to_owned()).is_some() {
+            bail!("duplicate --scope key {key:?}");
+        }
+    }
+    Ok(Some(scope))
 }
 
 fn cmd_basic_memory_import(
@@ -4754,10 +4899,46 @@ mod tests {
         .expect("count query")
     }
 
+    /// Read every selected TEXT column of one prepared statement as an
+    /// optional string (the hosted reads exercised here select only TEXT).
+    fn c3_rows(
+        conn: &rusqlite::Connection,
+        statement: &lighting_store_d1::SqlStatement,
+    ) -> Vec<Vec<Option<String>>> {
+        let mut prepared = conn.prepare(&statement.sql).expect("prepare");
+        let column_count = prepared.column_count();
+        let params: Vec<rusqlite::types::Value> = statement
+            .params
+            .iter()
+            .map(|param| match param {
+                lighting_store_d1::SqlValue::Text(text) => {
+                    rusqlite::types::Value::Text(text.clone())
+                }
+                lighting_store_d1::SqlValue::Integer(int) => rusqlite::types::Value::Integer(*int),
+                lighting_store_d1::SqlValue::Real(real) => rusqlite::types::Value::Real(*real),
+                lighting_store_d1::SqlValue::Null => rusqlite::types::Value::Null,
+            })
+            .collect();
+        let mut query = prepared
+            .query(rusqlite::params_from_iter(params))
+            .expect("query");
+        let mut rows = Vec::new();
+        while let Some(row) = query.next().expect("row") {
+            let mut columns = Vec::with_capacity(column_count);
+            for index in 0..column_count {
+                columns.push(row.get::<_, Option<String>>(index).expect("text column"));
+            }
+            rows.push(columns);
+        }
+        rows
+    }
+
     #[test]
     fn hosted_seed_maps_relations_history_and_bytes() {
-        let (sql, report) = build_hosted_seed_sql(&c3_fixture("synthetic-export"), false)
-            .expect("builder must run");
+        let scope = BTreeMap::from([("project".to_owned(), "c3-import".to_owned())]);
+        let (sql, report) =
+            build_hosted_seed_sql(&c3_fixture("synthetic-export"), false, Some(scope))
+                .expect("builder must run");
         assert!(
             report.warnings.is_empty(),
             "warnings: {:?}",
@@ -4818,14 +4999,14 @@ mod tests {
         .expect("shard");
         let output = dir.join("seed.sql");
 
-        let strict = cmd_hosted_seed_sql(&dir, &output, false, true);
+        let strict = cmd_hosted_seed_sql(&dir, &output, false, true, &[]);
         assert!(strict.is_err(), "strict must abort on a malformed row");
         assert!(
             !output.exists(),
             "strict must abort before any artifact is written"
         );
 
-        let default = cmd_hosted_seed_sql(&dir, &output, false, false);
+        let default = cmd_hosted_seed_sql(&dir, &output, false, false, &[]);
         assert!(
             default.is_err(),
             "default must still report unexplained loss"
@@ -4849,14 +5030,14 @@ mod tests {
         let output = dir.join("seed.sql");
 
         assert!(
-            cmd_hosted_seed_sql(&dir, &output, false, true).is_err(),
+            cmd_hosted_seed_sql(&dir, &output, false, true, &[]).is_err(),
             "strict must abort on a revision whose belief is absent"
         );
         assert!(!output.exists(), "strict writes nothing");
 
         // Default warns (the apply would fail closed on the foreign key) and
         // still produces the artifact for inspection.
-        let _ = cmd_hosted_seed_sql(&dir, &output, false, false);
+        let _ = cmd_hosted_seed_sql(&dir, &output, false, false, &[]);
         assert!(output.exists(), "default writes the artifact");
     }
 
@@ -4902,12 +5083,12 @@ mod tests {
 
         // r3 derives from = r2.created_at (11:00) == belief.updated_at.
         assert!(
-            cmd_hosted_seed_sql(&dir, &output, false, true).is_err(),
+            cmd_hosted_seed_sql(&dir, &output, false, true, &[]).is_err(),
             "strict must abort on a token hazard"
         );
         assert!(!output.exists(), "strict writes nothing");
 
-        let (sql, report) = build_hosted_seed_sql(&dir, false).expect("default must build");
+        let (sql, report) = build_hosted_seed_sql(&dir, false, None).expect("default must build");
         assert_eq!(
             report.emitted.get("belief_revision"),
             Some(&2),
@@ -4926,8 +5107,10 @@ mod tests {
 
     #[test]
     fn hosted_seed_builder_maps_the_synthetic_export() {
-        let (sql, report) = build_hosted_seed_sql(&c3_fixture("synthetic-export"), false)
-            .expect("builder must run");
+        let scope = BTreeMap::from([("project".to_owned(), "c3-import".to_owned())]);
+        let (sql, report) =
+            build_hosted_seed_sql(&c3_fixture("synthetic-export"), false, Some(scope))
+                .expect("builder must run");
         assert_eq!(report.schema, "hosted-seed-sql-v1");
         assert_eq!(report.manifest_record_count, Some(16));
         assert!(
@@ -4941,7 +5124,12 @@ mod tests {
         assert_eq!(report.emitted.get("belief"), Some(&2));
         assert_eq!(report.emitted.get("memory_relation"), Some(&1));
         assert_eq!(report.emitted.get("belief_revision"), Some(&2));
-        assert_eq!(report.sql_statements, 11);
+        assert_eq!(
+            report.emitted.get("memory_item"),
+            Some(&2),
+            "both classified sources are projected into ordinary notes"
+        );
+        assert_eq!(report.sql_statements, 13);
         for unmapped in ["marker", "ledger_event", "project", "memory", "trace"] {
             assert_eq!(
                 report.skipped.get(unmapped),
@@ -4949,6 +5137,12 @@ mod tests {
                 "unmapped table {unmapped} must be reported as skipped"
             );
         }
+        assert!(
+            sql.contains(
+                "-- skipped (not part of the hosted memory surface): ledger_event=1, marker=1, memory=1, project=1, trace=1"
+            ),
+            "skipped record types stay named in the seed header"
+        );
 
         // Non-canonical input timestamps are normalised to the hosted
         // 30-char canonical form; raw non-canonical forms never leak into SQL.
@@ -4962,7 +5156,19 @@ mod tests {
         // The semicolon matters: statements whose stored content contains
         // real newlines span multiple lines, and the header's idempotency
         // note has no trailing semicolon.
-        assert_eq!(sql.matches("ON CONFLICT(id) DO NOTHING;").count(), 11);
+        assert_eq!(sql.matches("ON CONFLICT(id) DO NOTHING;").count(), 13);
+        let projection = sql
+            .lines()
+            .find(|line| line.starts_with("INSERT INTO memory_item"))
+            .expect("note projection statement");
+        assert!(
+            projection.contains("'note'") && projection.contains("'c3-seed-src-alpha'"),
+            "projection is a note pointing at its byte-exact source: {projection}"
+        );
+        assert!(
+            sql.contains("-- note projection: classified imported source"),
+            "the artifact names the projection rule it applied"
+        );
 
         // Surreal-style backticks from exported record ids must never leak
         // into the seed SQL.
@@ -4983,13 +5189,176 @@ mod tests {
     }
 
     #[test]
+    fn hosted_seed_projects_imported_notes_for_list_get() {
+        // Import visibility: classified exported sources project into scoped
+        // ordinary notes carrying a valid source_id, so a fresh hosted-style
+        // list -> get path reads the imported Markdown back — while claims,
+        // beliefs and history stay exactly as the mapper emitted them.
+        let scope: BTreeMap<String, String> =
+            BTreeMap::from([("project".to_owned(), "home-import".to_owned())]);
+        let scope_hash = lighting_core::scope_hash(&scope);
+        let (sql, report) =
+            build_hosted_seed_sql(&c3_fixture("synthetic-export"), false, Some(scope))
+                .expect("builder must run");
+        assert!(
+            report.warnings.is_empty(),
+            "warnings: {:?}",
+            report.warnings
+        );
+        assert_eq!(report.emitted.get("source"), Some(&2));
+        assert_eq!(
+            report.emitted.get("memory_item"),
+            Some(&2),
+            "every classified source is projected into an ordinary note"
+        );
+
+        let conn = rusqlite::Connection::open_in_memory().expect("sqlite");
+        conn.execute_batch(lighting_store_d1::SCHEMA_SQL)
+            .expect("hosted schema 0001");
+        conn.execute_batch(lighting_store_d1::REMEMBER_SCHEMA_SQL)
+            .expect("hosted schema 0002 (memory_item.source_id)");
+        conn.execute_batch(lighting_store_d1::REMEMBER_ATTR_SCHEMA_SQL)
+            .expect("hosted schema 0003 (memory_item.actor)");
+        conn.execute_batch(&sql)
+            .expect("seed must apply to a fresh hosted database");
+
+        // Projections are notes in the operator's scope; nothing is promoted.
+        assert_eq!(c3_count(&conn, "memory_item"), 2);
+        assert_eq!(
+            c3_count(&conn, "epistemic_claim"),
+            3,
+            "claims and relations are unchanged by the projection"
+        );
+        assert_eq!(c3_count(&conn, "belief"), 2, "imports are never beliefs");
+        assert_eq!(c3_count(&conn, "belief_revision"), 2, "history unchanged");
+
+        // Hosted-style list: each note carries its source_id handle.
+        let list = lighting_store_d1::memory_note_list(&scope_hash, 128);
+        let notes = c3_rows(&conn, &list);
+        assert_eq!(notes.len(), 2, "both imported notes are listable");
+        let mut handles = Vec::new();
+        for note in &notes {
+            assert!(
+                !note[0].as_deref().unwrap_or_default().is_empty(),
+                "every note has a note_id"
+            );
+            let source_id = note[3]
+                .clone()
+                .expect("projected note carries its source_id handle");
+            let content = note[1].clone().expect("note content");
+            let stored: String = conn
+                .query_row(
+                    "SELECT content FROM source WHERE id = ?1",
+                    [&source_id],
+                    |row| row.get(0),
+                )
+                .expect("source row behind the note");
+            assert_eq!(
+                stored.as_bytes(),
+                content.as_bytes(),
+                "the note mirrors its byte-exact source"
+            );
+            handles.push((source_id, content));
+        }
+
+        // Scope confinement: a scope the operator did not target sees nothing.
+        let foreign_scope: BTreeMap<String, String> =
+            BTreeMap::from([("project".to_owned(), "not-targeted".to_owned())]);
+        let foreign =
+            lighting_store_d1::memory_note_list(&lighting_core::scope_hash(&foreign_scope), 128);
+        assert_eq!(
+            c3_rows(&conn, &foreign).len(),
+            0,
+            "no cross-scope visibility"
+        );
+
+        // Hosted-style get: resolve each handle through the scoped join.
+        for (source_id, content) in &handles {
+            let get = lighting_store_d1::source_bytes(source_id, &scope_hash);
+            let rows = c3_rows(&conn, &get);
+            assert_eq!(rows.len(), 1, "list handle resolves via the get path");
+            assert_eq!(
+                rows[0][1].as_deref(),
+                Some(content.as_str()),
+                "exact bytes round-trip list -> get"
+            );
+        }
+
+        // Replay-safe: re-applying the identical seed never duplicates a
+        // projection (deterministic id + ON CONFLICT(id) DO NOTHING).
+        conn.execute_batch(&sql).expect("re-apply must not fail");
+        assert_eq!(c3_count(&conn, "memory_item"), 2, "re-seeding is a no-op");
+    }
+
+    #[test]
+    fn hosted_seed_requires_operator_scope_for_note_visibility() {
+        // Fail closed: --strict refuses to build an import whose sources
+        // could not be projected, and the default path reports the loss
+        // instead of claiming a fully mapped import.
+        let dir = c3_temp_path("strict-note-scope");
+        fs::create_dir_all(&dir).expect("temp dir");
+        fs::write(dir.join("manifest.json"), "{}").expect("manifest");
+        let source = serde_json::json!({
+            "table": "source",
+            "record": {
+                "id": "source:note-scope-1",
+                "kind": "markdown",
+                "title": "note scope probe",
+                "content": "# Scope probe\n",
+                "fingerprint": "scopeprobe000000000000000000000000000000000000000000000000000000",
+                "created_at": "2026-10-01T09:00:00Z"
+            }
+        });
+        fs::write(dir.join("sources.ndjson"), format!("{source}\n")).expect("shard");
+        let output = dir.join("seed.sql");
+
+        let strict = cmd_hosted_seed_sql(&dir, &output, false, true, &[]);
+        let message = strict
+            .expect_err("strict must refuse a scopeless projection build")
+            .to_string();
+        assert!(
+            message.contains("--scope"),
+            "error names the fix: {message}"
+        );
+        assert!(!output.exists(), "strict writes nothing");
+
+        let default = cmd_hosted_seed_sql(&dir, &output, false, false, &[]);
+        let message = default
+            .expect_err("default must report the missing projection")
+            .to_string();
+        assert!(message.contains("unexplained loss"), "{message}");
+        assert!(
+            output.exists(),
+            "default still writes the artifact for inspection"
+        );
+        let sql = fs::read_to_string(&output).expect("seed sql");
+        assert!(
+            !sql.contains("memory_item"),
+            "no note projection without an operator scope"
+        );
+
+        // Malformed operator scope input fails closed before any build.
+        let malformed = cmd_hosted_seed_sql(&dir, &output, false, false, &["project".to_owned()]);
+        let message = malformed
+            .expect_err("KEY=VALUE pairs are required")
+            .to_string();
+        assert!(message.contains("KEY=VALUE"), "{message}");
+    }
+
+    #[test]
     fn hosted_seed_applies_to_empty_sqlite_and_corrections_flow() {
-        let (sql, _report) = build_hosted_seed_sql(&c3_fixture("synthetic-export"), false)
-            .expect("builder must run");
+        let scope = BTreeMap::from([("project".to_owned(), "c3-import".to_owned())]);
+        let (sql, _report) =
+            build_hosted_seed_sql(&c3_fixture("synthetic-export"), false, Some(scope))
+                .expect("builder must run");
 
         let conn = rusqlite::Connection::open_in_memory().expect("sqlite");
         conn.execute_batch(lighting_store_d1::SCHEMA_SQL)
             .expect("hosted schema on empty sqlite");
+        conn.execute_batch(lighting_store_d1::REMEMBER_SCHEMA_SQL)
+            .expect("remember schema (memory_item.source_id)");
+        conn.execute_batch(lighting_store_d1::REMEMBER_ATTR_SCHEMA_SQL)
+            .expect("actor schema (memory_item.actor)");
         conn.execute_batch(&sql)
             .expect("seed must apply to empty sqlite");
 
@@ -5210,7 +5579,8 @@ mod tests {
         // Native logical export of the same state, then the builder over it.
         let export_dir = c3_temp_path("three-way-export");
         let summary = store.export_to(&export_dir).await?;
-        let (seed_sql, report) = build_hosted_seed_sql(&export_dir, false)?;
+        let import_scope = BTreeMap::from([("project".to_owned(), "c3-import".to_owned())]);
+        let (seed_sql, report) = build_hosted_seed_sql(&export_dir, false, Some(import_scope))?;
         assert!(
             report.warnings.is_empty(),
             "builder warnings on a clean native export: {:?}",
@@ -5236,6 +5606,8 @@ mod tests {
         // And the seed still applies to a fresh empty SQLite.
         let conn = rusqlite::Connection::open_in_memory()?;
         conn.execute_batch(lighting_store_d1::SCHEMA_SQL)?;
+        conn.execute_batch(lighting_store_d1::REMEMBER_SCHEMA_SQL)?;
+        conn.execute_batch(lighting_store_d1::REMEMBER_ATTR_SCHEMA_SQL)?;
         conn.execute_batch(&seed_sql)?;
         // Claims in the database = native claims + relation-as-claim rows.
         assert_eq!(

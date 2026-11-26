@@ -271,12 +271,13 @@ pub fn tool_catalog() -> Value {
             },
             {
                 "name": "lantern_list_notes",
-                "description": "Bounded scoped note list, newest first. Read-only, zero writes.",
+                "description": "Bounded scoped note list, newest first; each note carries source_id for lantern_get_source. Optional query filters note content across the same bound, so older notes stay findable beyond the newest page. Read-only, zero writes.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "scope": scope_schema,
-                        "limit": { "type": "integer", "minimum": 1, "maximum": 128 }
+                        "limit": { "type": "integer", "minimum": 1, "maximum": 128 },
+                        "query": { "type": "string", "description": "Optional content filter, capped at 512 chars." }
                     },
                     "required": ["scope"]
                 }
@@ -541,6 +542,8 @@ pub struct GetSourceArgs {
 pub struct ListNotesArgs {
     pub scope: Scope,
     pub limit: usize,
+    /// Optional bounded content filter (absent = plain newest-first page).
+    pub query: Option<String>,
 }
 
 pub fn parse_list_notes(params: &Value) -> Result<ListNotesArgs, CoreError> {
@@ -552,9 +555,24 @@ pub fn parse_list_notes(params: &Value) -> Result<ListNotesArgs, CoreError> {
     if limit == 0 || limit > 128 {
         return Err(CoreError::Invalid("limit must be 1..=128".into()));
     }
+    let query = match params.get("query") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(text)) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return Err(CoreError::Invalid("query must not be blank".into()));
+            }
+            if trimmed.len() > 512 {
+                return Err(CoreError::Invalid("query capped at 512 chars".into()));
+            }
+            Some(trimmed.to_owned())
+        }
+        Some(_) => return Err(CoreError::Invalid("query must be a string".into())),
+    };
     Ok(ListNotesArgs {
         scope: require_scope(params)?,
         limit,
+        query,
     })
 }
 
@@ -958,11 +976,25 @@ mod tests {
         let get = json!({"scope": scope, "source_id": "abc"});
         assert_eq!(parse_get_source(&get).expect("valid").source_id, "abc");
         let list = json!({"scope": scope});
-        assert_eq!(parse_list_notes(&list).expect("valid").limit, 32);
+        let parsed = parse_list_notes(&list).expect("valid");
+        assert_eq!(parsed.limit, 32);
+        assert_eq!(parsed.query, None, "no query means the plain newest page");
         let zero = json!({"scope": scope, "limit": 0});
         assert!(parse_list_notes(&zero).is_err());
         let huge = json!({"scope": scope, "limit": 999});
         assert!(parse_list_notes(&huge).is_err());
+        // Additive scoped note query: optional, trimmed, bounded, string-only.
+        let filtered = json!({"scope": scope, "limit": 8, "query": "  cafe  "});
+        assert_eq!(
+            parse_list_notes(&filtered).expect("query").query.as_deref(),
+            Some("cafe")
+        );
+        let blank = json!({"scope": scope, "query": "   "});
+        assert!(parse_list_notes(&blank).is_err());
+        let long = json!({"scope": scope, "query": "x".repeat(513)});
+        assert!(parse_list_notes(&long).is_err());
+        let wrong = json!({"scope": scope, "query": 7});
+        assert!(parse_list_notes(&wrong).is_err());
     }
 
     #[test]

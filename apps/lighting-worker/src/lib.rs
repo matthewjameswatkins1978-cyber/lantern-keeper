@@ -308,18 +308,34 @@ async fn call_tool(
             let args = parse_list_notes(arguments)?;
             lantern_mcp_core::authorize(principal, tool, Some(&args.scope))?;
             let scope_hash = lighting_core::scope_hash(&args.scope);
-            let rows = d1_rows(env, &store::memory_note_list(&scope_hash, args.limit)).await?;
+            // Optional scoped content filter: same bounds, same ordering as
+            // the plain list, so notes older than the newest page stay
+            // reachable without widening any read.
+            let statement = match &args.query {
+                Some(query) => {
+                    let pattern = format!("%{}%", escape_like(query));
+                    store::search_memory_notes(&scope_hash, &[pattern], args.limit)
+                }
+                None => store::memory_note_list(&scope_hash, args.limit),
+            };
+            let rows = d1_rows(env, &statement).await?;
             let notes: Vec<Value> = rows
                 .iter()
                 .map(|row| {
                     json!({
                         "note_id": row.get("id"),
                         "content": row.get("content"),
-                        "created_at": row.get("created_at")
+                        "created_at": row.get("created_at"),
+                        "source_id": row.get("source_id")
                     })
                 })
                 .collect();
-            Ok(json!({ "notes": notes, "count": notes.len(), "scope_hash": scope_hash }))
+            Ok(json!({
+                "notes": notes,
+                "count": notes.len(),
+                "query": args.query,
+                "scope_hash": scope_hash
+            }))
         }
     }
 }

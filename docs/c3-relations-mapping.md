@@ -80,6 +80,44 @@ Emission order adds a fifth bucket: `source → episode → claim → belief →
 belief_revision`, regardless of shard file order. Revision statements use
 `ON CONFLICT(id) DO NOTHING` so re-seeding stays idempotent.
 
+## `source` → `source` + scoped `memory_item` note projection
+
+With a trusted operator scope (`--scope KEY=VALUE`, repeatable; all pairs
+form one normalised scope), every classified `source` additionally emits an
+ordinary-note projection so imported Markdown is reachable through the
+ordinary hosted `lantern_list_notes` → `lantern_get_source` path
+(LK-HOME-FINAL import visibility):
+
+| projection field | value |
+| --- | --- |
+| `id` | `sha256("importnote\|<scope_hash>\|<source_id>")[:32]` — deterministic, so re-seeding collides on the primary key instead of duplicating |
+| `scope_hash` | hash of the operator-supplied scope (the note is scoped; `source` itself carries no scope) |
+| `content`, `payload` | the source's exact bytes, copied once from the same extraction as the `source` row |
+| `kind` | `'note'` — never `epistemic_claim`/`belief`; an import cannot manufacture verified knowledge |
+| `created_at` | the source's canonical timestamp (ordering reflects the original timeline) |
+| `source_id` | the source row's id — the handle `lantern_get_source` resolves scope-confined |
+| `actor` | `'import:hosted-seed-sql-v1'` (machine origin, not a principal) |
+
+`ON CONFLICT(id) DO NOTHING` keeps the projection replay-safe, and
+relations/history are untouched: only `memory_item` rows are added.
+
+Scope requirement (fail closed): an export containing sources but no
+`--scope` cannot be projected. `--strict` aborts before any artifact is
+written; the default path records a warning (counted as unexplained loss,
+non-zero exit) so the report never claims a fully mapped import. Requires
+hosted schema `0002`+`0003` (`memory_item.source_id`, `actor`) applied
+before the seed.
+
+Lookup side: `lantern_list_notes` notes carry `source_id`, and its optional
+`query` argument filters note content inside the same 128-row bound
+(`search_memory_notes`), so notes older than the newest page stay findable.
+
+Skipped record types keep their honest treatment: `marker`,
+`ledger_event`, `project`, `memory`, `trace` (and relation kinds outside
+the hosted surface) are counted per table in `HostedSeedSqlReport.skipped`
+and named in the seed header — "not part of the hosted memory surface" —
+never silently dropped and never partially mapped.
+
 ## Bytes
 
 * Markdown `source.content` is copied verbatim (quote-doubling only; NUL
