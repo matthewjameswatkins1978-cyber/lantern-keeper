@@ -2778,10 +2778,13 @@ pub fn build_hosted_seed_sql(
                     )?;
                     continue;
                 };
+                let note_statement = import_scope_hash
+                    .as_ref()
+                    .map(|scope_hash| seed_import_note_statement(&source, scope_hash));
                 by_table[bucket].push(source.statement);
                 *emitted.entry(table.to_owned()).or_default() += 1;
-                if let Some(scope_hash) = &import_scope_hash {
-                    by_table[bucket].push(seed_import_note_statement(&source, scope_hash));
+                if let Some(statement) = note_statement {
+                    by_table[bucket].push(statement);
                     *emitted.entry("memory_item".to_owned()).or_default() += 1;
                 }
                 continue;
