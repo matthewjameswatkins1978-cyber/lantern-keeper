@@ -4,9 +4,9 @@
 //! emulates D1 `batch()` atomicity with explicit ROLLBACK on failure.
 
 use lighting_store_d1::{
-    BatchRefusal, REMEMBER_SCHEMA_SQL, RememberInput, SCHEMA_SQL, SqlStatement, SqlValue,
-    build_remember_batch, idempotency_composite_key, lookup_remember, memory_note_list,
-    source_bytes,
+    BatchRefusal, REMEMBER_ATTR_SCHEMA_SQL, REMEMBER_SCHEMA_SQL, RememberInput, SCHEMA_SQL,
+    SqlStatement, SqlValue, build_remember_batch, idempotency_composite_key, lookup_remember,
+    memory_note_list, source_bytes,
 };
 use rusqlite::{Connection, Result as SqlResult};
 
@@ -16,6 +16,7 @@ fn open_schema() -> SqlResult<Connection> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch(SCHEMA_SQL)?;
     conn.execute_batch(REMEMBER_SCHEMA_SQL)?;
+    conn.execute_batch(REMEMBER_ATTR_SCHEMA_SQL)?;
     Ok(conn)
 }
 
@@ -57,6 +58,7 @@ fn remember(id: &str, content: &str, caller_key: &str) -> RememberInput {
         content: content.to_owned(),
         fingerprint: format!("fp-{content}"),
         payload_hash: format!("hash-{caller_key}"),
+        actor: "pi".to_owned(),
         receipt_id: format!("receipt-{id}"),
         accepted_at: CANONICAL_T0.to_owned(),
         result_json: format!("{{\"result\":\"{id}\"}}"),
@@ -266,6 +268,23 @@ fn builder_refuses_blank_separator_and_bad_timestamp() {
     ));
 
     assert!(build_remember_batch(&base).is_ok());
+}
+
+#[test]
+fn attribution_is_preserved_on_the_note_row() {
+    // Q26 attributed_capture: who captured this must survive on the row,
+    // not only in the idempotency receipt.
+    let conn = open_schema().expect("schema");
+    let write = remember("r1", "attributed note", "k1");
+    run_batch(&conn, &batch_of(&write)).expect("accepted");
+    let actor: String = conn
+        .query_row(
+            "SELECT actor FROM memory_item WHERE id = 'mem-r1'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("actor");
+    assert_eq!(actor, "pi");
 }
 
 #[test]

@@ -52,6 +52,18 @@ fn search_is_scoped_bound_and_pattern_is_parameterised() {
 }
 
 #[test]
+fn search_suppresses_stale_like_scoped_candidates() {
+    // GAP-1: search_beliefs used to return superseded beliefs while the
+    // sibling scoped path filtered them. Both now carry `stale = 0`.
+    let stmt = search_beliefs("scope-a", &["%x%".to_owned()], 64);
+    let text = sql(&stmt);
+    assert!(
+        text.contains("stale = 0"),
+        "search must suppress stale beliefs"
+    );
+}
+
+#[test]
 fn search_refuses_empty_patterns_and_zero_limit() {
     let no_patterns = search_beliefs("scope-a", &[], 64);
     assert!(

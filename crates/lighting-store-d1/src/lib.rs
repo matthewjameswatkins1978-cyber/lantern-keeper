@@ -33,6 +33,8 @@ pub const SCHEMA_SQL: &str = include_str!("../migrations/0001_hosted_schema.sql"
 /// applies 0002 after the already-deployed 0001. */
 pub const REMEMBER_SCHEMA_SQL: &str = include_str!("../migrations/0002_hosted_remember.sql");
 
+pub const REMEMBER_ATTR_SCHEMA_SQL: &str = include_str!("../migrations/0003_hosted_actor.sql");
+
 /// Hard bound on candidates returned by a scoped read (v1.1: <=128 total).
 pub const MAX_CANDIDATES: usize = 128;
 
@@ -270,14 +272,17 @@ pub fn scoped_belief_candidates(
 
 /// Scoped search: LIKE patterns bound as parameters (never interpolated),
 /// scoped by index, clamped to [`MAX_CANDIDATES`]. Zero-write. Empty
-/// patterns return no rows rather than an unscoped scan.
+/// patterns return no rows rather than an unscoped scan. Superseded (stale)
+/// beliefs are suppressed here exactly as in [`scoped_belief_candidates`];
+/// explicit history reads are the only stale-visible path.
 pub fn search_beliefs(scope_hash: &str, patterns: &[String], limit: usize) -> SqlStatement {
     let effective = limit.min(MAX_CANDIDATES);
     if effective == 0 || patterns.is_empty() {
         return SqlStatement::new("SELECT id, payload, updated_at FROM belief WHERE 0", vec![]);
     }
-    let mut sql =
-        String::from("SELECT id, payload, updated_at FROM belief WHERE scope_hash = ? AND (");
+    let mut sql = String::from(
+        "SELECT id, payload, updated_at FROM belief WHERE scope_hash = ? AND stale = 0 AND (",
+    );
     for index in 0..patterns.len() {
         if index > 0 {
             sql.push_str(" OR ");
@@ -343,6 +348,7 @@ pub struct RememberInput {
     pub memory_id: String,
     pub principal: String,
     pub scope_hash: String,
+    pub actor: String,
     pub content: String,
     /// Raw content fingerprint (sha256 of bytes): identifies WHAT was
     /// remembered, independent of who/where/with-what-key. Two keys over
@@ -384,7 +390,7 @@ pub fn build_remember_batch(w: &RememberInput) -> Result<Vec<SqlStatement>, Batc
             ],
         ),
         SqlStatement::new(
-            "INSERT INTO memory_item (id, scope_hash, content, kind, salience, archived, payload, created_at, source_id) VALUES (?, ?, ?, 'note', 0.0, 0, ?, ?, ?)",
+            "INSERT INTO memory_item (id, scope_hash, content, kind, salience, archived, payload, created_at, source_id, actor) VALUES (?, ?, ?, 'note', 0.0, 0, ?, ?, ?, ?)",
             vec![
                 w.memory_id.clone().into(),
                 w.scope_hash.clone().into(),
@@ -392,6 +398,7 @@ pub fn build_remember_batch(w: &RememberInput) -> Result<Vec<SqlStatement>, Batc
                 w.content.clone().into(),
                 w.accepted_at.clone().into(),
                 w.source_id.clone().into(),
+                w.actor.clone().into(),
             ],
         ),
         SqlStatement::new(
