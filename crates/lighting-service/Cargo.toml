@@ -23,6 +23,8 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+lighting-store-d1 = { path = "../lighting-store-d1" }
 dotenvy.workspace = true
 tower = { workspace = true, features = ["util"] }
 serde_json.workspace = true
