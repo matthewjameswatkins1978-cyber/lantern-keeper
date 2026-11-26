@@ -5161,8 +5161,12 @@ mod tests {
         // note has no trailing semicolon.
         assert_eq!(sql.matches("ON CONFLICT(id) DO NOTHING;").count(), 13);
         let projection = sql
-            .lines()
-            .find(|line| line.starts_with("INSERT INTO memory_item"))
+            .split("ON CONFLICT(id) DO NOTHING;")
+            .find(|statement| {
+                statement
+                    .trim_start()
+                    .starts_with("INSERT INTO memory_item")
+            })
             .expect("note projection statement");
         assert!(
             projection.contains("'note'") && projection.contains("'c3-seed-src-alpha'"),
