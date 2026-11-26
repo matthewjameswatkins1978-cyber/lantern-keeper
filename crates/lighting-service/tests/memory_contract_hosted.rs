@@ -17,10 +17,10 @@
 //! executed by this file.
 
 use lighting_store_d1::{
-    BatchRefusal, KeyedCorrection, MAX_CANDIDATES, REMEMBER_SCHEMA_SQL, RememberInput, SCHEMA_SQL,
-    SqlStatement, SqlValue, belief_detail, belief_revisions, build_correction_batch,
-    build_remember_batch, idempotency_composite_key, lookup_idempotency, memory_note_list,
-    scoped_belief_candidates, search_beliefs, source_bytes,
+    BatchRefusal, KeyedCorrection, MAX_CANDIDATES, REMEMBER_ATTR_SCHEMA_SQL, REMEMBER_SCHEMA_SQL,
+    RememberInput, SCHEMA_SQL, SqlStatement, SqlValue, belief_detail, belief_revisions,
+    build_correction_batch, build_remember_batch, idempotency_composite_key, lookup_idempotency,
+    memory_note_list, scoped_belief_candidates, search_beliefs, source_bytes,
 };
 use rusqlite::Connection;
 
@@ -28,6 +28,10 @@ use rusqlite::Connection;
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Status {
     Pass,
+    /// The only honest way to report a clause this candidate cannot exercise.
+    /// Unused while every hosted clause executes; kept so a future gap cannot be
+    /// written up as a pass.
+    #[allow(dead_code)]
     Pending(&'static str),
 }
 
@@ -56,6 +60,7 @@ fn open_hosted() -> rusqlite::Result<Connection> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch(SCHEMA_SQL)?;
     conn.execute_batch(REMEMBER_SCHEMA_SQL)?;
+    conn.execute_batch(REMEMBER_ATTR_SCHEMA_SQL)?;
     // Mirrors SQLite's default off-switch being turned on, so the declared
     // foreign keys are actually enforced in the local candidate.
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
@@ -121,6 +126,7 @@ fn correction(id: &str, belief: &str, expected: &str, new: &str, key: &str) -> K
         target_belief_id: belief.to_owned(),
         expected_revision: expected.to_owned(),
         new_revision: new.to_owned(),
+        new_value: new.to_owned(),
         revision_payload: "{}".to_owned(),
         belief_payload: "{}".to_owned(),
         principal: "matthew".to_owned(),
@@ -345,6 +351,7 @@ fn remember(text: &str, key: &str, source_id: &str, memory_id: &str) -> Remember
         memory_id: memory_id.to_owned(),
         principal: "matthew".to_owned(),
         scope_hash: "scope-a".to_owned(),
+        actor: "pi:01a206e6".to_owned(),
         content: text.to_owned(),
         fingerprint: sha256_hex(text.as_bytes()),
         payload_hash: format!("payload-{key}"),
@@ -437,6 +444,52 @@ fn note_not_claim_clause() -> Result<(), String> {
     }
     Ok(())
 }
+/// Who captured a note survives on the row, is scope-confined, and cannot be
+/// borrowed from another scope. The receipt carries the principal; the note row
+/// must carry the actor that actually performed the capture.
+fn attributed_capture_clause() -> Result<(), String> {
+    let conn = open_hosted().map_err(|error| format!("schema failed: {error}"))?;
+    let input = remember("captured by pi", "attr", "src-attr", "note-attr");
+    if input.actor != "pi:01a206e6" {
+        return Err("test fixture lost its actor".to_owned());
+    }
+    store_remember(&conn, &input)?;
+
+    let actor = |scope: &str| -> Result<Option<String>, String> {
+        let mut prepared = conn
+            .prepare("SELECT actor FROM memory_item WHERE id = ? AND scope_hash = ?")
+            .map_err(|error| error.to_string())?;
+        let mut rows = prepared
+            .query(rusqlite::params![input.memory_id, scope])
+            .map_err(|error| error.to_string())?;
+        match rows.next().map_err(|error| error.to_string())? {
+            Some(row) => Ok(Some(
+                row.get::<_, Option<String>>(0)
+                    .map_err(|e| e.to_string())?
+                    .unwrap_or_default(),
+            )),
+            None => Ok(None),
+        }
+    };
+
+    match actor("scope-a").map_err(|error| format!("actor read failed: {error}"))? {
+        Some(found) if found == input.actor => {}
+        Some(found) => {
+            return Err(format!(
+                "stored actor {found:?} is not the capturing actor {:?}",
+                input.actor
+            ));
+        }
+        None => return Err("the captured note is not visible in its own scope".to_owned()),
+    }
+    if actor("scope-b")
+        .map_err(|error| format!("cross-scope read failed: {error}"))?
+        .is_some()
+    {
+        return Err("another scope could read the captured note's actor".to_owned());
+    }
+    Ok(())
+}
 #[test]
 fn hosted_clauses_execute_and_unavailable_ones_are_pending() -> Result<(), String> {
     // Each clause gets its own database so one clause's fixture cannot satisfy or
@@ -505,18 +558,13 @@ fn hosted_clauses_execute_and_unavailable_ones_are_pending() -> Result<(), Strin
         status: Status::Pass,
     });
 
-    // Still no hosted surface for attributed capture: recorded with reproduction
-    // rather than fixed here, because the fix belongs to the remember builder.
+    attributed_capture_clause()
+        .unwrap_or_else(|error| panic!("hosted clause attributed_capture failed: {error}"));
     results.push(ClauseResult {
         clause: "attributed_capture",
-        status: Status::Pending(
-            "remember has no attribution surface: RememberInput has no speaker/originator/holder \
-             field and the memory_item insert writes none, so who-said-it cannot be preserved on the \
-             hosted capture path. Reproduce: grep -n 'pub struct RememberInput' -A12 \
-             crates/lighting-store-d1/src/lib.rs; grep -n 'INSERT INTO memory_item' -A3 \
-             crates/lighting-store-d1/src/lib.rs",
-        ),
+        status: Status::Pass,
     });
+
     // Coverage guard: every declared clause appears exactly once.
     for clause in CLAUSES {
         let seen = results
@@ -550,9 +598,12 @@ fn hosted_clauses_execute_and_unavailable_ones_are_pending() -> Result<(), Strin
             Status::Pending(_) => eprintln!("  {} : PENDING", result.clause),
         }
     }
-    assert!(
-        passes >= 8,
-        "expected at least eight executable hosted clauses, got {passes}"
+    assert_eq!(
+        passes,
+        CLAUSES.len(),
+        "every hosted clause must execute, got {passes} of {0}",
+        CLAUSES.len()
     );
+    assert_eq!(pending, 0, "no hosted clause may remain pending");
     Ok(())
 }
