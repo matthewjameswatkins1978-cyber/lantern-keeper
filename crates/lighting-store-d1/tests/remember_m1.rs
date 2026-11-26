@@ -5,8 +5,8 @@
 
 use lighting_store_d1::{
     BatchRefusal, REMEMBER_ATTR_SCHEMA_SQL, REMEMBER_SCHEMA_SQL, RememberInput, SCHEMA_SQL,
-    SqlStatement, SqlValue, build_remember_batch, idempotency_composite_key, lookup_remember,
-    memory_note_list, source_bytes,
+    SqlStatement, SqlValue, WRITE_ENVELOPE_VERSION, build_remember_batch,
+    idempotency_composite_key, lookup_remember, memory_note_list, source_bytes,
 };
 use rusqlite::{Connection, Result as SqlResult};
 
@@ -328,4 +328,113 @@ fn remember_writes_no_claim_evidence() {
     ] {
         assert_eq!(count(&conn, table), 0, "{table} must stay empty");
     }
+}
+
+#[test]
+fn worker_path_same_bytes_two_writers_share_fingerprint_but_not_envelope_digest() {
+    // Q17/Q24: the Worker MCP remember() composition, applied verbatim —
+    // composite = idempotency_composite_key(principal, scope, caller key);
+    // content_hash = sha256 of the bytes; envelope digest =
+    // remember_payload_hash(WRITE_ENVELOPE_VERSION, composite, content_hash);
+    // source.fingerprint = content_hash (the d91bd09 regression: the envelope
+    // digest leaked into the fingerprint). Two writes that differ only in
+    // principal and idempotency key must resolve to ONE source row with an
+    // identical fingerprint while their remember_idempotency rows carry
+    // DIFFERENT envelope digests.
+    use lantern_mcp_core::{remember_payload_hash, sha256_hex};
+
+    let conn = open_schema().expect("schema");
+    let content = "same bytes, two writers";
+    let content_hash = sha256_hex(content);
+    let envelope = WRITE_ENVELOPE_VERSION;
+    let scope = lighting_core::Scope::from([("project".to_owned(), "q17-worker".to_owned())]);
+    let scope_hash = lighting_core::scope_hash(&scope);
+
+    let mut composed_digests = Vec::new();
+    for (index, (principal, caller_key)) in [("writer-a", "key-one"), ("writer-b", "key-two")]
+        .into_iter()
+        .enumerate()
+    {
+        let composite = idempotency_composite_key(principal, &scope_hash, caller_key);
+        let digest = remember_payload_hash(envelope, &composite, &content_hash);
+        let write = RememberInput {
+            source_id: content_hash.chars().take(32).collect(),
+            memory_id: format!("mem-w{index}"),
+            principal: principal.to_owned(),
+            scope_hash: scope_hash.clone(),
+            actor: principal.to_owned(),
+            content: content.to_owned(),
+            fingerprint: content_hash.clone(),
+            payload_hash: digest.clone(),
+            receipt_id: format!("receipt-w{index}"),
+            accepted_at: CANONICAL_T0.to_owned(),
+            result_json: format!("{{\"receipt\":\"w{index}\"}}"),
+            idempotency_key: caller_key.to_owned(),
+        };
+        run_batch(&conn, &batch_of(&write)).expect("writer accepted");
+        composed_digests.push(digest);
+    }
+
+    // Same bytes -> one source row whose fingerprint equals the content hash,
+    // i.e. identical across both writers.
+    assert_eq!(
+        count(&conn, "source"),
+        1,
+        "content addressing must collapse the two writes to one source row"
+    );
+    let fingerprint: String = conn
+        .query_row("SELECT fingerprint FROM source", [], |row| row.get(0))
+        .expect("source fingerprint");
+    assert_eq!(
+        fingerprint, content_hash,
+        "fingerprint follows the bytes only, identical across writers"
+    );
+
+    // Two keyed writes -> two idempotency rows carrying DIFFERENT envelope
+    // digests, each exactly the digest the worker composition produced.
+    assert_eq!(
+        count(&conn, "memory_item"),
+        2,
+        "each writer keeps its own memory row"
+    );
+    assert_eq!(count(&conn, "remember_idempotency"), 2);
+    let mut statement = conn
+        .prepare("SELECT key, payload_hash FROM remember_idempotency ORDER BY key")
+        .expect("idempotency query");
+    let rows: Vec<(String, String)> = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("idempotency rows")
+        .collect::<rusqlite::Result<_>>()
+        .expect("idempotency rows decoded");
+    assert_eq!(rows.len(), 2, "one idempotency row per writer");
+    assert_ne!(
+        rows[0].1, rows[1].1,
+        "distinct principal/key writes must carry distinct envelope digests"
+    );
+    let mut persisted: Vec<String> = rows.iter().map(|(_, digest)| digest.clone()).collect();
+    let mut expected = composed_digests;
+    persisted.sort();
+    expected.sort();
+    assert_eq!(
+        persisted, expected,
+        "persisted digests must be exactly the composed envelope digests"
+    );
+    assert!(
+        rows.iter().all(|(_, digest)| *digest != fingerprint),
+        "no envelope digest may double as the content fingerprint (d91bd09 regression)"
+    );
+
+    // Rows are keyed by principal|scope|caller key, so both key identities
+    // differ too.
+    let mut expected_keys: Vec<String> = [("writer-a", "key-one"), ("writer-b", "key-two")]
+        .iter()
+        .map(|(principal, key)| idempotency_composite_key(principal, &scope_hash, key))
+        .collect();
+    let mut persisted_keys: Vec<String> = rows.iter().map(|(key, _)| key.clone()).collect();
+    expected_keys.sort();
+    persisted_keys.sort();
+    assert_eq!(
+        persisted_keys, expected_keys,
+        "idempotency rows must be keyed by principal|scope|caller key"
+    );
 }
