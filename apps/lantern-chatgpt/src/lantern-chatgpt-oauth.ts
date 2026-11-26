@@ -5,7 +5,8 @@ import { sha256Hex } from './hash.js';
 
 // The OAuth identity this entry point mints. It is a Lantern-internal
 // principal, not a Lantern memory scope: the memory scope is carried
-// separately in CHATGPT_OAUTH_SCOPE and enforced per tool call.
+// separately in CHATGPT_OAUTH_SCOPE_JSON (a JSON scope object matching the
+// backend wire schema) and enforced per tool call.
 const endpointId = 'lantern-chat';
 const scope = 'lantern:read';
 
@@ -33,7 +34,7 @@ const limitedPaths = new Set<string>([routes.authorize, routes.register, routes.
 
 export interface LanternChatGptOAuthEnv {
   CHATGPT_OAUTH_ORIGIN?: string;
-  CHATGPT_OAUTH_SCOPE?: string;
+  CHATGPT_OAUTH_SCOPE_JSON?: string;
   CHATGPT_OAUTH_REDIRECTS?: string;
   CHATGPT_OAUTH_OWNER_HASH?: string;
   OAUTH_KV?: KVNamespace;
@@ -64,7 +65,7 @@ export async function routeLanternChatGptOAuth(
     return new Response(null, { status: 503, headers: { 'Retry-After': '30', 'Cache-Control': 'no-store' } });
   }
   const origin = env.CHATGPT_OAUTH_ORIGIN;
-  const allowedScope = env.CHATGPT_OAUTH_SCOPE;
+  const allowedScope = env.CHATGPT_OAUTH_SCOPE_JSON;
   const ownerHash = env.CHATGPT_OAUTH_OWNER_HASH;
   const redirects = (env.CHATGPT_OAUTH_REDIRECTS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
   if (!ctx || !env.OAUTH_KV || !env.CHATGPT_OAUTH_LIMIT || !origin || url.origin !== origin || url.protocol !== 'https:' ||

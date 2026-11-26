@@ -78,7 +78,7 @@ export async function rotateLanternOAuthToken(
   const digest = await sha256Hex(JSON.stringify([
     params.toString(), request.url, request.headers.get('Content-Type'),
     request.headers.get('Authorization'), request.headers.get('Origin'),
-    env.CHATGPT_OAUTH_ORIGIN, env.CHATGPT_OAUTH_SCOPE, env.CHATGPT_OAUTH_REDIRECTS, env.CHATGPT_OAUTH_OWNER_HASH,
+    env.CHATGPT_OAUTH_ORIGIN, env.CHATGPT_OAUTH_SCOPE_JSON, env.CHATGPT_OAUTH_REDIRECTS, env.CHATGPT_OAUTH_OWNER_HASH,
   ]));
   const retryKey = 'retry:' + digest;
   const retry = await records.get(retryKey, 'json') as RetryRecord | null;

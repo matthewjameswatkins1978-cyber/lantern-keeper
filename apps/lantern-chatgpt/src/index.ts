@@ -6,6 +6,7 @@ import {
   type LanternChatGptOAuthEnv,
   type LanternPrincipal,
 } from './lantern-chatgpt-oauth.js';
+import { configuredScope, parseScopeObject, scopeEquals, type ScopeObject } from './scope.js';
 import { KVRecords, fencedKV } from './oauth-records.js';
 import { rotateLanternOAuthToken } from './oauth-refresh.js';
 
@@ -75,7 +76,8 @@ async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal)
   if (typeof message.method === 'string' && (message.id === undefined || message.id === null)) {
     return new Response(null, { status: 202 });
   }
-  const { id, method, params } = message;
+  const { id, method } = message;
+  let params = message.params;
   if (typeof method !== 'string' || !READ_METHODS.has(method)) {
     return rpcError(id, -32601, 'method not found');
   }
@@ -89,16 +91,44 @@ async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal)
       }));
       return rpcError(id, -32601, 'method not found');
     }
-    // Memory-scope confinement: the caller's scope argument must equal the
-    // configured workshop scope. Anything else is a cross-project attempt.
-    const requestedScope = params?.arguments?.['scope'];
-    const allowedScope = env.CHATGPT_OAUTH_SCOPE;
-    if (typeof requestedScope === 'string' && requestedScope !== allowedScope) {
-      console.info(JSON.stringify({
-        event: 'lantern.oauth.tool', tool: name, outcome: 'denied_scope_mismatch',
-        receiptId: crypto.randomUUID(),
-      }));
-      return rpcError(id, -32603, 'scope not authorized');
+    // Memory-scope binding: the backend requires scope as a normalized
+    // object, never a string. An absent scope is injected with the exact
+    // configured object; a supplied scope must normalize to exactly the
+    // configured object, else the call is a cross-project attempt denied
+    // here without backend contact. Malformed scopes are rejected with the
+    // same -32602 code the backend uses for Invalid. lantern_status takes
+    // no scope and passes through untouched.
+    if (name !== 'lantern_status') {
+      const configured = configuredScope(env.CHATGPT_OAUTH_SCOPE_JSON);
+      if (configured === null) {
+        // Misconfigured scope binding: fail closed, never proxy unscoped.
+        return new Response(null, { status: 503 });
+      }
+      const supplied = params?.arguments?.['scope'];
+      let bound: ScopeObject;
+      if (supplied === undefined) {
+        bound = configured;
+      } else {
+        let normalized: ScopeObject;
+        try {
+          normalized = parseScopeObject(supplied);
+        } catch {
+          console.info(JSON.stringify({
+            event: 'lantern.oauth.tool', tool: name, outcome: 'denied_scope_malformed',
+            receiptId: crypto.randomUUID(),
+          }));
+          return rpcError(id, -32602, 'invalid: scope must be a nonempty object of string values');
+        }
+        if (!scopeEquals(normalized, configured)) {
+          console.info(JSON.stringify({
+            event: 'lantern.oauth.tool', tool: name, outcome: 'denied_scope_mismatch',
+            receiptId: crypto.randomUUID(),
+          }));
+          return rpcError(id, -32603, 'scope not authorized');
+        }
+        bound = normalized;
+      }
+      params = { ...params, arguments: { ...params?.arguments, scope: bound } };
     }
   }
   if (method === 'tools/list') {
@@ -119,7 +149,9 @@ async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal)
   }
   const tool = method === 'tools/call' ? (params?.name ?? 'unknown') : method;
   const receiptId = crypto.randomUUID();
-  const proxied = await proxyUpstream(env, body);
+  // Proxy the rewritten message so the bound scope (not the client's
+  // original arguments) is what the backend authorizes.
+  const proxied = await proxyUpstream(env, JSON.stringify({ ...message, params }));
   console.info(JSON.stringify({ event: 'lantern.oauth.tool', tool, outcome: String(proxied.status), receiptId }));
   if (proxied.status !== 200) {
     const text = await proxied.text().catch(() => '');

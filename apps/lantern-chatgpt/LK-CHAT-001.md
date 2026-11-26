@@ -44,8 +44,10 @@ and rollback stays a single-worker operation.
    binding (`CHATGPT_OAUTH_LIMIT`, 60 per 60 seconds per route).
 3. Prepare a private `wrangler.jsonc` (or `--var` / `--secret` flags) with:
    - `CHATGPT_OAUTH_ORIGIN`: the new Worker HTTPS origin, no trailing slash.
-   - `CHATGPT_OAUTH_SCOPE`: the single workshop scope the backend credential
-     is scoped to (e.g. `workshop`). Cross-scope calls are denied.
+   - `CHATGPT_OAUTH_SCOPE_JSON`: the single workshop scope object the
+     backend requires, e.g. `{"project":"workshop"}`. The gateway injects
+     exactly this normalized object into every scoped tool call; a client
+     scope that normalizes differently is denied without backend contact.
    - `CHATGPT_OAUTH_REDIRECTS`: comma-separated exact approved callbacks.
    - `CHATGPT_OAUTH_OWNER_HASH`: Worker secret holding the lowercase SHA-256
      digest of a locally generated, uniformly random owner passphrase of at
@@ -53,8 +55,17 @@ and rollback stays a single-worker operation.
      owner's password manager.
    - `OAUTH_KV`: the KV binding from step 1.
    - `LANTERN_MCP_UPSTREAM`: `https://lantern-keeper-mcp.<account>.workers.dev/mcp`.
-   - `LANTERN_MCP_CREDENTIAL`: Worker secret holding one read-scoped bearer
-     token from the existing `LANTERN_MCP_CREDENTIALS` set. Never log it.
+   - `LANTERN_MCP_CREDENTIAL`: Worker secret holding one **read-only,
+     single-scope** bearer token. Provision it as a dedicated entry in the
+     existing `LANTERN_MCP_CREDENTIALS` set with `can_read: true`,
+     `can_write: false`, and scopes limited to the single workshop scope
+     object above. The gateway allowlist already blocks every write tool,
+     but the credential must not be able to exceed read-only workshop
+     access even if the proxy were bypassed. Never log it.
+   - `CHATGPT_OAUTH_KV_PROPAGATION_NOTE`: revocation and grant deletion
+     propagate at Workers KV speed; allow for edge propagation delay before
+     treating a revocation as complete (staging uses disposable synthetic
+     credentials, so this is not a production revocation path yet).
 4. `wrangler deploy`. Record the version ID.
 5. Qualification (staging): anonymous 401 with `resource_metadata` challenge;
    discovery documents; unapproved redirect refused; wrong resource/scope or
@@ -63,10 +74,14 @@ and rollback stays a single-worker operation.
    refresh rotates single-use with a two-minute exact-retry window;
    `tools/list` shows exactly `lantern_status`, `lantern_search`,
    `lantern_context`, `lantern_why`; write tools denied without backend
-   contact; cross-scope calls denied; a fresh ordinary ChatGPT conversation
-   invokes `lantern_search` and the Worker emits the `lantern.oauth.tool`
-   receipt; no credentials in logs (run the local suite:
-   `npm test` in `apps/lantern-chatgpt`).
+   contact; cross-scope calls denied (including same-letters-different-case
+   and malformed scope objects); absent scopes injected with the exact
+   configured object; misconfigured scope binding fails closed; a fresh
+   ordinary ChatGPT conversation invokes `lantern_search` and the Worker
+   emits the `lantern.oauth.tool` receipt, correlated by tool name and
+   timestamp (±2 minutes — the gateway receipt ID is server-side only and
+   the upstream result is passed through verbatim); no credentials in logs
+   (run the local suite: `npm test` in `apps/lantern-chatgpt`).
 
 The OAuth token grants read-only memory access in the configured scope only.
 Access tokens expire after one hour; refresh grants after seven days. OAuth
