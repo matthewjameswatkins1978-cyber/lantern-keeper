@@ -26,7 +26,13 @@ function rpcError(id: unknown, code: number, message: string) {
   return Response.json({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
 }
 
-async function proxyUpstream(env: Env, body: string): Promise<Response> {
+// MCP protocol headers forwarded both ways (allowlist). Everything else is
+// dropped: the backend must never see client auth, and the client must never
+// see backend internals beyond the MCP stream.
+const FORWARD_REQUEST_HEADERS = ['mcp-protocol-version', 'mcp-session-id'];
+const FORWARD_RESPONSE_HEADERS = ['mcp-session-id'];
+
+async function proxyUpstream(env: Env, body: string, incoming?: Headers): Promise<Response> {
   const upstream = env.LANTERN_MCP_UPSTREAM;
   const credential = env.LANTERN_MCP_CREDENTIAL;
   if (!upstream || !credential) return new Response(null, { status: 503 });
@@ -47,16 +53,36 @@ async function proxyUpstream(env: Env, body: string): Promise<Response> {
   headers.set('content-type', 'application/json');
   headers.set('accept', 'application/json, text/event-stream');
   headers.set('authorization', `Bearer ${credential}`);
+  if (incoming) {
+    for (const name of FORWARD_REQUEST_HEADERS) {
+      const value = incoming.get(name);
+      if (value !== null) headers.set(name, value);
+    }
+  }
   // Never forward the client's OAuth token upstream or log either token.
   const upstreamResponse = await fetch(url.toString(), { method: 'POST', headers, body });
-  const text = await upstreamResponse.text();
-  return new Response(text, {
+  // Preserve the real upstream content type: this gateway constrains its own
+  // filtering to JSON, but must not mislabel an SSE (or other) stream as
+  // JSON. The body streams through untouched.
+  const passthrough = new Headers();
+  passthrough.set('content-type', upstreamResponse.headers.get('content-type') ?? 'application/json');
+  passthrough.set('cache-control', 'no-store');
+  for (const name of FORWARD_RESPONSE_HEADERS) {
+    const value = upstreamResponse.headers.get(name);
+    if (value !== null) passthrough.set(name, value);
+  }
+  return new Response(upstreamResponse.body, {
     status: upstreamResponse.status,
-    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+    headers: passthrough,
   });
 }
 
 async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal): Promise<Response> {
+  // Streamable HTTP here is POST-only: there is no SSE listener, so GET is
+  // 405 (consistent with the upstream), not a body parse error.
+  if (request.method !== 'POST') {
+    return new Response(null, { status: 405, headers: { allow: 'POST' } });
+  }
   const body = await request.text().catch(() => '');
   // Client request bodies are tiny tool calls; refuse anything larger
   // before parsing or proxying.
@@ -132,13 +158,20 @@ async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal)
     }
   }
   if (method === 'tools/list') {
-    const proxied = await proxyUpstream(env, body);
-    if (proxied.status !== 200) return proxied;
+    const proxied = await proxyUpstream(env, body, request.headers);
+    const upstreamContentType = proxied.headers.get('content-type') ?? '';
+    if (!upstreamContentType.includes('json')) {
+      // Filtering requires JSON. A non-JSON upstream (e.g. an SSE stream)
+      // passes through verbatim rather than being mislabeled or dropped.
+      return proxied;
+    }
+    const text = await proxied.text().catch(() => '');
     let payload: { result?: { tools?: Array<{ name?: string }> } };
     try {
-      payload = JSON.parse(await proxied.text());
+      payload = JSON.parse(text);
     } catch {
-      return rpcError(id, -32603, 'upstream error');
+      // Preserve the upstream's own error envelope instead of replacing it.
+      return new Response(text, { status: proxied.status, headers: proxied.headers });
     }
     if (Array.isArray(payload?.result?.tools)) {
       payload.result.tools = payload.result.tools.filter((tool) => isReadTool(tool?.name ?? ''));
@@ -151,12 +184,10 @@ async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal)
   const receiptId = crypto.randomUUID();
   // Proxy the rewritten message so the bound scope (not the client's
   // original arguments) is what the backend authorizes.
-  const proxied = await proxyUpstream(env, JSON.stringify({ ...message, params }));
+  const proxied = await proxyUpstream(env, JSON.stringify({ ...message, params }), request.headers);
   console.info(JSON.stringify({ event: 'lantern.oauth.tool', tool, outcome: String(proxied.status), receiptId }));
-  if (proxied.status !== 200) {
-    const text = await proxied.text().catch(() => '');
-    return new Response(text, { status: proxied.status, headers: { 'content-type': 'application/json' } });
-  }
+  // Non-200 upstream responses (including typed JSON-RPC errors) pass
+  // through verbatim; this gateway never rewrites the error envelope.
   return proxied;
 }
 

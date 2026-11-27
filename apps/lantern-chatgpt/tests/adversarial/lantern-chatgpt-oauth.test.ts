@@ -83,7 +83,8 @@ function stubNormaliseScope(raw: unknown): { ok: true; scope: Record<string, str
   return { ok: true, scope };
 }
 
-function stubHandler(reqBody: string, res: import('node:http').ServerResponse, credential: string) {
+const stubHeaders: Array<Record<string, string | undefined>> = [];
+function stubHandler(reqBody: string, res: import('node:http').ServerResponse, credential: string, reqHeaders: import('node:http').IncomingHttpHeaders) {
   let message: { jsonrpc?: string; id?: unknown; method?: string; params?: { name?: string; arguments?: Record<string, unknown> } };
   try {
     message = JSON.parse(reqBody);
@@ -98,13 +99,22 @@ function stubHandler(reqBody: string, res: import('node:http').ServerResponse, c
     res.writeHead(http, { 'content-type': 'application/json' }).end(JSON.stringify({
       jsonrpc: '2.0', id, error: { code, message: messageText, data: { typed } },
     }));
+  stubHeaders.push({ 'mcp-protocol-version': reqHeaders['mcp-protocol-version'], 'mcp-session-id': reqHeaders['mcp-session-id'] });
   if (message.method === 'notifications/initialized') {
     res.writeHead(202).end();
     return;
   }
   if (message.method === 'initialize') {
-    ok({ protocolVersion: '2025-03-26', capabilities: { tools: {} },
-      serverInfo: { name: 'lantern-keeper-stub', version: 'test' } });
+    res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'stub-session-1' });
+    res.end(JSON.stringify({ jsonrpc: '2.0', id, result: { protocolVersion: '2025-03-26', capabilities: { tools: {} },
+      serverInfo: { name: 'lantern-keeper-stub', version: 'test' } } }));
+    return;
+  }
+  if (message.method === 'ping') {
+    // Synthetic SSE branch: proves the gateway preserves non-JSON streams
+    // instead of mislabeling them.
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id, result: {} })}\n\n`);
     return;
   }
   if (message.method === 'tools/list') {
@@ -117,6 +127,12 @@ function stubHandler(reqBody: string, res: import('node:http').ServerResponse, c
     const name = message.params?.name ?? '';
     const args = message.params?.arguments ?? {};
     stubCalls.push({ name, arguments: args });
+    if ((args as Record<string, unknown>)['__force_error'] === 'upstream-500') {
+      res.writeHead(500, { 'content-type': 'application/json' }).end(JSON.stringify({
+        jsonrpc: '2.0', id, error: { code: -32000, message: 'synthetic upstream failure', data: { typed: 'storage' } },
+      }));
+      return;
+    }
     const cred = STUB_CREDENTIALS[credential];
     if (!['lantern_status', 'lantern_search', 'lantern_context', 'lantern_why'].includes(name)) {
       fail(-32601, 'method not found', 200, 'protocol');
@@ -189,7 +205,7 @@ beforeAll(async () => {
     }
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => stubHandler(body, res, presented));
+    req.on('end', () => stubHandler(body, res, presented, req.headers));
   });
   await new Promise<void>((resolve) => stub.listen(0, '127.0.0.1', resolve));
   stubPort = (stub.address() as import('node:net').AddressInfo).port;
@@ -592,4 +608,71 @@ it('serializes simultaneous refresh and code exchange without forking grants', a
   });
   // The replay killed the grant, so even the winning token is fenced.
   expect(ping.status).toBe(401);
+});
+
+it('preserves protocol negotiation: GET 405, headers, SSE and error envelopes', async () => {
+  const path = '/mcp/chatgpt';
+  // Fresh grant for this test (test 1 revoked its own).
+  const disc = await (await request('/.well-known/oauth-authorization-server')).json() as {
+    registration_endpoint: string; authorization_endpoint: string; token_endpoint: string;
+  };
+  const here = (url: string) => new URL(url).pathname;
+  const reg = await request(here(disc.registration_endpoint), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ redirect_uris: [redirect], token_endpoint_auth_method: 'none' }),
+  });
+  const { client_id } = await reg.json() as { client_id: string };
+  const verifier = randomBytes(48).toString('base64url');
+  const consent = await request(here(disc.authorization_endpoint) + '?' + new URLSearchParams({
+    client_id, redirect_uri: redirect, resource, response_type: 'code', scope: 'lantern:read',
+    code_challenge_method: 'S256', code_challenge: digest(verifier).digest('base64url'), state: 'proto',
+  }));
+  const cookie = consent.headers.get('set-cookie')!.split(';')[0];
+  const handle = decodeURIComponent((await consent.text()).match(/name="handle" value="([^"]+)"/)![1]);
+  const approval = await request(here(disc.authorization_endpoint),
+    form({ handle, owner }, { Cookie: cookie, Origin: origin }));
+  const code = new URL(approval.headers.get('location')!).searchParams.get('code')!;
+  const tokenRes = await request(here(disc.token_endpoint),
+    form({ grant_type: 'authorization_code', client_id, redirect_uri: redirect, code,
+      code_verifier: verifier, resource }));
+  const { access_token } = await tokenRes.json() as { access_token: string };
+  const authed = (init: RequestInit) => request(path, {
+    ...init,
+    headers: { ...(init.headers as Record<string, string>), Authorization: 'Bearer ' + access_token },
+  });
+
+  // GET has no SSE listener here (or upstream): 405, not a body parse error.
+  const get = await authed({ method: 'GET' });
+  expect(get.status).toBe(405);
+  expect(get.headers.get('allow')).toBe('POST');
+
+  // MCP protocol headers travel both ways; the backend's session id is visible.
+  const init = await authed({ method: 'POST',
+    headers: { 'content-type': 'application/json', 'mcp-protocol-version': '2025-03-26' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 't', version: '1' } } }),
+  });
+  expect(init.status).toBe(200);
+  expect(init.headers.get('mcp-session-id')).toBe('stub-session-1');
+  const lastHeaders = stubHeaders.at(-1)!;
+  expect(lastHeaders['mcp-protocol-version']).toBe('2025-03-26');
+
+  // SSE from upstream passes through with its real content type, unmangled.
+  const sse = await authed({ method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'ping' }),
+  });
+  expect(sse.status).toBe(200);
+  expect(sse.headers.get('content-type')).toContain('text/event-stream');
+  expect(await sse.text()).toContain('event: message');
+
+  // A backend error envelope passes through byte-identical, never rewritten.
+  const errBody = JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call',
+    params: { name: 'lantern_search', arguments: { scope: { project: 'workshop' }, __force_error: 'upstream-500' } } });
+  const errRes = await authed({ method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: errBody });
+  expect(errRes.status).toBe(500);
+  expect(await errRes.json()).toEqual({ jsonrpc: '2.0', id: 3,
+    error: { code: -32000, message: 'synthetic upstream failure', data: { typed: 'storage' } } });
 });
