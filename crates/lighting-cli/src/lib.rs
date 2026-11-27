@@ -5442,11 +5442,8 @@ mod tests {
         let (bare_sql, bare_report) =
             build_hosted_seed_sql(&dir, false, None).expect("builder must run");
         assert_eq!(bare_report.emitted.get("epistemic_claim"), Some(&4));
-        assert!(
-            bare_report.warnings.is_empty(),
-            "warnings: {:?}",
-            bare_report.warnings
-        );
+        assert_eq!(bare_report.warnings.len(), 1);
+        assert!(bare_report.warnings[0].contains("without an ordinary note projection"));
         let bare_empty = lighting_core::scope_hash(&BTreeMap::new());
         assert_eq!(
             bare_report
