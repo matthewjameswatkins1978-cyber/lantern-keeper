@@ -2375,25 +2375,28 @@ fn seed_claim_statement(
         .map(|raw| strip_table_prefix(raw, "episode").to_owned());
     let source_id =
         payload_text(&payload, "source_id").map(|raw| strip_table_prefix(raw, "source").to_owned());
-    Some((format!(
-        "INSERT INTO epistemic_claim (id, scope_hash, subject_key, predicate_key, predicate_candidate, predicate_status, value, polarity, speaker_actor_id, holder_actor_id, dedupe_key, episode_id, source_id, payload, known_at, created_at) VALUES ({id}, {scope_hash}, {subject_key}, {predicate_key}, {candidate}, {status}, {value}, {polarity}, {speaker}, {holder}, {dedupe}, {episode}, {source}, {payload}, {known_at}, {created_at}) ON CONFLICT(id) DO NOTHING;",
-        id = sql_text(&id),
-        scope_hash = sql_text(&scope_hash),
-        subject_key = sql_text(subject_key),
-        predicate_key = sql_opt(payload_text(&payload, "predicate_key")),
-        candidate = sql_opt(payload_text(&payload, "predicate_candidate")),
-        status = sql_text(predicate_status),
-        value = sql_text(value),
-        polarity = polarity,
-        speaker = sql_text(speaker),
-        holder = sql_opt(payload_text(&payload, "holder_actor_id")),
-        dedupe = sql_text(dedupe_key),
-        episode = sql_opt(episode_id.as_deref()),
-        source = sql_opt(source_id.as_deref()),
-        payload = sql_text(record_text(record, "payload")?),
-        known_at = sql_text(&known_at),
-        created_at = sql_text(&created_at),
-    ), scope_hash))
+    Some((
+        format!(
+            "INSERT INTO epistemic_claim (id, scope_hash, subject_key, predicate_key, predicate_candidate, predicate_status, value, polarity, speaker_actor_id, holder_actor_id, dedupe_key, episode_id, source_id, payload, known_at, created_at) VALUES ({id}, {scope_hash}, {subject_key}, {predicate_key}, {candidate}, {status}, {value}, {polarity}, {speaker}, {holder}, {dedupe}, {episode}, {source}, {payload}, {known_at}, {created_at}) ON CONFLICT(id) DO NOTHING;",
+            id = sql_text(&id),
+            scope_hash = sql_text(&scope_hash),
+            subject_key = sql_text(subject_key),
+            predicate_key = sql_opt(payload_text(&payload, "predicate_key")),
+            candidate = sql_opt(payload_text(&payload, "predicate_candidate")),
+            status = sql_text(predicate_status),
+            value = sql_text(value),
+            polarity = polarity,
+            speaker = sql_text(speaker),
+            holder = sql_opt(payload_text(&payload, "holder_actor_id")),
+            dedupe = sql_text(dedupe_key),
+            episode = sql_opt(episode_id.as_deref()),
+            source = sql_opt(source_id.as_deref()),
+            payload = sql_text(record_text(record, "payload")?),
+            known_at = sql_text(&known_at),
+            created_at = sql_text(&created_at),
+        ),
+        scope_hash,
+    ))
 }
 
 fn seed_belief_statement(
@@ -2443,23 +2446,26 @@ fn seed_belief_statement(
                 return None;
             }
         };
-    Some((format!(
-        "INSERT INTO belief (id, scope_hash, scope, holder_key, subject_key, predicate_key, current_value, state, stale, stale_since, stale_reason, dependency_generation, updated_at, payload) VALUES ({id}, {scope_hash}, {scope}, {holder}, {subject}, {predicate}, {value}, {state}, {stale}, {stale_since}, {stale_reason}, {generation}, {updated_at}, {payload}) ON CONFLICT(id) DO NOTHING;",
-        id = sql_text(&id),
-        scope_hash = sql_text(&scope_hash),
-        scope = sql_text(&scope_column),
-        holder = sql_text(holder),
-        subject = sql_text(subject),
-        predicate = sql_text(predicate),
-        value = sql_text(current_value),
-        state = sql_text(&state),
-        stale = i64::from(stale),
-        stale_since = sql_opt(payload_text(&payload, "stale_since")),
-        stale_reason = sql_opt(payload_text(&payload, "stale_reason")),
-        generation = dependency_generation,
-        updated_at = sql_text(&updated_at),
-        payload = sql_text(record_text(record, "payload")?),
-    ), scope_hash))
+    Some((
+        format!(
+            "INSERT INTO belief (id, scope_hash, scope, holder_key, subject_key, predicate_key, current_value, state, stale, stale_since, stale_reason, dependency_generation, updated_at, payload) VALUES ({id}, {scope_hash}, {scope}, {holder}, {subject}, {predicate}, {value}, {state}, {stale}, {stale_since}, {stale_reason}, {generation}, {updated_at}, {payload}) ON CONFLICT(id) DO NOTHING;",
+            id = sql_text(&id),
+            scope_hash = sql_text(&scope_hash),
+            scope = sql_text(&scope_column),
+            holder = sql_text(holder),
+            subject = sql_text(subject),
+            predicate = sql_text(predicate),
+            value = sql_text(current_value),
+            state = sql_text(&state),
+            stale = i64::from(stale),
+            stale_since = sql_opt(payload_text(&payload, "stale_since")),
+            stale_reason = sql_opt(payload_text(&payload, "stale_reason")),
+            generation = dependency_generation,
+            updated_at = sql_text(&updated_at),
+            payload = sql_text(record_text(record, "payload")?),
+        ),
+        scope_hash,
+    ))
 }
 
 /// Read every `*.ndjson` in an export directory and emit hosted seed SQL.
@@ -2563,20 +2569,23 @@ fn seed_relation_statement(
     let scope_hash = import_scope_hash
         .map(str::to_owned)
         .unwrap_or_else(|| lighting_core::scope_hash(&BTreeMap::new()));
-    Some((format!(
-        "INSERT INTO epistemic_claim (id, scope_hash, subject_key, predicate_key, predicate_candidate, predicate_status, value, polarity, speaker_actor_id, holder_actor_id, dedupe_key, episode_id, source_id, payload, known_at, created_at) VALUES ({id}, {scope_hash}, {subject}, {predicate}, NULL, 'resolved', {value}, 1, {speaker}, NULL, {dedupe_key}, {episode}, NULL, {payload}, {known_at}, {created_at}) ON CONFLICT(id) DO NOTHING;",
-        id = sql_text(id),
-        scope_hash = sql_text(&scope_hash),
-        subject = sql_text(in_id),
-        predicate = sql_text(predicate),
-        value = sql_text(out_id),
-        speaker = sql_text(&origin),
-        dedupe_key = sql_text(&format!("relation|{dedupe}")),
-        episode = sql_opt(episode_endpoint.as_deref()),
-        payload = sql_text(payload),
-        known_at = sql_text(&created_at),
-        created_at = sql_text(&created_at),
-    ), scope_hash))
+    Some((
+        format!(
+            "INSERT INTO epistemic_claim (id, scope_hash, subject_key, predicate_key, predicate_candidate, predicate_status, value, polarity, speaker_actor_id, holder_actor_id, dedupe_key, episode_id, source_id, payload, known_at, created_at) VALUES ({id}, {scope_hash}, {subject}, {predicate}, NULL, 'resolved', {value}, 1, {speaker}, NULL, {dedupe_key}, {episode}, NULL, {payload}, {known_at}, {created_at}) ON CONFLICT(id) DO NOTHING;",
+            id = sql_text(id),
+            scope_hash = sql_text(&scope_hash),
+            subject = sql_text(in_id),
+            predicate = sql_text(predicate),
+            value = sql_text(out_id),
+            speaker = sql_text(&origin),
+            dedupe_key = sql_text(&format!("relation|{dedupe}")),
+            episode = sql_opt(episode_endpoint.as_deref()),
+            payload = sql_text(payload),
+            known_at = sql_text(&created_at),
+            created_at = sql_text(&created_at),
+        ),
+        scope_hash,
+    ))
 }
 
 /// `belief_revision` → `belief_revision` with the derived CAS token
@@ -2762,12 +2771,10 @@ pub fn build_hosted_seed_sql(
                 "episode" => seed_episode_statement(record).map(|sql| (sql, None)),
                 "epistemic_claim" => seed_claim_statement(record, &mut warnings)
                     .map(|(sql, scope_hash)| (sql, Some(scope_hash))),
-                "memory_relation" => seed_relation_statement(
-                    record,
-                    &mut warnings,
-                    import_scope_hash.as_deref(),
-                )
-                .map(|(sql, scope_hash)| (sql, Some(scope_hash))),
+                "memory_relation" => {
+                    seed_relation_statement(record, &mut warnings, import_scope_hash.as_deref())
+                        .map(|(sql, scope_hash)| (sql, Some(scope_hash)))
+                }
                 _ => seed_belief_statement(record, &mut warnings)
                     .map(|(sql, scope_hash)| (sql, Some(scope_hash))),
             };
@@ -2936,7 +2943,9 @@ pub fn build_hosted_seed_sql(
             .map(|(table, count)| format!("{table}={count}"))
             .collect::<Vec<_>>()
             .join(", "),
-        import_scope_hash.as_deref().unwrap_or("(none: legacy empty relation hashes)"),
+        import_scope_hash
+            .as_deref()
+            .unwrap_or("(none: legacy empty relation hashes)"),
         scope_distribution
             .iter()
             .map(|(key, count)| format!("{key}={count}"))
@@ -5024,10 +5033,12 @@ mod tests {
         // broadened); the manifest records each qualified hash instead, keyed
         // by source export table so the mapping stays explicit.
         assert!(
-            report.scope_distribution.keys().all(|key| key
-                .starts_with("epistemic_claim:")
-                || key.starts_with("belief:")
-                || key.starts_with("memory_relation:")),
+            report
+                .scope_distribution
+                .keys()
+                .all(|key| key.starts_with("epistemic_claim:")
+                    || key.starts_with("belief:")
+                    || key.starts_with("memory_relation:")),
             "distribution covers claims, beliefs and mapped relations: {:?}",
             report.scope_distribution
         );
@@ -5090,17 +5101,17 @@ mod tests {
         );
 
         // Fail closed: empty or malformed operator scope never seeds.
-        assert!(build_hosted_seed_sql(
-            &c3_fixture("synthetic-export"),
-            false,
-            Some(BTreeMap::new())
-        )
-        .is_err());
+        assert!(
+            build_hosted_seed_sql(
+                &c3_fixture("synthetic-export"),
+                false,
+                Some(BTreeMap::new())
+            )
+            .is_err()
+        );
         assert!(parse_operator_scope(&["project".to_owned()]).is_err());
         assert!(parse_operator_scope(&["project=".to_owned()]).is_err());
-        assert!(
-            parse_operator_scope(&["project=a".to_owned(), "project=b".to_owned()]).is_err()
-        );
+        assert!(parse_operator_scope(&["project=a".to_owned(), "project=b".to_owned()]).is_err());
         let parsed = parse_operator_scope(&["project=lantern".to_owned()]).expect("valid pair");
         assert_eq!(
             parsed,
@@ -5212,8 +5223,7 @@ mod tests {
         );
         assert!(!output.exists(), "strict writes nothing");
 
-        let (sql, report) =
-            build_hosted_seed_sql(&dir, false, None).expect("default must build");
+        let (sql, report) = build_hosted_seed_sql(&dir, false, None).expect("default must build");
         assert_eq!(
             report.emitted.get("belief_revision"),
             Some(&2),
