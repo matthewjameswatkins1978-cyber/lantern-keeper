@@ -118,9 +118,10 @@ function stubHandler(reqBody: string, res: import('node:http').ServerResponse, c
     return;
   }
   if (message.method === 'tools/list') {
-    ok({ tools: FULL_CATALOG.map((name) => ({
+    res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'stub-session-1' });
+    res.end(JSON.stringify({ jsonrpc: '2.0', id, result: { tools: FULL_CATALOG.map((name) => ({
       name, description: 'stub ' + name, inputSchema: { type: 'object', properties: {} },
-    })) });
+    })) } }));
     return;
   }
   if (message.method === 'tools/call') {
@@ -675,4 +676,21 @@ it('preserves protocol negotiation: GET 405, headers, SSE and error envelopes', 
   expect(errRes.status).toBe(500);
   expect(await errRes.json()).toEqual({ jsonrpc: '2.0', id: 3,
     error: { code: -32000, message: 'synthetic upstream failure', data: { typed: 'storage' } } });
+
+  // Rebuilt catalogue responses stay uncacheable and session-aware.
+  const listed = await authed({ method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/list', params: {} }),
+  });
+  expect(listed.status).toBe(200);
+  expect(listed.headers.get('content-type')).toContain('application/json');
+  expect(listed.headers.get('cache-control')).toBe('no-store');
+  expect(listed.headers.get('mcp-session-id')).toBe('stub-session-1');
+
+  // An explicit null id is a request, not a notification: it gets a response.
+  const nullId = await authed({ method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: null, method: 'ping' }),
+  });
+  expect(nullId.status).toBe(200);
 });

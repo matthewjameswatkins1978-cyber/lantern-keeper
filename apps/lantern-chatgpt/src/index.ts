@@ -98,8 +98,9 @@ async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal)
   if (typeof message !== 'object' || message === null || Array.isArray(message)) {
     return rpcError(null, -32600, 'Invalid Request');
   }
-  // Notifications (including notifications/initialized) get 202, no body.
-  if (typeof message.method === 'string' && (message.id === undefined || message.id === null)) {
+  // Notifications have no id member at all. An explicit null id is a
+  // request that still expects a response.
+  if (typeof message.method === 'string' && message.id === undefined) {
     return new Response(null, { status: 202 });
   }
   const { id, method } = message;
@@ -178,7 +179,16 @@ async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal)
     }
     const receiptId = crypto.randomUUID();
     console.info(JSON.stringify({ event: 'lantern.oauth.tool', tool: 'tools/list', outcome: 'success', receiptId }));
-    return Response.json({ jsonrpc: '2.0', id, result: payload.result });
+    // Rebuilt with the filtered catalogue; memory payloads stay uncacheable.
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: payload.result }), {
+      headers: {
+        'content-type': 'application/json',
+        'cache-control': 'no-store',
+        ...(proxied.headers.get('mcp-session-id')
+          ? { 'mcp-session-id': proxied.headers.get('mcp-session-id') as string }
+          : {}),
+      },
+    });
   }
   const tool = method === 'tools/call' ? (params?.name ?? 'unknown') : method;
   const receiptId = crypto.randomUUID();
