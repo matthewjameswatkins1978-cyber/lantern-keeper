@@ -8,7 +8,6 @@ import { sha256Hex } from './hash.js';
 // separately in CHATGPT_OAUTH_SCOPE_JSON (a JSON scope object matching the
 // backend wire schema) and enforced per tool call.
 const endpointId = 'lantern-chat';
-const scope = 'lantern:read';
 
 // Approved read operations for the ChatGPT entry point. Write authority
 // (lantern_correct, lantern_remember, …) is a separate acceptance decision
@@ -18,6 +17,8 @@ export const READ_TOOLS = [
   'lantern_search',
   'lantern_context',
   'lantern_why',
+  'lantern_list_notes',
+  'lantern_get_source',
 ] as const;
 
 const routes = {
@@ -40,6 +41,7 @@ export interface LanternChatGptOAuthEnv {
   OAUTH_KV?: KVNamespace;
   CHATGPT_OAUTH_LIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
   CHATGPT_OAUTH_DISABLED?: string;
+  CHATGPT_ENABLE_REMEMBER?: string;
 }
 
 export interface LanternPrincipal {
@@ -48,10 +50,6 @@ export interface LanternPrincipal {
 }
 
 type OAuthContext = Parameters<OAuthProvider<LanternChatGptOAuthEnv>['fetch']>[2];
-
-function validScopes(scopes: string[]) {
-  return scopes.length > 0 && scopes.every((requested) => requested === scope);
-}
 
 export async function routeLanternChatGptOAuth(
   request: Request,
@@ -67,6 +65,10 @@ export async function routeLanternChatGptOAuth(
   const origin = env.CHATGPT_OAUTH_ORIGIN;
   const allowedScope = env.CHATGPT_OAUTH_SCOPE_JSON;
   const ownerHash = env.CHATGPT_OAUTH_OWNER_HASH;
+  const canRemember = env.CHATGPT_ENABLE_REMEMBER === '1';
+  const scope = canRemember ? 'lantern:read-and-remember' : 'lantern:read';
+  const validScopes = (scopes: string[]) =>
+    scopes.length > 0 && scopes.every((requested) => requested === scope);
   const redirects = (env.CHATGPT_OAUTH_REDIRECTS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
   if (!ctx || !env.OAUTH_KV || !env.CHATGPT_OAUTH_LIMIT || !origin || url.origin !== origin || url.protocol !== 'https:' ||
       !allowedScope || !ownerHash || !/^[a-f0-9]{64}$/.test(ownerHash) || !redirects.length) {
@@ -167,7 +169,8 @@ export async function routeLanternChatGptOAuth(
             return new Response(
               '<!doctype html><html lang="en"><meta charset="utf-8"><title>Lantern Keeper approval</title>' +
               '<h1>Approve Lantern Keeper access</h1><p>Grant ' + redirect.hostname +
-              ' read-only memory access as lantern-chat.</p><form method="post" action="' + routes.authorize + '">' +
+              (canRemember ? ' permission to read and save memories' : ' read-only memory access') +
+              ' as lantern-chat.</p><form method="post" action="' + routes.authorize + '">' +
               '<input type="hidden" name="handle" value="' + encodeURIComponent(consent.handle) + '">' +
               '<label>Owner passphrase <input name="owner" type="password" required autocomplete="off"></label>' +
               '<button type="submit">Verify and approve</button></form></html>',

@@ -341,7 +341,8 @@ it('denies unauthenticated, invalid and mis-scoped access; exposes only read too
   const chatgpt = await connect(access_token);
   try {
     const tools = (await chatgpt.listTools()).tools.map((t) => t.name);
-    expect(tools.sort()).toEqual(['lantern_context', 'lantern_search', 'lantern_status', 'lantern_why']);
+    expect(tools.sort()).toEqual(['lantern_context', 'lantern_get_source', 'lantern_list_notes',
+      'lantern_search', 'lantern_status', 'lantern_why']);
     const search = await chatgpt.callTool({ name: 'lantern_search',
       arguments: { scope: { project: 'workshop' }, query: 'synthetic' } });
     expect(search.isError).not.toBe(true);
@@ -352,7 +353,7 @@ it('denies unauthenticated, invalid and mis-scoped access; exposes only read too
     const lastSearch = stubCalls.filter((c) => c.name === 'lantern_search').at(-1)!;
     expect((lastSearch.arguments as Record<string, unknown>)['scope']).toEqual({ project: 'workshop' });
     // Write tools are denied at the ChatGPT boundary and never proxied.
-    for (const write of ['lantern_remember', 'lantern_correct', 'lantern_get_source', 'lantern_list_notes']) {
+    for (const write of ['lantern_remember', 'lantern_correct']) {
       const denied = await chatgpt.callTool({ name: write, arguments: { scope: { project: 'workshop' } } })
         .then((r) => r).catch((e) => e);
       expect(denied.isError === true || denied?.code === -32601).toBe(true);

@@ -22,6 +22,10 @@ export interface Env extends LanternChatGptOAuthEnv {
 
 const READ_METHODS = new Set(['initialize', 'ping', 'tools/list', 'tools/call']);
 
+function allowsTool(env: Env, name: string): boolean {
+  return isReadTool(name) || (env.CHATGPT_ENABLE_REMEMBER === '1' && name === 'lantern_remember');
+}
+
 function rpcError(id: unknown, code: number, message: string) {
   return Response.json({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
 }
@@ -125,8 +129,8 @@ async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal)
   }
   if (method === 'tools/call') {
     const name = params?.name ?? '';
-    if (!isReadTool(name)) {
-      // Unknown or write tool: denied at the ChatGPT boundary, never proxied.
+    if (!allowsTool(env, name)) {
+      // Tools outside the configured allowlist never reach the upstream.
       console.info(JSON.stringify({
         event: 'lantern.oauth.tool', tool: name, outcome: 'denied_tool_not_allowed',
         receiptId: crypto.randomUUID(),
@@ -191,8 +195,8 @@ async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal)
     }
     if (Array.isArray(payload?.result?.tools)) {
       payload.result.tools = payload.result.tools
-        .filter((tool) => isReadTool(tool?.name ?? ''))
-        .map((tool) => ({ ...tool, annotations: { ...tool.annotations, readOnlyHint: true } }));
+        .filter((tool) => allowsTool(env, tool?.name ?? ''))
+        .map((tool) => ({ ...tool, annotations: { ...tool.annotations, readOnlyHint: isReadTool(tool.name ?? '') } }));
     }
     const receiptId = crypto.randomUUID();
     console.info(JSON.stringify({ event: 'lantern.oauth.tool', tool: 'tools/list', outcome: 'success', receiptId }));
