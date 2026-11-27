@@ -3151,29 +3151,6 @@ fn cmd_hosted_seed_sql(
     Ok(())
 }
 
-/// Parse repeated `--scope KEY=VALUE` pairs into one operator scope. The
-/// scope is trusted operator input (it decides where imported notes become
-/// visible), so a malformed pair fails closed instead of guessing.
-fn parse_operator_scope(pairs: &[String]) -> anyhow::Result<Option<BTreeMap<String, String>>> {
-    if pairs.is_empty() {
-        return Ok(None);
-    }
-    let mut scope = BTreeMap::new();
-    for pair in pairs {
-        let Some((key, value)) = pair.split_once('=') else {
-            bail!("--scope expects KEY=VALUE, got {pair:?}");
-        };
-        let (key, value) = (key.trim(), value.trim());
-        if key.is_empty() || value.is_empty() {
-            bail!("--scope expects a non-empty KEY and VALUE, got {pair:?}");
-        }
-        if scope.insert(key.to_owned(), value.to_owned()).is_some() {
-            bail!("duplicate --scope key {key:?}");
-        }
-    }
-    Ok(Some(scope))
-}
-
 fn cmd_basic_memory_import(
     client: &HttpClient,
     path: &Path,
