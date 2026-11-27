@@ -49,7 +49,9 @@ and rollback stays a single-worker operation.
    `CHATGPT_OAUTH_OWNER_HASH`, `LANTERN_MCP_CREDENTIAL`.
    - `CHATGPT_OAUTH_ORIGIN`: the new Worker HTTPS origin, no trailing slash.
    - `CHATGPT_OAUTH_SCOPE_JSON`: the single workshop scope object the
-     backend requires, e.g. `{"project":"workshop"}`. The gateway injects
+     backend requires, e.g. `{"project":"workshop"}`. Write it canonical:
+     lowercase keys, no surrounding spaces (normalization is deterministic,
+     but exact canonical form avoids surprises). The gateway injects
      exactly this normalized object into every scoped tool call; a client
      scope that normalizes differently is denied without backend contact.
    - `CHATGPT_OAUTH_REDIRECTS`: comma-separated exact approved callbacks.
@@ -66,11 +68,14 @@ and rollback stays a single-worker operation.
      object above. The gateway allowlist already blocks every write tool,
      but the credential must not be able to exceed read-only workshop
      access even if the proxy were bypassed. Never log it.
-   - `CHATGPT_OAUTH_KV_PROPAGATION_NOTE`: revocation and grant deletion
-     propagate at Workers KV speed; allow for edge propagation delay before
-     treating a revocation as complete (staging uses disposable synthetic
-     credentials, so this is not a production revocation path yet).
-4. `wrangler deploy`. Record the version ID.
+   > Note: revocation and grant deletion propagate at Workers KV speed;
+   > allow for edge propagation delay before treating a revocation as
+   > complete. Staging uses disposable synthetic credentials, so this is
+   > not a production revocation path yet.
+4. Deploy with the private file (never the base `wrangler.jsonc`, which
+   intentionally carries no bindings): `wrangler deploy --config
+   <private-file>`. Record the version ID (and confirm it with
+   `wrangler deployments list --name lantern-keeper-chatgpt`).
 5. Qualification (staging): anonymous 401 with `resource_metadata` challenge;
    discovery documents; unapproved redirect refused; wrong resource/scope or
    plain PKCE refused; owner approval over the exact origin only; code replay
