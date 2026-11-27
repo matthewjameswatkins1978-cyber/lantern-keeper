@@ -42,7 +42,11 @@ and rollback stays a single-worker operation.
    `wrangler dev` if needed).
 2. Choose an unused account-local numeric namespace ID for the ratelimit
    binding (`CHATGPT_OAUTH_LIMIT`, 60 per 60 seconds per route).
-3. Prepare a private `wrangler.jsonc` (or `--var` / `--secret` flags) with:
+3. Copy `wrangler.staging.example.jsonc` to a PRIVATE file (never commit
+   it) and fill in the four REPLACE-ME values (KV id, numeric rate-limit
+   namespace id, worker hostnames). Set the two secrets via
+   `wrangler secret put` (never write them into any file):
+   `CHATGPT_OAUTH_OWNER_HASH`, `LANTERN_MCP_CREDENTIAL`.
    - `CHATGPT_OAUTH_ORIGIN`: the new Worker HTTPS origin, no trailing slash.
    - `CHATGPT_OAUTH_SCOPE_JSON`: the single workshop scope object the
      backend requires, e.g. `{"project":"workshop"}`. The gateway injects
