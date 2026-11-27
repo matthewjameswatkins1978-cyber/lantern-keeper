@@ -17,6 +17,10 @@ select **+ → Add custom MCP server**, and enter these settings.
 | Scope | `lantern:read` if the form asks |
 
 Select **Create as a plugin**, keep it personal, then install and connect it.
+No domain verification is needed for a personal plugin: the
+`/.well-known/openai-apps-challenge` handshake and organization verification
+apply to public directory submission, not to a private connection. Do not
+attempt them for staging.
 Verify that the OAuth approval page is on the exact Worker hostname above.
 Enter the owner passphrase there and choose **Verify and approve**. Obtain the
 passphrase through the owner's password manager.
