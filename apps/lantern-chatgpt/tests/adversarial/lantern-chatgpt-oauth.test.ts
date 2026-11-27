@@ -427,6 +427,16 @@ it('denies unauthenticated, invalid and mis-scoped access; exposes only read too
   const identical = await refresh();
   expect(identical.status).toBe(200);
   expect(await identical.json()).toMatchObject({ refresh_token: replacement.refresh_token });
+  // A corrupt retry record fails closed (treated as absent, previous-token
+  // rule still applies) instead of throwing an unhandled 500.
+  const poisonParams = new URLSearchParams({ grant_type: 'refresh_token', refresh_token, client_id, resource });
+  poisonParams.sort();
+  const poisonDigest = createHash('sha256').update(JSON.stringify([
+    poisonParams.toString(), origin + path(issuer.token_endpoint), 'application/x-www-form-urlencoded',
+    null, null, origin, '{"project":"workshop"}', redirect, digest(owner).digest('hex'),
+  ])).digest('hex');
+  await kv.put('retry:' + poisonDigest, 'garbage{{{');
+  expect((await refresh()).status).toBe(400);
   const rotated2 = await refresh({ refresh_token: replacement.refresh_token });
   expect(rotated2.status).toBe(200);
   const replacement2 = await rotated2.json();

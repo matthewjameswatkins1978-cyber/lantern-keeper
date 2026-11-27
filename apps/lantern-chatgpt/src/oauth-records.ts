@@ -19,7 +19,14 @@ export class KVRecords {
     const value = await this.kv.get(name);
     if (value === null) return null;
     const type = typeof options === 'string' ? options : options?.type;
-    return type === 'json' ? JSON.parse(value) : value;
+    if (type !== 'json') return value;
+    // Corrupt records are treated as absent (fail closed downstream),
+    // never as an unhandled exception.
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
   }
 
   async put(name: string, value: string, options?: { expirationTtl?: number }): Promise<void> {
