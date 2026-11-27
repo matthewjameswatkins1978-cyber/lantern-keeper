@@ -704,3 +704,30 @@ it('preserves protocol negotiation: GET 405, headers, SSE and error envelopes', 
   });
   expect(nullId.status).toBe(200);
 });
+
+import { fencedKV } from '../../src/oauth-records.js';
+
+it('fences every token read path on grant deletion', async () => {
+  const kv = await runtime.getKVNamespace('OAUTH_KV');
+  const fenced = fencedKV(kv);
+  await kv.put('grant:fenced-user:fenced-grant', JSON.stringify({ scope: ['lantern:read'] }));
+  await kv.put('token:fenced-user:fenced-grant:abc123', JSON.stringify({ expiresAt: 4102444800 }), {
+    metadata: { tag: 'fenced' },
+  });
+  // Present while the grant lives, on both read paths.
+  expect(await fenced.get('token:fenced-user:fenced-grant:abc123', 'json')).toMatchObject({ expiresAt: 4102444800 });
+  const visible = await fenced.getWithMetadata('token:fenced-user:fenced-grant:abc123', 'json') as {
+    value: unknown; metadata: unknown;
+  } | null;
+  expect(visible!.value).toMatchObject({ expiresAt: 4102444800 });
+  expect(visible!.metadata).toMatchObject({ tag: 'fenced' });
+  // Gone on both paths once the grant is deleted.
+  await kv.delete('grant:fenced-user:fenced-grant');
+  expect(await fenced.get('token:fenced-user:fenced-grant:abc123', 'json')).toBe(null);
+  expect(await fenced.getWithMetadata('token:fenced-user:fenced-grant:abc123', 'json')).toBe(null);
+  // Unrelated keys never fence.
+  await kv.put('other:key', 'v');
+  expect(await fenced.get('other:key')).toBe('v');
+  await kv.delete('other:key');
+  await kv.delete('token:fenced-user:fenced-grant:abc123');
+});

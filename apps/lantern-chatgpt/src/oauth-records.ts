@@ -65,7 +65,13 @@ export function fencedKV(kv: KVNamespace): KVNamespace {
       kv.put(name, value as never, options as never)) as KVNamespace['put'],
     delete: ((name: string) => kv.delete(name)) as KVNamespace['delete'],
     list: ((options?: unknown) => kv.list(options as never)) as KVNamespace['list'],
-    getWithMetadata: ((name: string, options?: unknown) =>
-      kv.getWithMetadata(name, options as never)) as KVNamespace['getWithMetadata'],
+    getWithMetadata: (async (name: string, options?: unknown) => {
+      // Same fence as get: a deleted grant hides every token read path.
+      if (name.startsWith('token:')) {
+        const [, user, grant] = name.split(':');
+        if ((await kv.get('grant:' + user + ':' + grant)) === null) return null;
+      }
+      return kv.getWithMetadata(name, options as never);
+    }) as KVNamespace['getWithMetadata'],
   };
 }
