@@ -126,7 +126,8 @@ pub fn run_cli_command(service_url: &str, command: CliCommand) -> anyhow::Result
             output,
             json,
             strict,
-        } => cmd_hosted_seed_sql(&export, &output, json, strict),
+            scope,
+        } => cmd_hosted_seed_sql(&export, &output, json, strict, &scope),
         CliCommand::Predicate { command } => match command {
             PredicateCommand::List { json } => cmd_predicate_list(&client, json),
             PredicateCommand::Get { key, json } => cmd_predicate_get(&client, &key, json),
@@ -374,6 +375,12 @@ pub enum CliCommand {
         /// SQL + report for inspection.
         #[arg(long)]
         strict: bool,
+        /// Trusted operator scope for imported rows that carry no native
+        /// scope of their own (derived relation rows): KEY=VALUE, repeatable
+        /// — all pairs form one normalised scope. Claims keep their source
+        /// payload scopes; relations are stamped with this scope when given.
+        #[arg(long = "scope", value_name = "KEY=VALUE")]
+        scope: Vec<String>,
     },
     /// Inspect the canonical predicate registry and unmapped claim queue.
     Predicate {
@@ -1391,6 +1398,16 @@ struct BasicMemoryReconcileReport {
     expected_relations: usize,
     hosted_unresolved_relations: usize,
     relations_delta: i64,
+    /// Like-for-like unresolved comparison: the hosted relations endpoint
+    /// returns unresolved rows only, so expected unresolved (accounting
+    /// outcome `unresolved_target`) is compared against it directly. Every
+    /// other relation outcome (resolved, unsupported, metadata, historical)
+    /// has no REST enumeration path and stays pinned in
+    /// `not_enumerable_over_rest` — the legacy blended `relations_delta`
+    /// gate keeps failing honestly until the hosted surface exposes
+    /// per-status counts. Pin the gap; never loosen the comparison.
+    expected_unresolved_relations: usize,
+    unresolved_relations_delta: i64,
     per_note: Vec<ReconcileNoteReport>,
     /// Service state that has no read-only enumeration path over REST.
     /// Never silently treated as reconciled.
@@ -1949,6 +1966,7 @@ fn build_basic_memory_reconcile(
     let mut expected_claims_by_source: BTreeMap<String, usize> = BTreeMap::new();
     let mut expected_claims = 0usize;
     let mut expected_relations = 0usize;
+    let mut expected_unresolved_relations = 0usize;
     for item in &accounting.items {
         match item.item_type.as_str() {
             "observation" if item.outcome == "claim" => {
@@ -1957,7 +1975,16 @@ fn build_basic_memory_reconcile(
                     .entry(item.source_path.clone())
                     .or_default() += 1;
             }
-            "relation" => expected_relations += 1,
+            "relation" => {
+                expected_relations += 1;
+                // Only the unresolved outcome has a REST enumeration path
+                // (GET /api/v1/relations returns unresolved only); every
+                // other outcome is pinned, never blended into the hosted
+                // count.
+                if item.outcome == "unresolved_target" {
+                    expected_unresolved_relations += 1;
+                }
+            }
             _ => {}
         }
     }
@@ -2011,6 +2038,8 @@ fn build_basic_memory_reconcile(
     let claims_delta = hosted_claims as i64 - expected_claims as i64;
     let relations_delta =
         hosted.unresolved_basic_memory_relations as i64 - expected_relations as i64;
+    let unresolved_relations_delta =
+        hosted.unresolved_basic_memory_relations as i64 - expected_unresolved_relations as i64;
     let verdict = if notes_missing.is_empty()
         && notes_content_mismatch.is_empty()
         && claims_delta == 0
@@ -2036,6 +2065,8 @@ fn build_basic_memory_reconcile(
         expected_relations,
         hosted_unresolved_relations: hosted.unresolved_basic_memory_relations,
         relations_delta,
+        expected_unresolved_relations,
+        unresolved_relations_delta,
         per_note,
         not_enumerable_over_rest: vec![
             "soft_memory_items (POST search cannot enumerate; no GET list endpoint)".to_owned(),
@@ -2165,6 +2196,13 @@ pub struct HostedSeedSqlReport {
     pub manifest_record_count: Option<usize>,
     pub emitted: BTreeMap<String, usize>,
     pub skipped: BTreeMap<String, usize>,
+    /// Qualified scope distribution: `{table}:{scope_hash}` -> row count.
+    /// `table` is the source export table, so relation-derived rows appear
+    /// under `memory_relation:` and keep the C3 mapping distinction explicit.
+    /// Derived relation rows carry the asserted operator scope when one was
+    /// supplied (legacy empty hash otherwise, preserving the C3 native
+    /// placeholder explicitly); claims keep their source payload scopes.
+    pub scope_distribution: BTreeMap<String, usize>,
     pub warnings: Vec<String>,
     pub sql_statements: usize,
 }
@@ -2296,7 +2334,7 @@ fn seed_episode_statement(record: &serde_json::Map<String, serde_json::Value>) -
 fn seed_claim_statement(
     record: &serde_json::Map<String, serde_json::Value>,
     warnings: &mut Vec<String>,
-) -> Option<String> {
+) -> Option<(String, String)> {
     let payload = payload_map(record)?;
     let id = payload_text(&payload, "id")
         .map(str::to_owned)
@@ -2337,7 +2375,7 @@ fn seed_claim_statement(
         .map(|raw| strip_table_prefix(raw, "episode").to_owned());
     let source_id =
         payload_text(&payload, "source_id").map(|raw| strip_table_prefix(raw, "source").to_owned());
-    Some(format!(
+    Some((format!(
         "INSERT INTO epistemic_claim (id, scope_hash, subject_key, predicate_key, predicate_candidate, predicate_status, value, polarity, speaker_actor_id, holder_actor_id, dedupe_key, episode_id, source_id, payload, known_at, created_at) VALUES ({id}, {scope_hash}, {subject_key}, {predicate_key}, {candidate}, {status}, {value}, {polarity}, {speaker}, {holder}, {dedupe}, {episode}, {source}, {payload}, {known_at}, {created_at}) ON CONFLICT(id) DO NOTHING;",
         id = sql_text(&id),
         scope_hash = sql_text(&scope_hash),
@@ -2355,13 +2393,13 @@ fn seed_claim_statement(
         payload = sql_text(record_text(record, "payload")?),
         known_at = sql_text(&known_at),
         created_at = sql_text(&created_at),
-    ))
+    ), scope_hash))
 }
 
 fn seed_belief_statement(
     record: &serde_json::Map<String, serde_json::Value>,
     warnings: &mut Vec<String>,
-) -> Option<String> {
+) -> Option<(String, String)> {
     let payload = payload_map(record)?;
     let id = payload_text(&payload, "id")
         .map(str::to_owned)
@@ -2405,7 +2443,7 @@ fn seed_belief_statement(
                 return None;
             }
         };
-    Some(format!(
+    Some((format!(
         "INSERT INTO belief (id, scope_hash, scope, holder_key, subject_key, predicate_key, current_value, state, stale, stale_since, stale_reason, dependency_generation, updated_at, payload) VALUES ({id}, {scope_hash}, {scope}, {holder}, {subject}, {predicate}, {value}, {state}, {stale}, {stale_since}, {stale_reason}, {generation}, {updated_at}, {payload}) ON CONFLICT(id) DO NOTHING;",
         id = sql_text(&id),
         scope_hash = sql_text(&scope_hash),
@@ -2421,7 +2459,7 @@ fn seed_belief_statement(
         generation = dependency_generation,
         updated_at = sql_text(&updated_at),
         payload = sql_text(record_text(record, "payload")?),
-    ))
+    ), scope_hash))
 }
 
 /// Read every `*.ndjson` in an export directory and emit hosted seed SQL.
@@ -2475,7 +2513,8 @@ fn belief_seed_id(record: &serde_json::Map<String, serde_json::Value>) -> Option
 fn seed_relation_statement(
     record: &serde_json::Map<String, serde_json::Value>,
     warnings: &mut Vec<String>,
-) -> Option<String> {
+    import_scope_hash: Option<&str>,
+) -> Option<(String, String)> {
     let id = strip_table_prefix(record_text(record, "id")?, "memory_relation");
     let dedupe = record_text(record, "dedupe_key")?;
     let in_id = record_text(record, "in_id")?;
@@ -2514,8 +2553,17 @@ fn seed_relation_statement(
     // Native persists the relation's own payload string; copy it byte-exact
     // like claim and belief payloads (docs/c3-relations-mapping.md).
     let payload = record_text(record, "payload")?;
-    let scope_hash = lighting_core::scope_hash(&BTreeMap::new());
-    Some(format!(
+    // Derived relation rows carry no native scope of their own: when the
+    // operator asserted a verified import scope (--scope), stamp it so the
+    // rows are visible to scoped reads instead of sitting under the empty
+    // hash (invisible to every qualified scope and ambiguous with the C3
+    // native placeholder). Without an asserted scope the legacy empty hash
+    // is preserved verbatim and the C3 native-scope distinction stays
+    // explicit in the manifest distribution below.
+    let scope_hash = import_scope_hash
+        .map(str::to_owned)
+        .unwrap_or_else(|| lighting_core::scope_hash(&BTreeMap::new()));
+    Some((format!(
         "INSERT INTO epistemic_claim (id, scope_hash, subject_key, predicate_key, predicate_candidate, predicate_status, value, polarity, speaker_actor_id, holder_actor_id, dedupe_key, episode_id, source_id, payload, known_at, created_at) VALUES ({id}, {scope_hash}, {subject}, {predicate}, NULL, 'resolved', {value}, 1, {speaker}, NULL, {dedupe_key}, {episode}, NULL, {payload}, {known_at}, {created_at}) ON CONFLICT(id) DO NOTHING;",
         id = sql_text(id),
         scope_hash = sql_text(&scope_hash),
@@ -2528,7 +2576,7 @@ fn seed_relation_statement(
         payload = sql_text(payload),
         known_at = sql_text(&created_at),
         created_at = sql_text(&created_at),
-    ))
+    ), scope_hash))
 }
 
 /// `belief_revision` → `belief_revision` with the derived CAS token
@@ -2553,7 +2601,26 @@ fn seed_revision_statement(
 pub fn build_hosted_seed_sql(
     export_dir: &Path,
     strict: bool,
+    operator_scope: Option<BTreeMap<String, String>>,
 ) -> anyhow::Result<(String, HostedSeedSqlReport)> {
+    // Trusted operator scope for imported rows that carry no native scope
+    // of their own (derived relation rows): it decides where they become
+    // visible, so invalid or empty input fails closed here instead of
+    // seeding into a wrong namespace. Claims keep their source payload
+    // scopes; the manifest distribution below records every qualified hash.
+    let import_scope_hash = match operator_scope {
+        Some(scope) => {
+            if scope.is_empty() {
+                bail!(
+                    "operator scope must not be empty (pass at least one --scope KEY=VALUE pair)"
+                );
+            }
+            let normalised = lighting_core::normalize_scope(&scope)
+                .map_err(|error| anyhow::anyhow!("operator scope invalid: {error}"))?;
+            Some(lighting_core::scope_hash(&normalised))
+        }
+        None => None,
+    };
     let manifest_text = fs::read_to_string(export_dir.join("manifest.json")).ok();
     let manifest_record_count = manifest_text
         .as_deref()
@@ -2586,6 +2653,10 @@ pub fn build_hosted_seed_sql(
         vec![Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
     let mut emitted: BTreeMap<String, usize> = BTreeMap::new();
     let mut skipped: BTreeMap<String, usize> = BTreeMap::new();
+    // Qualified scope manifest: `{table}:{scope_hash}` -> row count, so the
+    // post-mapping manifest reflects the qualified import scope per row and
+    // a single claimed scope is never compared against mixed populations.
+    let mut scope_distribution: BTreeMap<String, usize> = BTreeMap::new();
     let mut warnings: Vec<String> = Vec::new();
     // C3-RELATIONS: belief chain anchors captured during the scan, and
     // pending belief_revision rows resolved after it (chain derivation needs
@@ -2687,16 +2758,28 @@ pub fn build_hosted_seed_sql(
                 belief_tokens.insert(id, BeliefAnchors { created, updated });
             }
             let statement = match table {
-                "source" => seed_source_statement(record),
-                "episode" => seed_episode_statement(record),
-                "epistemic_claim" => seed_claim_statement(record, &mut warnings),
-                "memory_relation" => seed_relation_statement(record, &mut warnings),
-                _ => seed_belief_statement(record, &mut warnings),
+                "source" => seed_source_statement(record).map(|sql| (sql, None)),
+                "episode" => seed_episode_statement(record).map(|sql| (sql, None)),
+                "epistemic_claim" => seed_claim_statement(record, &mut warnings)
+                    .map(|(sql, scope_hash)| (sql, Some(scope_hash))),
+                "memory_relation" => seed_relation_statement(
+                    record,
+                    &mut warnings,
+                    import_scope_hash.as_deref(),
+                )
+                .map(|(sql, scope_hash)| (sql, Some(scope_hash))),
+                _ => seed_belief_statement(record, &mut warnings)
+                    .map(|(sql, scope_hash)| (sql, Some(scope_hash))),
             };
             match statement {
-                Some(statement) => {
+                Some((statement, scope_hash)) => {
                     by_table[bucket].push(statement);
                     *emitted.entry(table.to_owned()).or_default() += 1;
+                    if let Some(scope_hash) = scope_hash {
+                        *scope_distribution
+                            .entry(format!("{table}:{scope_hash}"))
+                            .or_default() += 1;
+                    }
                 }
                 None => {
                     record_warning(
@@ -2838,7 +2921,7 @@ pub fn build_hosted_seed_sql(
     let statements: Vec<String> = by_table.into_iter().flatten().collect();
 
     let mut header = format!(
-        "-- {HOSTED_SEED_SQL_VERSION}: hosted D1 seed from Lantern logical export\n-- export: {}\n-- manifest record_count: {}\n-- emitted: {}\n-- skipped (not part of the hosted memory surface): {}\n-- idempotent: ON CONFLICT(id) DO NOTHING never overwrites post-seed corrections.\n-- mapping: memory_relation->epistemic_claim, belief_revision->belief_revision (docs/c3-relations-mapping.md)\n-- apply: wrangler d1 execute lantern-keeper --remote --config wrangler.jsonc --file <this>\n\n",
+        "-- {HOSTED_SEED_SQL_VERSION}: hosted D1 seed from Lantern logical export\n-- export: {}\n-- manifest record_count: {}\n-- emitted: {}\n-- skipped (not part of the hosted memory surface): {}\n-- idempotent: ON CONFLICT(id) DO NOTHING never overwrites post-seed corrections.\n-- mapping: memory_relation->epistemic_claim, belief_revision->belief_revision (docs/c3-relations-mapping.md)\n-- operator scope: {}\n-- scope distribution: {}\n-- apply: wrangler d1 execute lantern-keeper --remote --config wrangler.jsonc --file <this>\n\n",
         export_dir.display(),
         manifest_record_count
             .map(|count| count.to_string())
@@ -2853,6 +2936,12 @@ pub fn build_hosted_seed_sql(
             .map(|(table, count)| format!("{table}={count}"))
             .collect::<Vec<_>>()
             .join(", "),
+        import_scope_hash.as_deref().unwrap_or("(none: legacy empty relation hashes)"),
+        scope_distribution
+            .iter()
+            .map(|(key, count)| format!("{key}={count}"))
+            .collect::<Vec<_>>()
+            .join(", "),
     );
     for statement in &statements {
         header.push_str(statement);
@@ -2865,10 +2954,35 @@ pub fn build_hosted_seed_sql(
         manifest_record_count,
         emitted,
         skipped,
+        scope_distribution,
         warnings,
         sql_statements: statements.len(),
     };
     Ok((header, report))
+}
+
+/// Parse repeated `--scope KEY=VALUE` pairs into one operator scope. The
+/// scope is trusted operator input (it decides where imported scopeless
+/// rows become visible), so a malformed pair fails closed instead of
+/// guessing.
+fn parse_operator_scope(pairs: &[String]) -> anyhow::Result<Option<BTreeMap<String, String>>> {
+    if pairs.is_empty() {
+        return Ok(None);
+    }
+    let mut scope = BTreeMap::new();
+    for pair in pairs {
+        let Some((key, value)) = pair.split_once('=') else {
+            bail!("--scope expects KEY=VALUE, got {pair:?}");
+        };
+        let (key, value) = (key.trim(), value.trim());
+        if key.is_empty() || value.is_empty() {
+            bail!("--scope expects a non-empty KEY and VALUE, got {pair:?}");
+        }
+        if scope.insert(key.to_owned(), value.to_owned()).is_some() {
+            bail!("duplicate --scope key {key:?}");
+        }
+    }
+    Ok(Some(scope))
 }
 
 fn cmd_hosted_seed_sql(
@@ -2876,13 +2990,15 @@ fn cmd_hosted_seed_sql(
     output: &Path,
     json: bool,
     strict: bool,
+    scope_pairs: &[String],
 ) -> anyhow::Result<()> {
     if !export.is_dir() {
         bail!("export path is not a directory: {}", export.display());
     }
     // Under --strict the build itself aborts on the first problem, so this
     // path never reaches the artifact write with a strict failure.
-    let (sql, report) = build_hosted_seed_sql(export, strict)?;
+    let operator_scope = parse_operator_scope(scope_pairs)?;
+    let (sql, report) = build_hosted_seed_sql(export, strict, operator_scope)?;
 
     if let Some(parent) = output
         .parent()
@@ -4691,6 +4807,65 @@ mod tests {
         assert!(report.notes_missing.is_empty());
     }
 
+    #[test]
+    fn reconcile_pins_resolved_relations_outside_rest_enumeration() {
+        // Category error, pinned not loosened: the hosted relations endpoint
+        // returns unresolved rows only, so the legacy blended gate (all
+        // native relations vs hosted unresolved) can never pass. The split
+        // compares unresolved like-for-like and keeps every other outcome
+        // pinned until the hosted surface exposes per-status counts.
+        let relation_item = |outcome: &str| BasicMemoryAccountingItem {
+            source_id: "s".to_owned(),
+            source_path: "a.md".to_owned(),
+            line_number: 1,
+            item_type: "relation".to_owned(),
+            raw_value: "- [[b]]".to_owned(),
+            outcome: outcome.to_owned(),
+            reason: "synthetic".to_owned(),
+            importer_version: BASIC_MEMORY_ACCOUNTING_VERSION.to_owned(),
+            category: None,
+            target: Some("b".to_owned()),
+        };
+        let accounting = BasicMemoryAccountingReport {
+            schema: "basic-memory-accounting-v1",
+            importer_version: BASIC_MEMORY_ACCOUNTING_VERSION,
+            snapshot_captured_at: None,
+            snapshot_export_sha256: None,
+            source_records: 1,
+            expected_observations: None,
+            accounted_observations: 0,
+            expected_relations: None,
+            accounted_relations: 2,
+            unexplained_observations: 0,
+            unexplained_relations: 0,
+            observation_outcomes: BTreeMap::new(),
+            relation_outcomes: BTreeMap::new(),
+            items: vec![
+                relation_item("unresolved_target"),
+                relation_item("resolved_relation"),
+            ],
+        };
+        let hosted = HostedReconcileState {
+            unresolved_basic_memory_relations: 1,
+            ..HostedReconcileState::default()
+        };
+        let report = build_basic_memory_reconcile(
+            &[],
+            &accounting,
+            &hosted,
+            "http://127.0.0.1:4317",
+            None,
+            "t".to_owned(),
+        );
+        assert_eq!(report.expected_relations, 2);
+        assert_eq!(report.expected_unresolved_relations, 1);
+        assert_eq!(report.hosted_unresolved_relations, 1);
+        // Like-for-like reconciles; the blended gate still fails honestly.
+        assert_eq!(report.unresolved_relations_delta, 0);
+        assert_eq!(report.relations_delta, -1);
+        assert_eq!(report.verdict, "fail");
+    }
+
     // -----------------------------------------------------------------------
     // C3-IMPORT: hosted seed SQL builder + three-way reconcile
     // -----------------------------------------------------------------------
@@ -4756,7 +4931,7 @@ mod tests {
 
     #[test]
     fn hosted_seed_maps_relations_history_and_bytes() {
-        let (sql, report) = build_hosted_seed_sql(&c3_fixture("synthetic-export"), false)
+        let (sql, report) = build_hosted_seed_sql(&c3_fixture("synthetic-export"), false, None)
             .expect("builder must run");
         assert!(
             report.warnings.is_empty(),
@@ -4807,6 +4982,136 @@ mod tests {
     }
 
     #[test]
+    fn hosted_seed_stamps_operator_scope_on_relations() {
+        // Urgent scope repair: derived relation rows carry no native scope
+        // of their own. With a trusted operator scope they must be stamped
+        // with it (visible to scoped reads); without one the legacy empty
+        // hash is preserved verbatim and the C3 native-scope distinction
+        // stays explicit in the manifest distribution.
+        let operator: BTreeMap<String, String> =
+            BTreeMap::from([("project".to_owned(), "lantern".to_owned())]);
+        let operator_hash = lighting_core::scope_hash(
+            &lighting_core::normalize_scope(&operator).expect("valid scope"),
+        );
+        let (sql, report) =
+            build_hosted_seed_sql(&c3_fixture("synthetic-export"), false, Some(operator))
+                .expect("builder must run");
+        assert!(
+            report.warnings.is_empty(),
+            "warnings: {:?}",
+            report.warnings
+        );
+        let relation = sql
+            .lines()
+            .find(|line| {
+                line.starts_with("INSERT INTO epistemic_claim")
+                    && line.contains("'relation|related_to|c3-seed-ep-alpha|Beta'")
+            })
+            .expect("relation statement");
+        assert!(
+            relation.contains(&format!("'{operator_hash}'")),
+            "relation stamped with the operator scope: {relation}"
+        );
+        assert_eq!(
+            report
+                .scope_distribution
+                .get(&format!("memory_relation:{operator_hash}")),
+            Some(&1),
+            "manifest reflects the qualified relation scope: {:?}",
+            report.scope_distribution
+        );
+        // Claims keep their source payload scopes (provenance, never
+        // broadened); the manifest records each qualified hash instead, keyed
+        // by source export table so the mapping stays explicit.
+        assert!(
+            report.scope_distribution.keys().all(|key| key
+                .starts_with("epistemic_claim:")
+                || key.starts_with("belief:")
+                || key.starts_with("memory_relation:")),
+            "distribution covers claims, beliefs and mapped relations: {:?}",
+            report.scope_distribution
+        );
+
+        // Denial shape at the storage layer: the relation row is found under
+        // the operator scope and under no other hash. Runtime denial through
+        // the hosted readers is covered by the existing scope read-guard
+        // tests; the seed must leave nothing to deny ambiguously.
+        let conn = rusqlite::Connection::open_in_memory().expect("sqlite");
+        conn.execute_batch(lighting_store_d1::SCHEMA_SQL)
+            .expect("hosted schema");
+        conn.execute_batch(&sql).expect("seed applies");
+        let found: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM epistemic_claim WHERE scope_hash = ?1 AND dedupe_key LIKE 'relation|%'",
+                [operator_hash.as_str()],
+                |row| row.get(0),
+            )
+            .expect("scoped read");
+        assert_eq!(found, 1, "relation visible under the operator scope");
+        let foreign_hashes = [
+            lighting_core::scope_hash(&BTreeMap::new()),
+            lighting_core::scope_hash(
+                &lighting_core::normalize_scope(&BTreeMap::from([(
+                    "project".to_owned(),
+                    "other".to_owned(),
+                )]))
+                .expect("valid scope"),
+            ),
+        ];
+        for foreign in &foreign_hashes {
+            let hidden: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM epistemic_claim WHERE scope_hash = ?1 AND dedupe_key LIKE 'relation|%'",
+                    [foreign.as_str()],
+                    |row| row.get(0),
+                )
+                .expect("scoped read");
+            assert_eq!(hidden, 0, "relation invisible under foreign hash {foreign}");
+        }
+
+        // Legacy fallback without an operator scope: empty hash preserved.
+        let (legacy_sql, legacy_report) =
+            build_hosted_seed_sql(&c3_fixture("synthetic-export"), false, None)
+                .expect("builder must run");
+        let legacy_relation = legacy_sql
+            .lines()
+            .find(|line| {
+                line.starts_with("INSERT INTO epistemic_claim")
+                    && line.contains("'relation|related_to|c3-seed-ep-alpha|Beta'")
+            })
+            .expect("relation statement");
+        let empty_hash = lighting_core::scope_hash(&BTreeMap::new());
+        assert!(legacy_relation.contains(&format!("'{empty_hash}'")));
+        assert_eq!(
+            legacy_report
+                .scope_distribution
+                .get(&format!("memory_relation:{empty_hash}")),
+            Some(&1),
+        );
+
+        // Fail closed: empty or malformed operator scope never seeds.
+        assert!(build_hosted_seed_sql(
+            &c3_fixture("synthetic-export"),
+            false,
+            Some(BTreeMap::new())
+        )
+        .is_err());
+        assert!(parse_operator_scope(&["project".to_owned()]).is_err());
+        assert!(parse_operator_scope(&["project=".to_owned()]).is_err());
+        assert!(
+            parse_operator_scope(&["project=a".to_owned(), "project=b".to_owned()]).is_err()
+        );
+        let parsed = parse_operator_scope(&["project=lantern".to_owned()]).expect("valid pair");
+        assert_eq!(
+            parsed,
+            Some(BTreeMap::from([(
+                "project".to_owned(),
+                "lantern".to_owned()
+            )]))
+        );
+    }
+
+    #[test]
     fn hosted_seed_strict_aborts_before_writing_artifacts() {
         let dir = c3_temp_path("strict-malformed");
         fs::create_dir_all(&dir).expect("temp dir");
@@ -4818,14 +5123,14 @@ mod tests {
         .expect("shard");
         let output = dir.join("seed.sql");
 
-        let strict = cmd_hosted_seed_sql(&dir, &output, false, true);
+        let strict = cmd_hosted_seed_sql(&dir, &output, false, true, &[]);
         assert!(strict.is_err(), "strict must abort on a malformed row");
         assert!(
             !output.exists(),
             "strict must abort before any artifact is written"
         );
 
-        let default = cmd_hosted_seed_sql(&dir, &output, false, false);
+        let default = cmd_hosted_seed_sql(&dir, &output, false, false, &[]);
         assert!(
             default.is_err(),
             "default must still report unexplained loss"
@@ -4849,14 +5154,14 @@ mod tests {
         let output = dir.join("seed.sql");
 
         assert!(
-            cmd_hosted_seed_sql(&dir, &output, false, true).is_err(),
+            cmd_hosted_seed_sql(&dir, &output, false, true, &[]).is_err(),
             "strict must abort on a revision whose belief is absent"
         );
         assert!(!output.exists(), "strict writes nothing");
 
         // Default warns (the apply would fail closed on the foreign key) and
         // still produces the artifact for inspection.
-        let _ = cmd_hosted_seed_sql(&dir, &output, false, false);
+        let _ = cmd_hosted_seed_sql(&dir, &output, false, false, &[]);
         assert!(output.exists(), "default writes the artifact");
     }
 
@@ -4902,12 +5207,13 @@ mod tests {
 
         // r3 derives from = r2.created_at (11:00) == belief.updated_at.
         assert!(
-            cmd_hosted_seed_sql(&dir, &output, false, true).is_err(),
+            cmd_hosted_seed_sql(&dir, &output, false, true, &[]).is_err(),
             "strict must abort on a token hazard"
         );
         assert!(!output.exists(), "strict writes nothing");
 
-        let (sql, report) = build_hosted_seed_sql(&dir, false).expect("default must build");
+        let (sql, report) =
+            build_hosted_seed_sql(&dir, false, None).expect("default must build");
         assert_eq!(
             report.emitted.get("belief_revision"),
             Some(&2),
@@ -4926,7 +5232,7 @@ mod tests {
 
     #[test]
     fn hosted_seed_builder_maps_the_synthetic_export() {
-        let (sql, report) = build_hosted_seed_sql(&c3_fixture("synthetic-export"), false)
+        let (sql, report) = build_hosted_seed_sql(&c3_fixture("synthetic-export"), false, None)
             .expect("builder must run");
         assert_eq!(report.schema, "hosted-seed-sql-v1");
         assert_eq!(report.manifest_record_count, Some(16));
@@ -4984,7 +5290,7 @@ mod tests {
 
     #[test]
     fn hosted_seed_applies_to_empty_sqlite_and_corrections_flow() {
-        let (sql, _report) = build_hosted_seed_sql(&c3_fixture("synthetic-export"), false)
+        let (sql, _report) = build_hosted_seed_sql(&c3_fixture("synthetic-export"), false, None)
             .expect("builder must run");
 
         let conn = rusqlite::Connection::open_in_memory().expect("sqlite");
@@ -5210,7 +5516,7 @@ mod tests {
         // Native logical export of the same state, then the builder over it.
         let export_dir = c3_temp_path("three-way-export");
         let summary = store.export_to(&export_dir).await?;
-        let (seed_sql, report) = build_hosted_seed_sql(&export_dir, false)?;
+        let (seed_sql, report) = build_hosted_seed_sql(&export_dir, false, None)?;
         assert!(
             report.warnings.is_empty(),
             "builder warnings on a clean native export: {:?}",
