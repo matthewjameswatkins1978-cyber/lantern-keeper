@@ -2685,11 +2685,14 @@ pub fn build_hosted_seed_sql(
     let mut emitted: BTreeMap<String, usize> = BTreeMap::new();
     let mut skipped: BTreeMap<String, usize> = BTreeMap::new();
     // Provenance-bound claim resolution: the set of exported source ids
-    // (stripped of table prefix and backticks). An empty-scope claim is
-    // stamped with the asserted operator scope only when its source
-    // resolves into this set; anything else fails closed (skipped, never
-    // blanket-stamped). Malformed lines are ignored here and reported by
-    // the main scan below.
+    // (stripped of table prefix and backticks) that will themselves seed.
+    // An empty-scope claim is stamped with the asserted operator scope only
+    // when its source resolves into this set; anything else fails closed
+    // (skipped, never blanket-stamped). Only seedable sources qualify: a
+    // stamped claim pointing at a source row the seed itself drops would
+    // violate the hosted foreign key at apply time, so the pre-pass mirrors
+    // the seed_source_statement validity gates. Malformed lines are ignored
+    // here and reported by the main scan below.
     let mut known_sources: BTreeSet<String> = BTreeSet::new();
     for file in &ndjson_files {
         let text = fs::read_to_string(file)
@@ -2705,12 +2708,31 @@ pub fn build_hosted_seed_sql(
             if parsed.get("table").and_then(serde_json::Value::as_str) != Some("source") {
                 continue;
             }
-            if let Some(id) = parsed
-                .get("record")
-                .and_then(|record| record.get("id"))
+            let Some(record) = parsed.get("record").and_then(serde_json::Value::as_object) else {
+                continue;
+            };
+            let Some(id) = record
+                .get("id")
                 .and_then(serde_json::Value::as_str)
-            {
-                known_sources.insert(strip_table_prefix(id, "source").to_owned());
+                .map(|raw| strip_table_prefix(raw, "source").to_owned())
+            else {
+                continue;
+            };
+            let seedable = ["kind", "title", "content", "fingerprint"]
+                .iter()
+                .all(|key| {
+                    record
+                        .get(*key)
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty())
+                })
+                && record
+                    .get("created_at")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(canonical_hosted_timestamp)
+                    .is_some();
+            if seedable {
+                known_sources.insert(id);
             }
         }
     }
@@ -5182,10 +5204,12 @@ mod tests {
     #[test]
     fn hosted_seed_claims_resolve_scope_by_source_provenance() {
         // Empty-scope claims (the 613 in the real archive) are stamped only
-        // through verified source ownership: claim source_id resolves to an
-        // exported source inside this import AND the operator asserted the
-        // scope. Missing linkage, unknown sources, or no asserted scope
-        // fail closed (skipped with a warning, never blanket-stamped).
+        // through verified source ownership: claim source_id resolves to a
+        // seedable exported source inside this import AND the operator
+        // asserted the scope. With an asserted scope, missing linkage or
+        // unknown/unseedable sources fail closed (skipped with a warning,
+        // never blanket-stamped). With no asserted scope there is no
+        // target namespace to protect, so the legacy empty hash applies.
         let dir = c3_temp_path("claim-provenance");
         fs::create_dir_all(&dir).expect("temp dir");
         fs::write(dir.join("manifest.json"), "{}").expect("manifest");
@@ -5200,7 +5224,21 @@ mod tests {
                 "created_at": "2026-10-01T09:00:00.000000000Z"
             }
         });
-        fs::write(dir.join("sources.ndjson"), format!("{source}\n")).expect("shard");
+        let unseedable = serde_json::json!({
+            "table": "source",
+            "record": {
+                "id": "source:prov-src-3",
+                "title": "unseedable source",
+                "content": "# Unseedable\n",
+                "fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "created_at": "2026-10-01T09:00:00.000000000Z"
+            }
+        });
+        fs::write(
+            dir.join("sources.ndjson"),
+            format!("{source}\n{unseedable}\n"),
+        )
+        .expect("shard");
         let claim = |id: &str, scope: Option<serde_json::Value>, source_id: Option<&str>| {
             let mut payload = serde_json::json!({
                 "id": id,
@@ -5240,6 +5278,7 @@ mod tests {
             ),
             claim("prov-c", None, Some("prov-src-1")),
             claim("prov-d", Some(serde_json::json!({})), None),
+            claim("prov-e", Some(serde_json::json!({})), Some("prov-src-3")),
         ]
         .iter()
         .map(std::string::ToString::to_string)
@@ -5279,7 +5318,7 @@ mod tests {
                 .iter()
                 .filter(|warning| warning.contains("unresolvable source ownership"))
                 .count(),
-            2,
+            3,
             "warnings: {:?}",
             report.warnings
         );
@@ -5299,9 +5338,18 @@ mod tests {
         // on scopeless native exports is unchanged.
         let (bare_sql, bare_report) =
             build_hosted_seed_sql(&dir, false, None).expect("builder must run");
-        assert_eq!(bare_report.emitted.get("epistemic_claim"), Some(&4));
+        assert_eq!(bare_report.emitted.get("epistemic_claim"), Some(&5));
+        // The only warning is the deliberately unseedable source row
+        // itself; every scope-less claim seeds legacy-empty with no
+        // claim-level warnings.
+        assert_eq!(
+            bare_report.warnings.len(),
+            1,
+            "warnings: {:?}",
+            bare_report.warnings
+        );
         assert!(
-            bare_report.warnings.is_empty(),
+            bare_report.warnings[0].contains("source record could not be mapped honestly"),
             "warnings: {:?}",
             bare_report.warnings
         );
@@ -5310,7 +5358,7 @@ mod tests {
             bare_report
                 .scope_distribution
                 .get(&format!("epistemic_claim:{bare_empty}")),
-            Some(&4),
+            Some(&5),
         );
         assert!(bare_sql.contains(&format!("'{bare_empty}'")));
     }
