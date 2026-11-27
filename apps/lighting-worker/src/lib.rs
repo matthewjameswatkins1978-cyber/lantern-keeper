@@ -85,7 +85,10 @@ async fn serve(mut req: Request, env: Env) -> Result<Response> {
         "initialize" => json_ok(&rpc_result(
             &id,
             json!({
-                "protocolVersion": PROTOCOL_VERSION,
+                "protocolVersion": match params.get("protocolVersion").and_then(Value::as_str) {
+                    Some(version @ ("2025-11-25" | "2025-06-18" | "2025-03-26" | "2024-11-05" | "2024-10-07")) => version,
+                    _ => PROTOCOL_VERSION,
+                },
                 "capabilities": { "tools": { "listChanged": false } },
                 "serverInfo": { "name": SERVER_NAME, "version": SERVER_VERSION, "icons": branding_icons() }
             }),
