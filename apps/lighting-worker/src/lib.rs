@@ -31,6 +31,7 @@ use worker::*;
 const SCHEMA_VERSION_SQL: &str = "SELECT value FROM schema_meta WHERE key = 'schema_version'";
 
 const CREDENTIALS_SECRET: &str = "LANTERN_MCP_CREDENTIALS";
+const PROJECT_CREDENTIALS_SECRET: &str = "LANTERN_MCP_PROJECT_CREDENTIALS";
 const D1_BINDING: &str = "LANTERN_DB";
 
 fn branding_icons() -> Value {
@@ -148,7 +149,15 @@ async fn authenticate_request(
         .map_err(|_| CoreError::Auth)?
         .to_string();
     let entries = load_credentials(&secret_text).map_err(|_| CoreError::Auth)?;
-    authenticate(&entries, token)
+    if let Ok(principal) = authenticate(&entries, token) {
+        return Ok(principal);
+    }
+    let project_secret = env
+        .secret(PROJECT_CREDENTIALS_SECRET)
+        .map_err(|_| CoreError::Auth)?
+        .to_string();
+    let project_entries = load_credentials(&project_secret).map_err(|_| CoreError::Auth)?;
+    authenticate(&project_entries, token)
 }
 
 // ---------------------------------------------------------------------------
