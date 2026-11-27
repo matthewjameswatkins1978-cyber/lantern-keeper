@@ -225,8 +225,6 @@ export async function routeLanternChatGptOAuth(
 }
 
 export const TOKEN_PATH = routes.token;
-export const MCP_PATH = routes.mcp;
-export const RESOURCE_METADATA_PATH = routes.resourceMetadata;
 export function isReadTool(name: string): boolean {
   return (READ_TOOLS as readonly string[]).includes(name);
 }
