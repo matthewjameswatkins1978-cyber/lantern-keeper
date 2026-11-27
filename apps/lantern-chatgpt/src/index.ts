@@ -6,7 +6,7 @@ import {
   type LanternChatGptOAuthEnv,
   type LanternPrincipal,
 } from './lantern-chatgpt-oauth.js';
-import { configuredScope, parseScopeObject, scopeEquals, type ScopeObject } from './scope.js';
+import { parseScopeObject, scopeEquals, type ScopeObject } from './scope.js';
 import { KVRecords, fencedKV } from './oauth-records.js';
 import { rotateLanternOAuthToken } from './oauth-refresh.js';
 
@@ -81,7 +81,7 @@ async function proxyUpstream(env: Env, body: string, incoming?: Headers): Promis
   });
 }
 
-async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal): Promise<Response> {
+async function serveChatGpt(request: Request, env: Env, auth: LanternPrincipal): Promise<Response> {
   // Streamable HTTP here is POST-only: there is no SSE listener, so GET is
   // 405 (consistent with the upstream), not a body parse error.
   if (request.method !== 'POST') {
@@ -145,14 +145,17 @@ async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal)
     // same -32602 code the backend uses for Invalid. lantern_status takes
     // no scope and passes through untouched.
     if (name !== 'lantern_status') {
-      const configured = configuredScope(env.CHATGPT_OAUTH_SCOPE_JSON);
-      if (configured === null) {
+      const configured = auth.memoryScopes[0];
+      if (!configured) {
         // Misconfigured scope binding: fail closed, never proxy unscoped.
         return new Response(null, { status: 503 });
       }
       const supplied = params?.arguments?.['scope'];
       let bound: ScopeObject;
       if (supplied === undefined) {
+        if (auth.memoryScopes.length > 1 && !isReadTool(name)) {
+          return rpcError(id, -32602, 'choose an explicit project scope for this write');
+        }
         bound = configured;
       } else {
         let normalized: ScopeObject;
@@ -165,7 +168,7 @@ async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal)
           }));
           return rpcError(id, -32602, 'invalid: scope must be a nonempty object of string values');
         }
-        if (!scopeEquals(normalized, configured)) {
+        if (!auth.memoryScopes.some(granted => scopeEquals(normalized, granted))) {
           console.info(JSON.stringify({
             event: 'lantern.oauth.tool', tool: name, outcome: 'denied_scope_mismatch',
             receiptId: crypto.randomUUID(),

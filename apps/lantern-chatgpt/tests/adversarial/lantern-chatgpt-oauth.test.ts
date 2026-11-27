@@ -42,6 +42,7 @@ const SCOPE_STUB = { project: 'workshop' };
 const STUB_CREDENTIALS: Record<string, { scopes: Record<string, string>[]; canRead: boolean; canWrite: boolean }> = {
   // Mirrors a genuinely read-only single-scope upstream credential.
   [stubBearer]: { scopes: [SCOPE_STUB], canRead: true, canWrite: false },
+  [stubBearer + '-two-projects']: { scopes: [SCOPE_STUB, { project: 'nisaba' }], canRead: true, canWrite: false },
   // A credential scoped to a different project (negative tests).
   [stubBearer + '-other']: { scopes: [{ project: 'other-project' }], canRead: true, canWrite: false },
 };
@@ -170,7 +171,7 @@ function stubHandler(reqBody: string, res: import('node:http').ServerResponse, c
     .end(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: 'method not found' } }));
 }
 
-const runtimeOptions = (upstream?: string, credential?: string, disabled = false, scopeJson?: string) =>
+const runtimeOptions = (upstream?: string, credential?: string, disabled = false, scopeJson?: string, additionalScopeJson?: string) =>
   convertV4MiniflareOptions({
     modules: true,
     handleStructuredLogs: (event) => serverLogs.push(JSON.stringify(event)),
@@ -183,6 +184,7 @@ const runtimeOptions = (upstream?: string, credential?: string, disabled = false
       CHATGPT_OAUTH_DISABLED: disabled ? '1' : '0',
       CHATGPT_OAUTH_ORIGIN: origin,
       CHATGPT_OAUTH_SCOPE_JSON: scopeJson ?? '{"project":"workshop"}',
+      ...(additionalScopeJson ? { CHATGPT_OAUTH_ADDITIONAL_SCOPE_JSON: additionalScopeJson } : {}),
       CHATGPT_OAUTH_REDIRECTS: redirect,
       CHATGPT_OAUTH_OWNER_HASH: digest(owner).digest('hex'),
       LANTERN_MCP_UPSTREAM: upstream ?? `http://127.0.0.1:${stubPort}/mcp`,
@@ -487,7 +489,7 @@ it('fails closed when disabled, misconfigured or pointed at plain HTTP', async (
 
   // A live grant is needed for the backend-failure checks below. Each
   // misconfigured instance mints its own token against its own KV.
-  const liveToken = async (options: ReturnType<typeof runtimeOptions>) => {
+  const liveToken = async (options: ReturnType<typeof runtimeOptions>, project = 'workshop') => {
     const isolated = new Miniflare(options);
     const fetchIsolated = (p: string, init?: RequestInit) =>
       isolated.dispatchFetch(origin + p, init);
@@ -523,12 +525,13 @@ it('fails closed when disabled, misconfigured or pointed at plain HTTP', async (
       });
       expect(huge.status).toBe(413);
       const search = { jsonrpc: '2.0', id: 1, method: 'tools/call',
-        params: { name: 'lantern_search', arguments: { scope: { project: 'workshop' }, query: 'x' } } };
+        params: { name: 'lantern_search', arguments: { scope: { project }, query: 'x' } } };
       const mcp = await fetchIsolated(path, {
         method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + access_token },
         body: JSON.stringify(search),
       });
-      return mcp.status;
+      const payload = await mcp.clone().json().catch(() => null) as { error?: { code?: number } } | null;
+      return payload?.error?.code === -32603 ? 'scope denied' : mcp.status;
     } finally {
       await isolated.dispose();
     }
@@ -539,6 +542,10 @@ it('fails closed when disabled, misconfigured or pointed at plain HTTP', async (
   expect(await liveToken(runtimeOptions(undefined, ''))).toBe(503);
   // Sanity: the same dance against a correct instance succeeds.
   expect(await liveToken(runtimeOptions())).toBe(200);
+  const twoProjects = runtimeOptions(undefined, stubBearer + '-two-projects', false, undefined, '{"project":"nisaba"}');
+  expect(await liveToken(twoProjects, 'nisaba')).toBe(200);
+  expect(await liveToken(twoProjects, 'other-project')).toBe('scope denied');
+  expect(await liveToken(runtimeOptions(undefined, stubBearer + '-two-projects'), 'nisaba')).toBe('scope denied');
   // Unparseable scope binding fails closed even with a live grant.
   expect(await liveToken(runtimeOptions(undefined, undefined, false, 'not-json'))).toBe(503);
   expect(await liveToken(runtimeOptions(undefined, undefined, false, '{"project": 7}'))).toBe(503);

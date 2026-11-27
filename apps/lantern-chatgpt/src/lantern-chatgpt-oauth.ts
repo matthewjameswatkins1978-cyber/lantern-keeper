@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { KVNamespace } from '@cloudflare/workers-types';
 import type { OAuthProvider, OAuthProviderOptions } from '@cloudflare/workers-oauth-provider';
+import { configuredScope, type ScopeObject } from './scope.js';
 import { sha256Hex } from './hash.js';
 
 // The OAuth identity this entry point mints. It is a Lantern-internal
@@ -36,6 +37,7 @@ const limitedPaths = new Set<string>([routes.authorize, routes.register, routes.
 export interface LanternChatGptOAuthEnv {
   CHATGPT_OAUTH_ORIGIN?: string;
   CHATGPT_OAUTH_SCOPE_JSON?: string;
+  CHATGPT_OAUTH_ADDITIONAL_SCOPE_JSON?: string;
   CHATGPT_OAUTH_REDIRECTS?: string;
   CHATGPT_OAUTH_OWNER_HASH?: string;
   OAUTH_KV?: KVNamespace;
@@ -47,6 +49,7 @@ export interface LanternChatGptOAuthEnv {
 export interface LanternPrincipal {
   userId: string;
   scope: string[];
+  memoryScopes: ScopeObject[];
 }
 
 type OAuthContext = Parameters<OAuthProvider<LanternChatGptOAuthEnv>['fetch']>[2];
@@ -64,6 +67,9 @@ export async function routeLanternChatGptOAuth(
   }
   const origin = env.CHATGPT_OAUTH_ORIGIN;
   const allowedScope = env.CHATGPT_OAUTH_SCOPE_JSON;
+  const primaryScope = configuredScope(allowedScope);
+  const additionalScopeSetting = env.CHATGPT_OAUTH_ADDITIONAL_SCOPE_JSON;
+  const additionalScope = configuredScope(additionalScopeSetting);
   const ownerHash = env.CHATGPT_OAUTH_OWNER_HASH;
   const canRemember = env.CHATGPT_ENABLE_REMEMBER === '1';
   const scope = canRemember ? 'lantern:read-and-remember' : 'lantern:read';
@@ -71,7 +77,8 @@ export async function routeLanternChatGptOAuth(
     scopes.length > 0 && scopes.every((requested) => requested === scope);
   const redirects = (env.CHATGPT_OAUTH_REDIRECTS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
   if (!ctx || !env.OAUTH_KV || !env.CHATGPT_OAUTH_LIMIT || !origin || url.origin !== origin || url.protocol !== 'https:' ||
-      !allowedScope || !ownerHash || !/^[a-f0-9]{64}$/.test(ownerHash) || !redirects.length) {
+      !allowedScope || (additionalScopeSetting !== undefined && !additionalScope) ||
+      !ownerHash || !/^[a-f0-9]{64}$/.test(ownerHash) || !redirects.length) {
     return new Response(null, { status: 404 });
   }
   if (url.pathname === routes.mcp && url.search) return new Response(null, { status: 400 });
@@ -85,7 +92,7 @@ export async function routeLanternChatGptOAuth(
     await import('@cloudflare/workers-oauth-provider');
   const resource = origin + routes.mcp;
   const allowsRedirect = (uri: string) => redirects.includes(uri);
-  type Approval = { ownerHash: string; allowedScope: string; redirectUri: string };
+  type Approval = { ownerHash: string; allowedScope: string; additionalScope?: string; redirectUri: string };
   const hasApproval = (props: Approval | undefined) =>
     props?.ownerHash === ownerHash && props.allowedScope === allowedScope && allowsRedirect(props.redirectUri ?? '');
 
@@ -138,7 +145,11 @@ export async function routeLanternChatGptOAuth(
               origin + routes.resourceMetadata + '"' },
           });
         }
-        return serve(apiRequest, { userId: endpointId, scope: [scope] });
+        const memoryScopes = primaryScope ? [primaryScope] : [];
+        if (primaryScope && additionalScope && context.props?.additionalScope === additionalScopeSetting) {
+          memoryScopes.push(additionalScope);
+        }
+        return serve(apiRequest, { userId: endpointId, scope: [scope], memoryScopes });
       },
     },
     defaultHandler: {
@@ -170,7 +181,10 @@ export async function routeLanternChatGptOAuth(
               '<!doctype html><html lang="en"><meta charset="utf-8"><title>Lantern Keeper approval</title>' +
               '<h1>Approve Lantern Keeper access</h1><p>Grant ' + redirect.hostname +
               (canRemember ? ' permission to read and save memories' : ' read-only memory access') +
-              ' as lantern-chat.</p><form method="post" action="' + routes.authorize + '">' +
+              ' as lantern-chat. Approved memory scopes: ' +
+              JSON.stringify(additionalScope ? [primaryScope, additionalScope] : [primaryScope])
+                .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;') +
+              '.</p><form method="post" action="' + routes.authorize + '">' +
               '<input type="hidden" name="handle" value="' + encodeURIComponent(consent.handle) + '">' +
               '<label>Owner passphrase <input name="owner" type="password" required autocomplete="off"></label>' +
               '<button type="submit">Verify and approve</button></form></html>',
@@ -211,7 +225,7 @@ export async function routeLanternChatGptOAuth(
             revokeExistingGrants: false,
             metadata: {},
             scope: [scope],
-            props: { ownerHash, allowedScope, redirectUri: approved.request.redirectUri },
+            props: { ownerHash, allowedScope, additionalScope: additionalScopeSetting, redirectUri: approved.request.redirectUri },
           });
           for (const [name, value] of Object.entries(headers)) approved.headers.set(name, value);
           approved.headers.set('Location', redirectTo);
