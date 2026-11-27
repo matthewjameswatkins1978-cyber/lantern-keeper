@@ -5094,10 +5094,15 @@ mod tests {
             "predicate = dedupe first segment"
         );
         assert!(sql.contains("'resolved'"), "predicate_status = resolved");
-        let empty_hash = lighting_core::scope_hash(&BTreeMap::new());
-        assert!(
-            sql.contains(&format!("'{empty_hash}'")),
-            "relations seed the empty-scope hash"
+        let relation_scope = lighting_core::scope_hash(&BTreeMap::from([(
+            "project".to_owned(),
+            "c3-import".to_owned(),
+        )]));
+        assert_eq!(
+            report
+                .scope_distribution
+                .get(&format!("memory_relation:{relation_scope}")),
+            Some(&1)
         );
 
         // belief_revision -> belief_revision with the derived CAS chain.
@@ -5183,6 +5188,10 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().expect("sqlite");
         conn.execute_batch(lighting_store_d1::SCHEMA_SQL)
             .expect("hosted schema");
+        conn.execute_batch(lighting_store_d1::REMEMBER_SCHEMA_SQL)
+            .expect("remember schema");
+        conn.execute_batch(lighting_store_d1::REMEMBER_ATTR_SCHEMA_SQL)
+            .expect("actor schema");
         conn.execute_batch(&sql).expect("seed applies");
         let found: i64 = conn
             .query_row(
