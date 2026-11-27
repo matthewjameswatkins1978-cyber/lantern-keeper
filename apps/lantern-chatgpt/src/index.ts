@@ -89,7 +89,7 @@ async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal)
   if (body.length > 1_048_576) {
     return new Response(null, { status: 413 });
   }
-  let message: { id?: unknown; method?: string; params?: { name?: string; arguments?: Record<string, unknown> } };
+  let message: { id?: unknown; method?: string; params?: { protocolVersion?: unknown; name?: string; arguments?: Record<string, unknown> } };
   try {
     message = JSON.parse(body);
   } catch {
@@ -107,6 +107,21 @@ async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal)
   let params = message.params;
   if (typeof method !== 'string' || !READ_METHODS.has(method)) {
     return rpcError(id, -32601, 'method not found');
+  }
+  if (method === 'initialize') {
+    const upstream = await proxyUpstream(env, body, request.headers);
+    if (!upstream.ok || !upstream.headers.get('content-type')?.includes('json')) return upstream;
+    const response = await upstream.clone().json().catch(() => null) as {
+      result?: { protocolVersion?: string }
+    } | null;
+    if (typeof response?.result?.protocolVersion !== 'string') return upstream;
+    const supported = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05', '2024-10-07'];
+    const requested = params?.protocolVersion;
+    response.result.protocolVersion = typeof requested === 'string' && supported.includes(requested)
+      ? requested
+      : supported[0];
+    await upstream.body?.cancel();
+    return Response.json(response, { status: upstream.status, headers: upstream.headers });
   }
   if (method === 'tools/call') {
     const name = params?.name ?? '';
@@ -167,7 +182,7 @@ async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal)
       return proxied;
     }
     const text = await proxied.text().catch(() => '');
-    let payload: { result?: { tools?: Array<{ name?: string }> } };
+    let payload: { result?: { tools?: Array<{ name?: string; annotations?: Record<string, unknown> }> } };
     try {
       payload = JSON.parse(text);
     } catch {
@@ -175,7 +190,9 @@ async function serveChatGpt(request: Request, env: Env, _auth: LanternPrincipal)
       return new Response(text, { status: proxied.status, headers: proxied.headers });
     }
     if (Array.isArray(payload?.result?.tools)) {
-      payload.result.tools = payload.result.tools.filter((tool) => isReadTool(tool?.name ?? ''));
+      payload.result.tools = payload.result.tools
+        .filter((tool) => isReadTool(tool?.name ?? ''))
+        .map((tool) => ({ ...tool, annotations: { ...tool.annotations, readOnlyHint: true } }));
     }
     const receiptId = crypto.randomUUID();
     console.info(JSON.stringify({ event: 'lantern.oauth.tool', tool: 'tools/list', outcome: 'success', receiptId }));
