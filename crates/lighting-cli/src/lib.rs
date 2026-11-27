@@ -2334,6 +2334,8 @@ fn seed_episode_statement(record: &serde_json::Map<String, serde_json::Value>) -
 fn seed_claim_statement(
     record: &serde_json::Map<String, serde_json::Value>,
     warnings: &mut Vec<String>,
+    import_scope_hash: Option<&str>,
+    known_sources: &BTreeSet<String>,
 ) -> Option<(String, String)> {
     let payload = payload_map(record)?;
     let id = payload_text(&payload, "id")
@@ -2342,14 +2344,34 @@ fn seed_claim_statement(
             record_text(record, "id")
                 .map(|raw| strip_table_prefix(raw, "epistemic_claim").to_owned())
         })?;
-    let scope: BTreeMap<String, String> = match payload_scope(&payload) {
-        Some(scope) => scope,
-        None => {
-            warnings.push(format!("claim {id}: payload has no usable scope; skipped"));
-            return None;
+    let scope_hash: String = match payload_scope(&payload) {
+        Some(scope) if !scope.is_empty() => lighting_core::scope_hash(&scope),
+        // Empty or missing payload scope: provenance-bound fallback. The
+        // asserted operator scope is stamped only when the claim's source
+        // resolves to an exported source inside this import (single
+        // approved project). An asserted scope with missing linkage or an
+        // unknown source fails closed: the row is skipped, never seeded
+        // under an ambiguous hash and never blanket-stamped. With no
+        // asserted scope there is no target namespace to protect, so the
+        // legacy explicit empty hash is preserved (C3 native placeholder,
+        // recorded in the manifest distribution).
+        _ => {
+            let source_id = payload_text(&payload, "source_id")
+                .map(|raw| strip_table_prefix(raw, "source").to_owned());
+            match (source_id, import_scope_hash) {
+                (Some(source_id), Some(hash)) if known_sources.contains(source_id.as_str()) => {
+                    hash.to_owned()
+                }
+                (_, None) => lighting_core::scope_hash(&BTreeMap::new()),
+                _ => {
+                    warnings.push(format!(
+                        "claim {id}: empty or missing payload scope with unresolvable source ownership; skipped"
+                    ));
+                    return None;
+                }
+            }
         }
     };
-    let scope_hash = lighting_core::scope_hash(&scope);
     let subject_key = payload_text(&payload, "subject_key")?;
     let predicate_status = payload_text(&payload, "predicate_status")?;
     let value = payload_text(&payload, "value")?;
@@ -2662,6 +2684,36 @@ pub fn build_hosted_seed_sql(
         vec![Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
     let mut emitted: BTreeMap<String, usize> = BTreeMap::new();
     let mut skipped: BTreeMap<String, usize> = BTreeMap::new();
+    // Provenance-bound claim resolution: the set of exported source ids
+    // (stripped of table prefix and backticks). An empty-scope claim is
+    // stamped with the asserted operator scope only when its source
+    // resolves into this set; anything else fails closed (skipped, never
+    // blanket-stamped). Malformed lines are ignored here and reported by
+    // the main scan below.
+    let mut known_sources: BTreeSet<String> = BTreeSet::new();
+    for file in &ndjson_files {
+        let text = fs::read_to_string(file)
+            .with_context(|| format!("failed to read export shard {}", file.display()))?;
+        for line in text.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let parsed: serde_json::Value = match serde_json::from_str(line) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            if parsed.get("table").and_then(serde_json::Value::as_str) != Some("source") {
+                continue;
+            }
+            if let Some(id) = parsed
+                .get("record")
+                .and_then(|record| record.get("id"))
+                .and_then(serde_json::Value::as_str)
+            {
+                known_sources.insert(strip_table_prefix(id, "source").to_owned());
+            }
+        }
+    }
     // Qualified scope manifest: `{table}:{scope_hash}` -> row count, so the
     // post-mapping manifest reflects the qualified import scope per row and
     // a single claimed scope is never compared against mixed populations.
@@ -2769,8 +2821,13 @@ pub fn build_hosted_seed_sql(
             let statement = match table {
                 "source" => seed_source_statement(record).map(|sql| (sql, None)),
                 "episode" => seed_episode_statement(record).map(|sql| (sql, None)),
-                "epistemic_claim" => seed_claim_statement(record, &mut warnings)
-                    .map(|(sql, scope_hash)| (sql, Some(scope_hash))),
+                "epistemic_claim" => seed_claim_statement(
+                    record,
+                    &mut warnings,
+                    import_scope_hash.as_deref(),
+                    &known_sources,
+                )
+                .map(|(sql, scope_hash)| (sql, Some(scope_hash))),
                 "memory_relation" => {
                     seed_relation_statement(record, &mut warnings, import_scope_hash.as_deref())
                         .map(|(sql, scope_hash)| (sql, Some(scope_hash)))
@@ -5120,6 +5177,142 @@ mod tests {
                 "lantern".to_owned()
             )]))
         );
+    }
+
+    #[test]
+    fn hosted_seed_claims_resolve_scope_by_source_provenance() {
+        // Empty-scope claims (the 613 in the real archive) are stamped only
+        // through verified source ownership: claim source_id resolves to an
+        // exported source inside this import AND the operator asserted the
+        // scope. Missing linkage, unknown sources, or no asserted scope
+        // fail closed (skipped with a warning, never blanket-stamped).
+        let dir = c3_temp_path("claim-provenance");
+        fs::create_dir_all(&dir).expect("temp dir");
+        fs::write(dir.join("manifest.json"), "{}").expect("manifest");
+        let source = serde_json::json!({
+            "table": "source",
+            "record": {
+                "id": "source:prov-src-1",
+                "kind": "markdown",
+                "title": "provenance source",
+                "content": "# Provenance\n",
+                "fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "created_at": "2026-10-01T09:00:00.000000000Z"
+            }
+        });
+        fs::write(dir.join("sources.ndjson"), format!("{source}\n")).expect("shard");
+        let claim = |id: &str, scope: Option<serde_json::Value>, source_id: Option<&str>| {
+            let mut payload = serde_json::json!({
+                "id": id,
+                "subject_key": "workshop.topic",
+                "predicate_key": "preference",
+                "predicate_status": "Resolved",
+                "value": "provenance probe",
+                "polarity": true,
+                "speaker_actor_id": "lucy",
+                "dedupe_key": format!("prov-dedupe-{id}"),
+                "episode_id": "prov-ep-1",
+                "known_at": "2026-10-01T10:00:00.000000000Z",
+                "created_at": "2026-10-01T10:00:00.000000000Z"
+            });
+            if let Some(scope) = scope {
+                payload["scope"] = scope;
+            }
+            if let Some(source_id) = source_id {
+                payload["source_id"] = serde_json::Value::String(source_id.to_owned());
+            }
+            serde_json::json!({
+                "table": "epistemic_claim",
+                "record": {
+                    "id": format!("epistemic_claim:{id}"),
+                    "dedupe_key": format!("prov-dedupe-{id}"),
+                    "created_at": "2026-10-01T10:00:00.000000000Z",
+                    "payload": payload.to_string()
+                }
+            })
+        };
+        let shard = [
+            claim("prov-a", Some(serde_json::json!({})), Some("prov-src-1")),
+            claim(
+                "prov-b",
+                Some(serde_json::json!({})),
+                Some("prov-src-absent"),
+            ),
+            claim("prov-c", None, Some("prov-src-1")),
+            claim("prov-d", Some(serde_json::json!({})), None),
+        ]
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+        fs::write(dir.join("epistemic.ndjson"), shard + "\n").expect("shard");
+
+        let operator: BTreeMap<String, String> =
+            BTreeMap::from([("project".to_owned(), "lantern".to_owned())]);
+        let operator_hash = lighting_core::scope_hash(
+            &lighting_core::normalize_scope(&operator).expect("valid scope"),
+        );
+        let (sql, report) =
+            build_hosted_seed_sql(&dir, false, Some(operator)).expect("builder must run");
+        // Proven claims (known source) stamp; orphans fail closed.
+        assert_eq!(report.emitted.get("epistemic_claim"), Some(&2));
+        for proven in ["prov-a", "prov-c"] {
+            let row = sql
+                .lines()
+                .find(|line| line.contains(&format!("'{proven}'")))
+                .expect("proven row");
+            assert!(
+                row.contains(&format!("'{operator_hash}'")),
+                "proven claim stamped: {row}"
+            );
+        }
+        for orphan in ["prov-b", "prov-d"] {
+            assert!(
+                !sql.lines()
+                    .any(|line| line.contains(&format!("'{orphan}'"))),
+                "orphan claim {orphan} leaves no row"
+            );
+        }
+        assert_eq!(
+            report
+                .warnings
+                .iter()
+                .filter(|warning| warning.contains("unresolvable source ownership"))
+                .count(),
+            2,
+            "warnings: {:?}",
+            report.warnings
+        );
+        assert_eq!(
+            report
+                .scope_distribution
+                .get(&format!("epistemic_claim:{operator_hash}")),
+            Some(&2),
+            "manifest reflects provenance stamps: {:?}",
+            report.scope_distribution
+        );
+
+        // Without an asserted operator scope there is no target namespace
+        // to protect, so the legacy explicit empty hash is preserved for
+        // all four scope-less claims (C3 native placeholder, recorded in
+        // the manifest distribution) — the three-way count-match guarantee
+        // on scopeless native exports is unchanged.
+        let (bare_sql, bare_report) =
+            build_hosted_seed_sql(&dir, false, None).expect("builder must run");
+        assert_eq!(bare_report.emitted.get("epistemic_claim"), Some(&4));
+        assert!(
+            bare_report.warnings.is_empty(),
+            "warnings: {:?}",
+            bare_report.warnings
+        );
+        let bare_empty = lighting_core::scope_hash(&BTreeMap::new());
+        assert_eq!(
+            bare_report
+                .scope_distribution
+                .get(&format!("epistemic_claim:{bare_empty}")),
+            Some(&4),
+        );
+        assert!(bare_sql.contains(&format!("'{bare_empty}'")));
     }
 
     #[test]
