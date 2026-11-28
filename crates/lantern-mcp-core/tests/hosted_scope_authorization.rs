@@ -80,6 +80,27 @@ fn denied_scope_is_forbidden_before_any_data_access() {
     );
 }
 
+#[test]
+fn workshop_steward_is_bound_to_project_only_scopes() {
+    let settings = serde_json::json!({"credentials": [{
+        "token_sha256": sha256_hex(TOKEN), "principal": "configured-steward",
+        "scopes": [], "workshop_steward": true, "permissions": ["read", "write"]
+    }]});
+    let entries = load_credentials(&settings.to_string()).expect("load steward");
+    let principal = lantern_mcp_core::authenticate(&entries, TOKEN).expect("authenticate");
+    for tool in [Tool::Search, Tool::Remember] {
+        assert!(authorize(&principal, tool, Some(&scope(&[("project", "unseen")]))).is_ok());
+        assert!(matches!(
+            authorize(
+                &principal,
+                tool,
+                Some(&scope(&[("project", "unseen"), ("tenant", "foreign")]))
+            ),
+            Err(CoreError::Forbidden(_))
+        ));
+    }
+}
+
 /// No scope argument at all is refused at parse time, so a caller cannot
 /// skip the allowlist check.
 #[test]

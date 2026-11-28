@@ -44,6 +44,8 @@ pub struct CredentialEntry {
     pub principal: String,
     /// Scope objects (e.g. `{"project":"smoke"}`), normalised at load.
     pub scopes: Vec<Scope>,
+    #[serde(default)]
+    pub workshop_steward: bool,
     pub permissions: Vec<String>,
 }
 
@@ -53,6 +55,7 @@ pub struct CredentialEntry {
 pub struct Principal {
     pub principal: String,
     pub scopes: Vec<Scope>,
+    pub workshop_steward: bool,
     pub can_read: bool,
     pub can_write: bool,
 }
@@ -74,7 +77,7 @@ pub fn load_credentials(json_text: &str) -> Result<Vec<CredentialEntry>, CoreErr
                 "token_sha256 must be 64 hex chars".into(),
             ));
         }
-        if entry.principal.trim().is_empty() || entry.scopes.is_empty() {
+        if entry.principal.trim().is_empty() || (entry.scopes.is_empty() && !entry.workshop_steward) {
             return Err(CoreError::Unconfigured(
                 "credential needs principal and at least one scope".into(),
             ));
@@ -120,6 +123,7 @@ pub fn authenticate(entries: &[CredentialEntry], presented: &str) -> Result<Prin
             .iter()
             .map(|scope| lighting_core::normalize_scope(scope).unwrap_or_else(|_| scope.clone()))
             .collect(),
+        workshop_steward: entry.workshop_steward,
         can_read: entry.permissions.iter().any(|p| p == "read"),
         can_write: entry.permissions.iter().any(|p| p == "write"),
     })
@@ -300,11 +304,14 @@ pub fn authorize(
     if let Some(scope) = scope {
         let normalised = lighting_core::normalize_scope(scope)
             .map_err(|error| CoreError::Invalid(format!("scope: {error}")))?;
-        if !principal
-            .scopes
-            .iter()
-            .any(|granted| granted == &normalised)
-        {
+        // The Worker has one operator-bound D1 tenant. A steward may choose
+        // any project there, but cannot supply a tenant or other selector.
+        let allowed = if principal.workshop_steward {
+            normalised.len() == 1 && normalised.contains_key("project")
+        } else {
+            principal.scopes.contains(&normalised)
+        };
+        if !allowed {
             return Err(CoreError::Forbidden(
                 "scope not granted to this credential".into(),
             ));
