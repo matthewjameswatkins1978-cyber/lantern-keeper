@@ -153,6 +153,9 @@ async function serveChatGpt(request: Request, env: Env, auth: LanternPrincipal):
       const supplied = params?.arguments?.['scope'];
       let bound: ScopeObject;
       if (supplied === undefined) {
+        if (auth.workshopSteward) {
+          return rpcError(id, -32602, 'choose an explicit project scope');
+        }
         if (auth.memoryScopes.length > 1 && !isReadTool(name)) {
           return rpcError(id, -32602, 'choose an explicit project scope for this write');
         }
@@ -168,7 +171,7 @@ async function serveChatGpt(request: Request, env: Env, auth: LanternPrincipal):
           }));
           return rpcError(id, -32602, 'invalid: scope must be a nonempty object of string values');
         }
-        if (!auth.memoryScopes.some(granted => scopeEquals(normalized, granted))) {
+        if (!auth.workshopSteward && !auth.memoryScopes.some(granted => scopeEquals(normalized, granted))) {
           console.info(JSON.stringify({
             event: 'lantern.oauth.tool', tool: name, outcome: 'denied_scope_mismatch',
             receiptId: crypto.randomUUID(),

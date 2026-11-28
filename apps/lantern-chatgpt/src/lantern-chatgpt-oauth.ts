@@ -38,6 +38,7 @@ export interface LanternChatGptOAuthEnv {
   CHATGPT_OAUTH_ORIGIN?: string;
   CHATGPT_OAUTH_SCOPE_JSON?: string;
   CHATGPT_OAUTH_ADDITIONAL_SCOPE_JSON?: string;
+  CHATGPT_WORKSHOP_STEWARD?: string;
   CHATGPT_OAUTH_REDIRECTS?: string;
   CHATGPT_OAUTH_OWNER_HASH?: string;
   OAUTH_KV?: KVNamespace;
@@ -50,6 +51,7 @@ export interface LanternPrincipal {
   userId: string;
   scope: string[];
   memoryScopes: ScopeObject[];
+  workshopSteward: boolean;
 }
 
 type OAuthContext = Parameters<OAuthProvider<LanternChatGptOAuthEnv>['fetch']>[2];
@@ -149,7 +151,10 @@ export async function routeLanternChatGptOAuth(
         if (primaryScope && additionalScope && context.props?.additionalScope === additionalScopeSetting) {
           memoryScopes.push(additionalScope);
         }
-        return serve(apiRequest, { userId: endpointId, scope: [scope], memoryScopes });
+        return serve(apiRequest, {
+          userId: endpointId, scope: [scope], memoryScopes,
+          workshopSteward: env.CHATGPT_WORKSHOP_STEWARD === '1',
+        });
       },
     },
     defaultHandler: {
@@ -182,8 +187,10 @@ export async function routeLanternChatGptOAuth(
               '<h1>Approve Lantern Keeper access</h1><p>Grant ' + redirect.hostname +
               (canRemember ? ' permission to read and save memories' : ' read-only memory access') +
               ' as lantern-chat. Approved memory scopes: ' +
-              JSON.stringify(additionalScope ? [primaryScope, additionalScope] : [primaryScope])
-                .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;') +
+              (env.CHATGPT_WORKSHOP_STEWARD === '1'
+                ? 'projects in Matthew’s private workshop'
+                : JSON.stringify(additionalScope ? [primaryScope, additionalScope] : [primaryScope])
+                  .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')) +
               '.</p><form method="post" action="' + routes.authorize + '">' +
               '<input type="hidden" name="handle" value="' + encodeURIComponent(consent.handle) + '">' +
               '<label>Owner passphrase <input name="owner" type="password" required autocomplete="off"></label>' +
