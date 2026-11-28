@@ -1,0 +1,45 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // EXAMPLE staging config — copy to a PRIVATE file (never commit it) and
+  // fill in the four human-provisioned values marked REPLACE-ME.
+  // Deploy with: wrangler deploy --config <private-file>
+  // The committed wrangler.jsonc intentionally carries no bindings, vars or
+  // secrets: everything environment-specific lives here, outside the repo.
+  "name": "lantern-keeper-chatgpt",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": false
+  },
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      // REPLACE-ME: `wrangler kv namespace create OAUTH_KV` (staging).
+      "id": "REPLACE-ME-kv-namespace-id"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "CHATGPT_OAUTH_LIMIT",
+      // REPLACE-ME: unused account-local numeric namespace id, limit 60/60s.
+      "namespace_id": "REPLACE-ME-numeric-id",
+      "simple": { "limit": 60, "period": 60 }
+    }
+  ],
+  "vars": {
+    // Public origin of THIS worker (no trailing slash).
+    "CHATGPT_OAUTH_ORIGIN": "https://lantern-keeper-chatgpt.REPLACE-ME.workers.dev",
+    // Single workshop scope object the backend requires (verbatim JSON).
+    "CHATGPT_OAUTH_SCOPE_JSON": "{\"project\":\"workshop\"}",
+    // Exact ChatGPT callback(s), comma-separated.
+    "CHATGPT_OAUTH_REDIRECTS": "https://chatgpt.com/connector_platform_oauth_redirect",
+    // Existing bearer endpoint this worker proxies (read-only calls only).
+    "LANTERN_MCP_UPSTREAM": "https://lantern-keeper-mcp.REPLACE-ME.workers.dev/mcp",
+    // Secrets below are set via `wrangler secret put`, never written here:
+    // - CHATGPT_OAUTH_OWNER_HASH: lowercase SHA-256 hex of the owner passphrase.
+    // - LANTERN_MCP_CREDENTIAL: read-only single-scope bearer (can_read, no
+    //   can_write, scopes limited to the workshop scope object above).
+    "CHATGPT_OAUTH_DISABLED": "0"
+  }
+}

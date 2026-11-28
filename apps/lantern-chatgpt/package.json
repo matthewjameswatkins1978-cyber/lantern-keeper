@@ -1,0 +1,25 @@
+{
+  "name": "lantern-chatgpt-oauth",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dedicated ChatGPT-compatible OAuth MCP entry point for Lantern Keeper (LK-CHAT-001). Implements OAuth discovery, dynamic client registration, PKCE, token validation and read-only scope enforcement via @cloudflare/workers-oauth-provider, then proxies authorised read tool calls to the existing bearer-authenticated lantern-keeper-mcp /mcp endpoint. Existing bearer clients are untouched.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.2.4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261121.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@types/node": "^26.6.6",
+    "miniflare": "5.20261119.0-beta",
+    "tsx": "^4.19.3",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1",
+    "wrangler": "^4.166.0"
+  }
+}
